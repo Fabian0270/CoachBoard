@@ -24,6 +24,7 @@ export interface ProgramTable {
   status: string
   created_at: string
   updated_at: string
+  enabled_columns: string | null
 }
 
 export interface WorkoutTable {
@@ -47,6 +48,10 @@ export interface ExerciseTable {
   distance: number | null
   notes: string | null
   order_index: number
+  rest_time: string | null
+  intensity: string | null
+  load_used: string | null
+  rpe: string | null
 }
 
 export interface ProgressRecordTable {
@@ -104,6 +109,7 @@ export async function initializeDatabase(): Promise<void> {
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      enabled_columns TEXT,
       FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
     )
   `.execute(db)
@@ -133,9 +139,28 @@ export async function initializeDatabase(): Promise<void> {
       distance REAL,
       notes TEXT,
       order_index INTEGER NOT NULL DEFAULT 0,
+      rest_time TEXT,
+      intensity TEXT,
+      load_used TEXT,
+      rpe TEXT,
       FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE CASCADE
     )
   `.execute(db)
+
+  const addColumnIfMissing = async (table: string, column: string, type: string): Promise<void> => {
+    try {
+      await sql`ALTER TABLE ${sql.raw(table)} ADD COLUMN ${sql.raw(column)} ${sql.raw(type)}`.execute(db)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (!msg.toLowerCase().includes('duplicate column')) throw e
+    }
+  }
+
+  await addColumnIfMissing('programs', 'enabled_columns', 'TEXT')
+  await addColumnIfMissing('exercises', 'rest_time', 'TEXT')
+  await addColumnIfMissing('exercises', 'intensity', 'TEXT')
+  await addColumnIfMissing('exercises', 'load_used', 'TEXT')
+  await addColumnIfMissing('exercises', 'rpe', 'TEXT')
 
   await sql`
     CREATE TABLE IF NOT EXISTS progress_records (

@@ -6,7 +6,17 @@ import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
-import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check } from 'lucide-react'
+import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check, Download } from 'lucide-react'
+
+type ToggleableColumn = 'rest_time' | 'intensity' | 'load_cap' | 'load_used' | 'rpe'
+const TOGGLEABLE_COLUMNS: ToggleableColumn[] = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe']
+const COLUMN_LABELS: Record<ToggleableColumn, string> = {
+  rest_time: 'Rest Time (mins)',
+  intensity: 'Intensity/Weight',
+  load_cap: 'Load Cap',
+  load_used: 'Load Used',
+  rpe: 'Last Set RPE',
+}
 
 interface Exercise {
   id: string
@@ -18,6 +28,10 @@ interface Exercise {
   distance: number | null
   notes: string | null
   order_index?: number
+  rest_time: string | null
+  intensity: string | null
+  load_used: string | null
+  rpe: string | null
 }
 
 interface Workout {
@@ -36,6 +50,7 @@ interface Program {
   status: string
   start_date: string | null
   end_date: string | null
+  enabled_columns: ToggleableColumn[] | null
   workouts: Workout[]
 }
 
@@ -253,9 +268,16 @@ export default function ProgramDetail() {
         </div>
         <div className="flex gap-2">
           {program.start_date && (
-            <Button variant="outline" size="sm" onClick={handleChangeDuration}>
-              <CalendarRange className="h-4 w-4 mr-1" />Change duration
-            </Button>
+            <>
+              <Button variant="outline" size="sm" asChild>
+                <a href={`/api/programs/${program.id}/export`} download>
+                  <Download className="h-4 w-4 mr-1" />Export
+                </a>
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleChangeDuration}>
+                <CalendarRange className="h-4 w-4 mr-1" />Change duration
+              </Button>
+            </>
           )}
           <Button variant="destructive" size="sm" onClick={handleDelete}><Trash2 className="h-4 w-4" /></Button>
         </div>
