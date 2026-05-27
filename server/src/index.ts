@@ -4,7 +4,6 @@ import { initializeDatabase } from './db.js'
 import athletesRouter from './routes/athletes.js'
 import programsRouter from './routes/programs.js'
 import progressRouter from './routes/progress.js'
-import uploadedProgramsRouter from './routes/uploaded-programs.js'
 
 const app = express()
 const PORT = 3001
@@ -16,7 +15,6 @@ app.use(express.urlencoded({ extended: true }))
 app.use('/api/athletes', athletesRouter)
 app.use('/api/programs', programsRouter)
 app.use('/api/progress', progressRouter)
-app.use('/api/uploaded-programs', uploadedProgramsRouter)
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })

@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, Dumbbell, TrendingUp, Upload } from 'lucide-react'
+import { LayoutDashboard, Users, Dumbbell, TrendingUp } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 const navItems = [
@@ -7,7 +7,6 @@ const navItems = [
   { to: '/athletes', label: 'Athletes', icon: Users },
   { to: '/programs', label: 'Programs', icon: Dumbbell },
   { to: '/progress', label: 'Progress', icon: TrendingUp },
-  { to: '/upload', label: 'Upload', icon: Upload },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {

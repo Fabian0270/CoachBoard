@@ -1,4 +1,3 @@
-import { Database } from 'better-sqlite3'
 import BetterSqlite3 from 'better-sqlite3'
 import { Kysely, SqliteDialect, sql } from 'kysely'
 import { mkdirSync } from 'fs'
@@ -41,8 +40,8 @@ export interface ExerciseTable {
   id: string
   workout_id: string
   name: string
-  sets: number | null
-  reps: number | null
+  sets: string | null
+  reps: string | null
   weight: number | null
   duration: number | null
   distance: number | null
@@ -60,22 +59,12 @@ export interface ProgressRecordTable {
   notes: string | null
 }
 
-export interface UploadedProgramTable {
-  id: string
-  athlete_id: string | null
-  filename: string
-  original_name: string
-  content: string | null
-  uploaded_at: string
-}
-
 export interface DB {
   athletes: AthleteTable
   programs: ProgramTable
   workouts: WorkoutTable
   exercises: ExerciseTable
   progress_records: ProgressRecordTable
-  uploaded_programs: UploadedProgramTable
 }
 
 const DB_PATH = '/home/app/data/database.sqlite'
@@ -137,8 +126,8 @@ export async function initializeDatabase(): Promise<void> {
       id TEXT PRIMARY KEY,
       workout_id TEXT NOT NULL,
       name TEXT NOT NULL,
-      sets INTEGER,
-      reps INTEGER,
+      sets TEXT,
+      reps TEXT,
       weight REAL,
       duration INTEGER,
       distance REAL,
@@ -161,15 +150,4 @@ export async function initializeDatabase(): Promise<void> {
     )
   `.execute(db)
 
-  await sql`
-    CREATE TABLE IF NOT EXISTS uploaded_programs (
-      id TEXT PRIMARY KEY,
-      athlete_id TEXT,
-      filename TEXT NOT NULL,
-      original_name TEXT NOT NULL,
-      content TEXT,
-      uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE SET NULL
-    )
-  `.execute(db)
 }

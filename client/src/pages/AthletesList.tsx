@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
-import { Plus, Users } from 'lucide-react'
+import { Plus, Users, Trash2 } from 'lucide-react'
 
 interface Athlete {
   id: string
@@ -15,12 +15,25 @@ interface Athlete {
 export default function AthletesList() {
   const [athletes, setAthletes] = useState<Athlete[]>([])
   const [loading, setLoading] = useState(true)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/athletes')
       .then((r) => r.json())
       .then((data) => { setAthletes(data); setLoading(false) })
   }, [])
+
+  const handleDelete = async (e: React.MouseEvent, athlete: Athlete) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!confirm(`Delete "${athlete.name}"? This will also delete all their programs.`)) return
+    setDeletingId(athlete.id)
+    const res = await fetch(`/api/athletes/${athlete.id}`, { method: 'DELETE' })
+    if (res.ok || res.status === 404) {
+      setAthletes((list) => list.filter((a) => a.id !== athlete.id))
+    }
+    setDeletingId(null)
+  }
 
   if (loading) return <div className="text-muted-foreground">Loading...</div>
 
@@ -42,15 +55,26 @@ export default function AthletesList() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {athletes.map((athlete) => (
-            <Link key={athlete.id} to={`/athletes/${athlete.id}`}>
-              <Card className="hover:shadow-md transition-shadow cursor-pointer">
-                <CardContent className="p-4">
-                  <div className="font-semibold text-lg">{athlete.name}</div>
-                  {athlete.sport && <Badge variant="secondary" className="mt-1">{athlete.sport}</Badge>}
-                  {athlete.email && <div className="text-sm text-muted-foreground mt-2">{athlete.email}</div>}
-                </CardContent>
-              </Card>
-            </Link>
+            <div key={athlete.id} className="relative group">
+              <Link to={`/athletes/${athlete.id}`}>
+                <Card className="hover:shadow-md transition-shadow cursor-pointer">
+                  <CardContent className="p-4 pr-12">
+                    <div className="font-semibold text-lg">{athlete.name}</div>
+                    {athlete.sport && <Badge variant="secondary" className="mt-1">{athlete.sport}</Badge>}
+                    {athlete.email && <div className="text-sm text-muted-foreground mt-2">{athlete.email}</div>}
+                  </CardContent>
+                </Card>
+              </Link>
+              <button
+                type="button"
+                onClick={(e) => handleDelete(e, athlete)}
+                disabled={deletingId === athlete.id}
+                aria-label={`Delete ${athlete.name}`}
+                className="absolute top-2 right-2 p-2 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-destructive transition-opacity disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
           ))}
         </div>
       )}

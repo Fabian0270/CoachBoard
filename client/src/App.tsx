@@ -8,7 +8,6 @@ import NewProgram from './pages/NewProgram'
 import ProgramDetail from './pages/ProgramDetail'
 import ProgramComparison from './pages/ProgramComparison'
 import ProgressTracking from './pages/ProgressTracking'
-import UploadPrograms from './pages/UploadPrograms'
 
 export default function App() {
   return (
@@ -23,7 +22,6 @@ export default function App() {
           <Route path="/programs/new" element={<NewProgram />} />
           <Route path="/programs/:id" element={<ProgramDetail />} />
           <Route path="/progress" element={<ProgressTracking />} />
-          <Route path="/upload" element={<UploadPrograms />} />
         </Routes>
       </Layout>
     </BrowserRouter>

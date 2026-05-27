@@ -79,32 +79,133 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
   res.status(204).send()
 })
 
-router.post('/:programId/workouts', async (req: Request, res: Response): Promise<void> => {
+router.post<{ programId: string }>('/:programId/workouts', async (req, res): Promise<void> => {
   const { name, scheduled_date, notes } = req.body
-  if (!name) {
-    res.status(400).json({ error: 'name is required' })
-    return
-  }
+  const resolvedName = name || scheduled_date || 'Workout'
   const workout = await db
     .insertInto('workouts')
-    .values({ id: uuidv4(), program_id: req.params.programId, name, scheduled_date: scheduled_date ?? null, notes: notes ?? null, created_at: new Date().toISOString() })
+    .values({ id: uuidv4(), program_id: req.params.programId, name: resolvedName, scheduled_date: scheduled_date ?? null, notes: notes ?? null, created_at: new Date().toISOString() })
     .returningAll()
     .executeTakeFirstOrThrow()
   res.status(201).json(workout)
 })
 
-router.post('/:programId/workouts/:workoutId/exercises', async (req: Request, res: Response): Promise<void> => {
-  const { name, sets, reps, weight, duration, distance, notes, order_index } = req.body
-  if (!name) {
-    res.status(400).json({ error: 'name is required' })
+router.put('/:programId/workouts/:workoutId', async (req: Request, res: Response): Promise<void> => {
+  const { name, scheduled_date, notes } = req.body
+  const updated = await db
+    .updateTable('workouts')
+    .set({
+      ...(name !== undefined ? { name } : {}),
+      ...(scheduled_date !== undefined ? { scheduled_date: scheduled_date ?? null } : {}),
+      ...(notes !== undefined ? { notes: notes ?? null } : {}),
+    })
+    .where('id', '=', req.params.workoutId)
+    .where('program_id', '=', req.params.programId)
+    .returningAll()
+    .executeTakeFirst()
+  if (!updated) {
+    res.status(404).json({ error: 'Workout not found' })
     return
   }
+  res.json(updated)
+})
+
+router.delete('/:programId/workouts/:workoutId', async (req: Request, res: Response): Promise<void> => {
+  const deleted = await db
+    .deleteFrom('workouts')
+    .where('id', '=', req.params.workoutId)
+    .where('program_id', '=', req.params.programId)
+    .returningAll()
+    .executeTakeFirst()
+  if (!deleted) {
+    res.status(404).json({ error: 'Workout not found' })
+    return
+  }
+  res.status(204).send()
+})
+
+router.put('/:programId/duration', async (req: Request, res: Response): Promise<void> => {
+  const { start_date, weeks } = req.body
+  if (!start_date || !weeks || weeks < 1) {
+    res.status(400).json({ error: 'start_date and weeks (>=1) are required' })
+    return
+  }
+  const start = new Date(start_date)
+  if (isNaN(start.getTime())) {
+    res.status(400).json({ error: 'invalid start_date' })
+    return
+  }
+  const day = start.getUTCDay()
+  const offset = day === 0 ? -6 : 1 - day
+  const monday = new Date(start)
+  monday.setUTCDate(start.getUTCDate() + offset)
+  const end = new Date(monday)
+  end.setUTCDate(monday.getUTCDate() + Number(weeks) * 7 - 1)
+  const iso = (d: Date) => d.toISOString().slice(0, 10)
+  const updated = await db
+    .updateTable('programs')
+    .set({
+      start_date: iso(monday),
+      end_date: iso(end),
+      updated_at: new Date().toISOString(),
+    })
+    .where('id', '=', req.params.programId)
+    .returningAll()
+    .executeTakeFirst()
+  if (!updated) {
+    res.status(404).json({ error: 'Program not found' })
+    return
+  }
+  res.json(updated)
+})
+
+router.post<{ programId: string; workoutId: string }>('/:programId/workouts/:workoutId/exercises', async (req, res): Promise<void> => {
+  const { name, sets, reps, weight, duration, distance, notes, order_index } = req.body
   const exercise = await db
     .insertInto('exercises')
-    .values({ id: uuidv4(), workout_id: req.params.workoutId, name, sets: sets ?? null, reps: reps ?? null, weight: weight ?? null, duration: duration ?? null, distance: distance ?? null, notes: notes ?? null, order_index: order_index ?? 0 })
+    .values({ id: uuidv4(), workout_id: req.params.workoutId, name: name ?? '', sets: sets ?? null, reps: reps ?? null, weight: weight ?? null, duration: duration ?? null, distance: distance ?? null, notes: notes ?? null, order_index: order_index ?? 0 })
     .returningAll()
     .executeTakeFirstOrThrow()
   res.status(201).json(exercise)
+})
+
+router.put('/:programId/workouts/:workoutId/exercises/:exerciseId', async (req: Request, res: Response): Promise<void> => {
+  const { name, sets, reps, weight, duration, distance, notes, order_index } = req.body
+  const updated = await db
+    .updateTable('exercises')
+    .set({
+      ...(name !== undefined ? { name } : {}),
+      ...(sets !== undefined ? { sets: sets ?? null } : {}),
+      ...(reps !== undefined ? { reps: reps ?? null } : {}),
+      ...(weight !== undefined ? { weight: weight ?? null } : {}),
+      ...(duration !== undefined ? { duration: duration ?? null } : {}),
+      ...(distance !== undefined ? { distance: distance ?? null } : {}),
+      ...(notes !== undefined ? { notes: notes ?? null } : {}),
+      ...(order_index !== undefined ? { order_index } : {}),
+    })
+    .where('id', '=', req.params.exerciseId)
+    .where('workout_id', '=', req.params.workoutId)
+    .returningAll()
+    .executeTakeFirst()
+  if (!updated) {
+    res.status(404).json({ error: 'Exercise not found' })
+    return
+  }
+  res.json(updated)
+})
+
+router.delete('/:programId/workouts/:workoutId/exercises/:exerciseId', async (req: Request, res: Response): Promise<void> => {
+  const deleted = await db
+    .deleteFrom('exercises')
+    .where('id', '=', req.params.exerciseId)
+    .where('workout_id', '=', req.params.workoutId)
+    .returningAll()
+    .executeTakeFirst()
+  if (!deleted) {
+    res.status(404).json({ error: 'Exercise not found' })
+    return
+  }
+  res.status(204).send()
 })
 
 export default router
