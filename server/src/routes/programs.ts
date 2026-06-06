@@ -203,57 +203,48 @@ router.get<{ id: string }>('/:id/export', async (req, res): Promise<void> => {
 
   const [sy, sm, sd] = program.start_date.split('-').map(Number)
   const [ey, em, ed] = program.end_date.split('-').map(Number)
-  const startMonday = new Date(Date.UTC(sy, sm - 1, sd))
+  const rawStart = new Date(Date.UTC(sy, sm - 1, sd))
+  const startDow = rawStart.getUTCDay()
+  const mondayOffset = startDow === 0 ? -6 : 1 - startDow
+  const startMonday = new Date(rawStart)
+  startMonday.setUTCDate(rawStart.getUTCDate() + mondayOffset)
   const endDate = new Date(Date.UTC(ey, em - 1, ed))
   const totalDays = Math.round((endDate.getTime() - startMonday.getTime()) / 86400000) + 1
   const numWeeks = Math.max(1, Math.ceil(totalDays / 7))
   const isoDate = (d: Date) => d.toISOString().slice(0, 10)
 
   type Ex = typeof exercises[number]
-  interface DayRow { name: string; restTime: string; perWeek: Array<Ex | null> }
 
   const DOW_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-  const dayData: DayRow[][] = []
+  const dayData: Array<{ perWeek: Ex[][]; maxRows: number }> = []
   for (let dow = 0; dow < 7; dow++) {
-    const rowsByKey = new Map<string, DayRow>()
-    const orderedKeys: string[] = []
+    const perWeek: Ex[][] = []
+    let maxRows = 0
     for (let w = 0; w < numWeeks; w++) {
       const date = new Date(startMonday)
       date.setUTCDate(startMonday.getUTCDate() + w * 7 + dow)
       const workout = workoutByDate.get(isoDate(date))
-      if (!workout) continue
-      const exes = exercisesByWorkout.get(workout.id) ?? []
-      for (const ex of exes) {
-        const rawName = (ex.name ?? '').trim()
-        const key = rawName.toLowerCase() || `__unnamed_${ex.id}`
-        let row = rowsByKey.get(key)
-        if (!row) {
-          row = { name: rawName, restTime: ex.rest_time ?? '', perWeek: Array<Ex | null>(numWeeks).fill(null) }
-          rowsByKey.set(key, row)
-          orderedKeys.push(key)
-        }
-        if (!row.restTime && ex.rest_time) row.restTime = ex.rest_time
-        row.perWeek[w] = ex
-      }
+      const exes = workout ? exercisesByWorkout.get(workout.id) ?? [] : []
+      perWeek.push(exes)
+      if (exes.length > maxRows) maxRows = exes.length
     }
-    dayData.push(orderedKeys.map((k) => rowsByKey.get(k)!))
+    dayData.push({ perWeek, maxRows })
   }
 
-  type PerWeekCol = { key: string; label: string; color: string; get: (ex: Ex) => string | number | null }
+  type PerWeekCol = { key: string; label: string; color: string; width: number; get: (ex: Ex) => string | number | null }
   const PURPLE = 'FFB39DDB'
   const GREEN = 'FF4DB6AC'
-  const allPerWeekCols: PerWeekCol[] = [
-    { key: 'sets', label: 'Sets', color: PURPLE, get: (ex) => ex.sets ?? '' },
-    { key: 'reps', label: 'Reps', color: PURPLE, get: (ex) => ex.reps ?? '' },
-    { key: 'intensity', label: 'Intensity/Weight', color: PURPLE, get: (ex) => ex.intensity ?? '' },
-    { key: 'load_cap', label: 'Load Cap', color: GREEN, get: (ex) => ex.weight ?? '' },
-    { key: 'load_used', label: 'Load Used', color: GREEN, get: (ex) => ex.load_used ?? '' },
-    { key: 'rpe', label: 'Last Set RPE', color: GREEN, get: (ex) => ex.rpe ?? '' },
-  ]
-  const perWeekCols = allPerWeekCols.filter((c) => c.key === 'sets' || c.key === 'reps' || isEnabled(c.key as ToggleableColumn))
-  const showRestTime = isEnabled('rest_time')
+  const perWeekCols: PerWeekCol[] = []
+  perWeekCols.push({ key: 'name', label: 'Discipline', color: PURPLE, width: 22, get: (ex) => ex.name ?? '' })
+  if (isEnabled('rest_time')) perWeekCols.push({ key: 'rest_time', label: 'Rest Time(mins)', color: PURPLE, width: 12, get: (ex) => ex.rest_time ?? '' })
+  perWeekCols.push({ key: 'sets', label: 'Sets', color: PURPLE, width: 6, get: (ex) => ex.sets ?? '' })
+  perWeekCols.push({ key: 'reps', label: 'Reps', color: PURPLE, width: 6, get: (ex) => ex.reps ?? '' })
+  if (isEnabled('intensity')) perWeekCols.push({ key: 'intensity', label: 'Intensity/Weight', color: PURPLE, width: 16, get: (ex) => ex.intensity ?? '' })
+  if (isEnabled('load_cap')) perWeekCols.push({ key: 'load_cap', label: 'Load Cap', color: GREEN, width: 10, get: (ex) => ex.weight ?? '' })
+  if (isEnabled('load_used')) perWeekCols.push({ key: 'load_used', label: 'Load Used', color: GREEN, width: 10, get: (ex) => ex.load_used ?? '' })
+  if (isEnabled('rpe')) perWeekCols.push({ key: 'rpe', label: 'Last Set RPE', color: GREEN, width: 13, get: (ex) => ex.rpe ?? '' })
 
-  const fixedColCount = 2 + (showRestTime ? 1 : 0) // Day, Discipline, [Rest Time]
+  const fixedColCount = 1 // Day
   const perWeekColCount = perWeekCols.length
   const weekColStart = (w: number) => fixedColCount + 1 + w * (perWeekColCount + 1)
   const totalCols = fixedColCount + numWeeks * perWeekColCount + (numWeeks - 1)
@@ -269,25 +260,26 @@ router.get<{ id: string }>('/:id/export', async (req, res): Promise<void> => {
   const ws = wb.addWorksheet(sheetName)
 
   ws.getColumn(1).width = 13
-  ws.getColumn(2).width = 26
-  if (showRestTime) ws.getColumn(3).width = 14
-  const colWidthByKey: Record<string, number> = { sets: 6, reps: 6, intensity: 16, load_cap: 10, load_used: 10, rpe: 13 }
   for (let w = 0; w < numWeeks; w++) {
     const c = weekColStart(w)
     perWeekCols.forEach((pc, i) => {
-      ws.getColumn(c + i).width = colWidthByKey[pc.key] ?? 10
+      ws.getColumn(c + i).width = pc.width
     })
     if (w < numWeeks - 1) ws.getColumn(c + perWeekColCount).width = 3
   }
 
   let row = 1
   for (let w = 0; w < numWeeks; w++) {
-    const cell = ws.getCell(row, weekColStart(w))
+    const c = weekColStart(w)
+    const cell = ws.getCell(row, c)
     cell.value = `Week ${w + 1}`
     cell.fill = fill(RED)
     cell.font = { bold: true, italic: true, color: { argb: 'FFFFFFFF' } }
     cell.alignment = { horizontal: 'center', vertical: 'middle' }
     cell.border = allBorders
+    if (perWeekColCount > 1) {
+      ws.mergeCells(row, c, row, c + perWeekColCount - 1)
+    }
   }
   row++
 
@@ -298,22 +290,6 @@ router.get<{ id: string }>('/:id/export', async (req, res): Promise<void> => {
     dayCell.font = { bold: true, italic: true, color: { argb: 'FFFFFFFF' } }
     dayCell.alignment = { horizontal: 'left', vertical: 'middle' }
     dayCell.border = allBorders
-
-    const discCell = ws.getCell(r, 2)
-    discCell.value = 'Discipline'
-    discCell.fill = fill(PURPLE)
-    discCell.font = { bold: true, italic: true }
-    discCell.alignment = { horizontal: 'left', vertical: 'middle' }
-    discCell.border = allBorders
-
-    if (showRestTime) {
-      const restCell = ws.getCell(r, 3)
-      restCell.value = 'Rest Time(mins)'
-      restCell.fill = fill(PURPLE)
-      restCell.font = { bold: true, italic: true }
-      restCell.alignment = { horizontal: 'left', vertical: 'middle' }
-      restCell.border = allBorders
-    }
 
     for (let w = 0; w < numWeeks; w++) {
       const c = weekColStart(w)
@@ -329,31 +305,26 @@ router.get<{ id: string }>('/:id/export', async (req, res): Promise<void> => {
   }
 
   for (let dow = 0; dow < 7; dow++) {
-    const rows = dayData[dow]
+    const { perWeek, maxRows } = dayData[dow]
     writeDayHeader(row, dow)
     row++
 
-    const bodyCount = Math.max(rows.length, 1)
+    const bodyCount = Math.max(maxRows, 1)
     for (let r = 0; r < bodyCount; r++) {
-      const data = rows[r]
       if (r === 0) {
         const noteCell = ws.getCell(row, 1)
         noteCell.value = 'notes:'
         noteCell.font = { italic: true, color: { argb: 'FF888888' } }
       }
-      if (data) {
-        const nameCell = ws.getCell(row, 2)
-        nameCell.value = data.name
-        nameCell.font = { bold: true }
-        if (showRestTime) ws.getCell(row, 3).value = data.restTime
-        for (let w = 0; w < numWeeks; w++) {
-          const ex = data.perWeek[w]
-          if (!ex) continue
-          const c = weekColStart(w)
-          perWeekCols.forEach((pc, i) => {
-            ws.getCell(row, c + i).value = pc.get(ex)
-          })
-        }
+      for (let w = 0; w < numWeeks; w++) {
+        const ex = perWeek[w][r]
+        if (!ex) continue
+        const c = weekColStart(w)
+        perWeekCols.forEach((pc, i) => {
+          const cell = ws.getCell(row, c + i)
+          cell.value = pc.get(ex)
+          if (pc.key === 'name') cell.font = { bold: true }
+        })
       }
       for (let c = 1; c <= totalCols; c++) {
         const offset = c - fixedColCount - 1
@@ -361,7 +332,10 @@ router.get<{ id: string }>('/:id/export', async (req, res): Promise<void> => {
         if (isGap) continue
         const cell = ws.getCell(row, c)
         cell.border = allBorders
-        if (c >= fixedColCount + 1) cell.alignment = { horizontal: 'center', vertical: 'middle' }
+        if (c >= fixedColCount + 1) {
+          const pc = perWeekCols[offset % (perWeekColCount + 1)]
+          cell.alignment = { horizontal: pc?.key === 'name' ? 'left' : 'center', vertical: 'middle' }
+        }
       }
       row++
     }
