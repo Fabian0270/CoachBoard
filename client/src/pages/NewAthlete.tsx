@@ -15,13 +15,24 @@ export default function NewAthlete() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
-    const res = await fetch('/api/athletes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    })
-    const athlete = await res.json()
-    navigate(`/athletes/${athlete.id}`)
+    try {
+      const res = await fetch('/api/athletes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        alert(`Failed to create athlete: ${err.error ?? JSON.stringify(err)}`)
+        setSaving(false)
+        return
+      }
+      const athlete = await res.json()
+      navigate(`/athletes/${athlete.id}`)
+    } catch (err) {
+      alert(`Network error: ${String(err)}`)
+      setSaving(false)
+    }
   }
 
   return (

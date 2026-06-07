@@ -17,12 +17,22 @@ export default function ProgressTracking() {
   const [form, setForm] = useState({ metric_name: '', value: '', unit: '', recorded_at: new Date().toISOString().split('T')[0] })
 
   useEffect(() => {
-    fetch('/api/athletes').then((r) => r.json()).then((data) => { setAthletes(data); if (data.length) setSelectedAthlete(data[0].id) })
+    fetch('/api/athletes')
+      .then((r) => r.json())
+      .then((data) => {
+        const list = Array.isArray(data) ? data : []
+        setAthletes(list)
+        if (list.length) setSelectedAthlete(list[0].id)
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
     if (!selectedAthlete) return
-    fetch(`/api/progress?athlete_id=${selectedAthlete}`).then((r) => r.json()).then(setRecords)
+    fetch(`/api/progress?athlete_id=${selectedAthlete}`)
+      .then((r) => r.json())
+      .then((data) => setRecords(Array.isArray(data) ? data : []))
+      .catch(() => {})
   }, [selectedAthlete])
 
   const handleAdd = async (e: React.FormEvent) => {

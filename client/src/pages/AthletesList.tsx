@@ -20,7 +20,8 @@ export default function AthletesList() {
   useEffect(() => {
     fetch('/api/athletes')
       .then((r) => r.json())
-      .then((data) => { setAthletes(data); setLoading(false) })
+      .then((data) => { setAthletes(Array.isArray(data) ? data : []); setLoading(false) })
+      .catch(() => setLoading(false))
   }, [])
 
   const handleDelete = async (e: React.MouseEvent, athlete: Athlete) => {

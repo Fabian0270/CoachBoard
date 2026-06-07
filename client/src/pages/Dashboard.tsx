@@ -15,12 +15,16 @@ export default function Dashboard() {
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/athletes').then((r) => r.json()),
-      fetch('/api/programs').then((r) => r.json()),
-      fetch('/api/progress').then((r) => r.json()),
+      fetch('/api/athletes').then((r) => r.json()).catch(() => []),
+      fetch('/api/programs').then((r) => r.json()).catch(() => []),
+      fetch('/api/progress').then((r) => r.json()).catch(() => []),
     ]).then(([athletes, programs, progress]) => {
-      setStats({ athletes: athletes.length, programs: programs.length, progressRecords: progress.length })
-    })
+      setStats({
+        athletes: Array.isArray(athletes) ? athletes.length : 0,
+        programs: Array.isArray(programs) ? programs.length : 0,
+        progressRecords: Array.isArray(progress) ? progress.length : 0,
+      })
+    }).catch(() => {})
   }, [])
 
   return (

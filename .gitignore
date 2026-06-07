@@ -1,1 +1,5 @@
 node_modules
+dist-electron
+electron/dist
+client/dist
+server/dist

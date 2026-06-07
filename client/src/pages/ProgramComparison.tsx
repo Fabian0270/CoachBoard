@@ -16,9 +16,12 @@ export default function ProgramComparison() {
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/athletes').then((r) => r.json()),
-      fetch('/api/programs').then((r) => r.json()),
-    ]).then(([a, p]) => { setAthletes(a); setPrograms(p) })
+      fetch('/api/athletes').then((r) => r.json()).catch(() => []),
+      fetch('/api/programs').then((r) => r.json()).catch(() => []),
+    ]).then(([a, p]) => {
+      setAthletes(Array.isArray(a) ? a : [])
+      setPrograms(Array.isArray(p) ? p : [])
+    }).catch(() => {})
   }, [])
 
   const filtered = selectedAthlete === 'all' ? programs : programs.filter((p) => p.athlete_id === selectedAthlete)

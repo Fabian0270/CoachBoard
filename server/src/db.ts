@@ -72,18 +72,23 @@ export interface DB {
   progress_records: ProgressRecordTable
 }
 
-const DB_PATH = '/home/app/data/database.sqlite'
+let _db: Kysely<DB> | null = null
 
-mkdirSync(dirname(DB_PATH), { recursive: true })
+export function getDb(): Kysely<DB> {
+  if (!_db) throw new Error('Database not initialized — call initializeDatabase() first')
+  return _db
+}
 
-const dialect = new SqliteDialect({
-  database: new BetterSqlite3(DB_PATH, { verbose: console.log }),
-})
+export async function initializeDatabase(dbPath: string): Promise<void> {
+  mkdirSync(dirname(dbPath), { recursive: true })
 
-export const db = new Kysely<DB>({ dialect })
+  const dialect = new SqliteDialect({
+    database: new BetterSqlite3(dbPath),
+  })
 
-export async function initializeDatabase(): Promise<void> {
-  await sql`PRAGMA foreign_keys = ON`.execute(db)
+  _db = new Kysely<DB>({ dialect })
+
+  await sql`PRAGMA foreign_keys = ON`.execute(_db)
 
   await sql`
     CREATE TABLE IF NOT EXISTS athletes (
@@ -96,7 +101,7 @@ export async function initializeDatabase(): Promise<void> {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
-  `.execute(db)
+  `.execute(_db)
 
   await sql`
     CREATE TABLE IF NOT EXISTS programs (
@@ -112,7 +117,7 @@ export async function initializeDatabase(): Promise<void> {
       enabled_columns TEXT,
       FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
     )
-  `.execute(db)
+  `.execute(_db)
 
   await sql`
     CREATE TABLE IF NOT EXISTS workouts (
@@ -125,7 +130,7 @@ export async function initializeDatabase(): Promise<void> {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
     )
-  `.execute(db)
+  `.execute(_db)
 
   await sql`
     CREATE TABLE IF NOT EXISTS exercises (
@@ -145,11 +150,11 @@ export async function initializeDatabase(): Promise<void> {
       rpe TEXT,
       FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE CASCADE
     )
-  `.execute(db)
+  `.execute(_db)
 
   const addColumnIfMissing = async (table: string, column: string, type: string): Promise<void> => {
     try {
-      await sql`ALTER TABLE ${sql.raw(table)} ADD COLUMN ${sql.raw(column)} ${sql.raw(type)}`.execute(db)
+      await sql`ALTER TABLE ${sql.raw(table)} ADD COLUMN ${sql.raw(column)} ${sql.raw(type)}`.execute(_db!)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       if (!msg.toLowerCase().includes('duplicate column')) throw e
@@ -173,6 +178,5 @@ export async function initializeDatabase(): Promise<void> {
       notes TEXT,
       FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
     )
-  `.execute(db)
-
+  `.execute(_db)
 }

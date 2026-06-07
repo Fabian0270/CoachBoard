@@ -1,6 +1,14 @@
 import { Router, Request, Response } from 'express'
-import { db } from '../db.js'
+import { getDb } from '../db.js'
 import { v4 as uuidv4 } from 'uuid'
+
+const db = new Proxy({} as ReturnType<typeof getDb>, {
+  get: (_t, p) => {
+    const target = getDb()
+    const val = Reflect.get(target, p)
+    return typeof val === 'function' ? (val as Function).bind(target) : val
+  },
+})
 
 const router = Router()
 
@@ -35,21 +43,6 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     .returningAll()
     .executeTakeFirstOrThrow()
   res.status(201).json(athlete)
-})
-
-router.put('/:id', async (req: Request, res: Response): Promise<void> => {
-  const { name, email, sport, date_of_birth, notes } = req.body
-  const updated = await db
-    .updateTable('athletes')
-    .set({ name, email: email ?? null, sport: sport ?? null, date_of_birth: date_of_birth ?? null, notes: notes ?? null, updated_at: new Date().toISOString() })
-    .where('id', '=', req.params.id)
-    .returningAll()
-    .executeTakeFirst()
-  if (!updated) {
-    res.status(404).json({ error: 'Athlete not found' })
-    return
-  }
-  res.json(updated)
 })
 
 router.delete('/:id', async (req: Request, res: Response): Promise<void> => {

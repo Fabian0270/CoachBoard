@@ -1,0 +1,19 @@
+{
+  "name": "coachboard-electron",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "dev:wait": "wait-on http://localhost:3000 && electron ."
+  },
+  "description": "CoachBoard desktop app",
+  "author": "Fabian Olsson",
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "electron": "33.4.11",
+    "electron-builder": "^25.0.0",
+    "typescript": "^5.6.3",
+    "wait-on": "^8.0.0"
+  }
+}

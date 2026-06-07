@@ -1,0 +1,42 @@
+import express, { NextFunction, Request, Response } from 'express'
+import cors from 'cors'
+import { join } from 'path'
+import fs from 'fs'
+import athletesRouter from './routes/athletes.js'
+import programsRouter from './routes/programs.js'
+import progressRouter from './routes/progress.js'
+
+export function createApp(staticDir?: string, logPath?: string) {
+  const app = express()
+
+  const log = (msg: string) => {
+    const line = `[${new Date().toISOString()}] ${msg}\n`
+    if (logPath) try { fs.appendFileSync(logPath, line) } catch { /* ignore */ }
+    console.error(msg)
+  }
+
+  app.use(cors({ origin: ['http://localhost:3000', 'http://localhost:3001'] }))
+  app.use(express.json())
+  app.use(express.urlencoded({ extended: true }))
+
+  app.use('/api/athletes', athletesRouter)
+  app.use('/api/programs', programsRouter)
+  app.use('/api/progress', progressRouter)
+
+  if (staticDir) {
+    app.use(express.static(staticDir))
+    // Catch-all: serve index.html for any non-API path (HashRouter handles client routing)
+    app.use((_req, res) => {
+      res.sendFile(join(staticDir, 'index.html'))
+    })
+  }
+
+  // Global error handler — logs the error and returns JSON
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    const msg = err instanceof Error ? err.stack ?? err.message : String(err)
+    log(`EXPRESS ERROR: ${msg}`)
+    res.status(500).json({ error: msg })
+  })
+
+  return app
+}

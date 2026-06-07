@@ -1,6 +1,14 @@
 import { Router, Request, Response } from 'express'
-import { db } from '../db.js'
+import { getDb } from '../db.js'
 import { v4 as uuidv4 } from 'uuid'
+
+const db = new Proxy({} as ReturnType<typeof getDb>, {
+  get: (_t, p) => {
+    const target = getDb()
+    const val = Reflect.get(target, p)
+    return typeof val === 'function' ? (val as Function).bind(target) : val
+  },
+})
 
 const router = Router()
 
