@@ -1,15 +1,7 @@
 import { Router, Request, Response } from 'express'
 import ExcelJS from 'exceljs'
-import { getDb } from '../db.js'
 import { v4 as uuidv4 } from 'uuid'
-
-const db = new Proxy({} as ReturnType<typeof getDb>, {
-  get: (_t, p) => {
-    const target = getDb()
-    const val = Reflect.get(target, p)
-    return typeof val === 'function' ? (val as Function).bind(target) : val
-  },
-})
+import { db, toIsoDate } from './db-proxy.js'
 
 const router = Router()
 
@@ -34,36 +26,52 @@ function withParsedColumns<T extends { enabled_columns: string | null }>(program
   }
 }
 
+function mondayOf(date: Date): Date {
+  const dayOfWeek = date.getUTCDay()
+  const offset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+  const monday = new Date(date)
+  monday.setUTCDate(date.getUTCDate() + offset)
+  return monday
+}
+
 router.get('/', async (req: Request, res: Response): Promise<void> => {
-  let query = db.selectFrom('programs').selectAll()
-  if (req.query.athlete_id) {
-    query = query.where('athlete_id', '=', req.query.athlete_id as string)
+  try {
+    let query = db.selectFrom('programs').selectAll()
+    if (req.query.athlete_id) {
+      query = query.where('athlete_id', '=', req.query.athlete_id as string)
+    }
+    const programs = await query.orderBy('created_at', 'desc').execute()
+    res.json(programs.map(withParsedColumns))
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch programs' })
   }
-  const programs = await query.orderBy('created_at', 'desc').execute()
-  res.json(programs.map(withParsedColumns))
 })
 
 router.get('/:id', async (req: Request, res: Response): Promise<void> => {
-  const program = await db
-    .selectFrom('programs')
-    .selectAll()
-    .where('id', '=', req.params.id)
-    .executeTakeFirst()
-  if (!program) {
-    res.status(404).json({ error: 'Program not found' })
-    return
+  try {
+    const program = await db
+      .selectFrom('programs')
+      .selectAll()
+      .where('id', '=', req.params.id)
+      .executeTakeFirst()
+    if (!program) {
+      res.status(404).json({ error: 'Program not found' })
+      return
+    }
+    const workouts = await db
+      .selectFrom('workouts')
+      .selectAll()
+      .where('program_id', '=', req.params.id)
+      .orderBy('scheduled_date')
+      .execute()
+    const workoutIds = workouts.map((workout) => workout.id)
+    const exercises = workoutIds.length
+      ? await db.selectFrom('exercises').selectAll().where('workout_id', 'in', workoutIds).orderBy('order_index').execute()
+      : []
+    res.json({ ...withParsedColumns(program), workouts: workouts.map((workout) => ({ ...workout, exercises: exercises.filter((e) => e.workout_id === workout.id) })) })
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch program' })
   }
-  const workouts = await db
-    .selectFrom('workouts')
-    .selectAll()
-    .where('program_id', '=', req.params.id)
-    .orderBy('scheduled_date')
-    .execute()
-  const workoutIds = workouts.map((w) => w.id)
-  const exercises = workoutIds.length
-    ? await db.selectFrom('exercises').selectAll().where('workout_id', 'in', workoutIds).orderBy('order_index').execute()
-    : []
-  res.json({ ...withParsedColumns(program), workouts: workouts.map((w) => ({ ...w, exercises: exercises.filter((e) => e.workout_id === w.id) })) })
 })
 
 router.post('/', async (req: Request, res: Response): Promise<void> => {
@@ -72,289 +80,322 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     res.status(400).json({ error: 'athlete_id and name are required' })
     return
   }
-  const now = new Date().toISOString()
-  const program = await db
-    .insertInto('programs')
-    .values({
-      id: uuidv4(),
-      athlete_id,
-      name,
-      description: description ?? null,
-      start_date: start_date ?? null,
-      end_date: end_date ?? null,
-      status: status ?? 'active',
-      enabled_columns: serializeEnabledColumns(enabled_columns),
-      created_at: now,
-      updated_at: now,
-    })
-    .returningAll()
-    .executeTakeFirstOrThrow()
-  res.status(201).json(withParsedColumns(program))
+  try {
+    const now = new Date().toISOString()
+    const program = await db
+      .insertInto('programs')
+      .values({
+        id: uuidv4(),
+        athlete_id,
+        name,
+        description: description ?? null,
+        start_date: start_date ?? null,
+        end_date: end_date ?? null,
+        status: status ?? 'active',
+        enabled_columns: serializeEnabledColumns(enabled_columns),
+        created_at: now,
+        updated_at: now,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow()
+    res.status(201).json(withParsedColumns(program))
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create program' })
+  }
 })
 
 router.put('/:id', async (req: Request, res: Response): Promise<void> => {
   const { name, description, start_date, end_date, status, enabled_columns } = req.body
-  const updated = await db
-    .updateTable('programs')
-    .set({
-      ...(name !== undefined ? { name } : {}),
-      ...(description !== undefined ? { description: description ?? null } : {}),
-      ...(start_date !== undefined ? { start_date: start_date ?? null } : {}),
-      ...(end_date !== undefined ? { end_date: end_date ?? null } : {}),
-      ...(status !== undefined ? { status: status ?? 'active' } : {}),
-      ...(enabled_columns !== undefined ? { enabled_columns: serializeEnabledColumns(enabled_columns) } : {}),
-      updated_at: new Date().toISOString(),
-    })
-    .where('id', '=', req.params.id)
-    .returningAll()
-    .executeTakeFirst()
-  if (!updated) {
-    res.status(404).json({ error: 'Program not found' })
-    return
+  try {
+    const updated = await db
+      .updateTable('programs')
+      .set({
+        ...(name !== undefined ? { name } : {}),
+        ...(description !== undefined ? { description: description ?? null } : {}),
+        ...(start_date !== undefined ? { start_date: start_date ?? null } : {}),
+        ...(end_date !== undefined ? { end_date: end_date ?? null } : {}),
+        ...(status !== undefined ? { status: status ?? 'active' } : {}),
+        ...(enabled_columns !== undefined ? { enabled_columns: serializeEnabledColumns(enabled_columns) } : {}),
+        updated_at: new Date().toISOString(),
+      })
+      .where('id', '=', req.params.id)
+      .returningAll()
+      .executeTakeFirst()
+    if (!updated) {
+      res.status(404).json({ error: 'Program not found' })
+      return
+    }
+    res.json(withParsedColumns(updated))
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update program' })
   }
-  res.json(withParsedColumns(updated))
 })
 
 router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
-  const deleted = await db
-    .deleteFrom('programs')
-    .where('id', '=', req.params.id)
-    .returningAll()
-    .executeTakeFirst()
-  if (!deleted) {
-    res.status(404).json({ error: 'Program not found' })
-    return
+  try {
+    const deleted = await db
+      .deleteFrom('programs')
+      .where('id', '=', req.params.id)
+      .returningAll()
+      .executeTakeFirst()
+    if (!deleted) {
+      res.status(404).json({ error: 'Program not found' })
+      return
+    }
+    res.status(204).send()
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete program' })
   }
-  res.status(204).send()
 })
 
-router.post<{ programId: string }>('/:programId/workouts', async (req, res): Promise<void> => {
+router.post('/:programId/workouts', async (req: Request, res: Response): Promise<void> => {
   const { name, scheduled_date, notes } = req.body
   const resolvedName = name || scheduled_date || 'Workout'
-  const workout = await db
-    .insertInto('workouts')
-    .values({ id: uuidv4(), program_id: req.params.programId, name: resolvedName, scheduled_date: scheduled_date ?? null, notes: notes ?? null, created_at: new Date().toISOString() })
-    .returningAll()
-    .executeTakeFirstOrThrow()
-  res.status(201).json(workout)
+  try {
+    const workout = await db
+      .insertInto('workouts')
+      .values({
+        id: uuidv4(),
+        program_id: req.params.programId,
+        name: resolvedName,
+        scheduled_date: scheduled_date ?? null,
+        notes: notes ?? null,
+        created_at: new Date().toISOString(),
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow()
+    res.status(201).json(workout)
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create workout' })
+  }
 })
 
 router.put('/:programId/workouts/:workoutId', async (req: Request, res: Response): Promise<void> => {
   const { name, scheduled_date, notes } = req.body
-  const updated = await db
-    .updateTable('workouts')
-    .set({
-      ...(name !== undefined ? { name } : {}),
-      ...(scheduled_date !== undefined ? { scheduled_date: scheduled_date ?? null } : {}),
-      ...(notes !== undefined ? { notes: notes ?? null } : {}),
-    })
-    .where('id', '=', req.params.workoutId)
-    .where('program_id', '=', req.params.programId)
-    .returningAll()
-    .executeTakeFirst()
-  if (!updated) {
-    res.status(404).json({ error: 'Workout not found' })
-    return
+  try {
+    const updated = await db
+      .updateTable('workouts')
+      .set({
+        ...(name !== undefined ? { name } : {}),
+        ...(scheduled_date !== undefined ? { scheduled_date: scheduled_date ?? null } : {}),
+        ...(notes !== undefined ? { notes: notes ?? null } : {}),
+      })
+      .where('id', '=', req.params.workoutId)
+      .where('program_id', '=', req.params.programId)
+      .returningAll()
+      .executeTakeFirst()
+    if (!updated) {
+      res.status(404).json({ error: 'Workout not found' })
+      return
+    }
+    res.json(updated)
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update workout' })
   }
-  res.json(updated)
 })
 
 router.delete('/:programId/workouts/:workoutId', async (req: Request, res: Response): Promise<void> => {
-  const deleted = await db
-    .deleteFrom('workouts')
-    .where('id', '=', req.params.workoutId)
-    .where('program_id', '=', req.params.programId)
-    .returningAll()
-    .executeTakeFirst()
-  if (!deleted) {
-    res.status(404).json({ error: 'Workout not found' })
-    return
+  try {
+    const deleted = await db
+      .deleteFrom('workouts')
+      .where('id', '=', req.params.workoutId)
+      .where('program_id', '=', req.params.programId)
+      .returningAll()
+      .executeTakeFirst()
+    if (!deleted) {
+      res.status(404).json({ error: 'Workout not found' })
+      return
+    }
+    res.status(204).send()
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete workout' })
   }
-  res.status(204).send()
 })
 
-router.get<{ id: string }>('/:id/export', async (req, res): Promise<void> => {
-  const program = await db.selectFrom('programs').selectAll().where('id', '=', req.params.id).executeTakeFirst()
-  if (!program) {
-    res.status(404).json({ error: 'Program not found' })
-    return
-  }
-  if (!program.start_date || !program.end_date) {
-    res.status(400).json({ error: 'Program needs a date range before export' })
-    return
-  }
-
-  const enabledSet = (() => {
-    if (!program.enabled_columns) return new Set(TOGGLEABLE_COLUMNS as readonly string[])
-    try {
-      const parsed = JSON.parse(program.enabled_columns)
-      if (Array.isArray(parsed)) return new Set(parsed.filter((c) => typeof c === 'string'))
-    } catch { /* fall through */ }
-    return new Set(TOGGLEABLE_COLUMNS as readonly string[])
-  })()
-  const isEnabled = (k: ToggleableColumn) => enabledSet.has(k)
-
-  const workouts = await db.selectFrom('workouts').selectAll().where('program_id', '=', program.id).execute()
-  const workoutIds = workouts.map((w) => w.id)
-  const exercises = workoutIds.length
-    ? await db.selectFrom('exercises').selectAll().where('workout_id', 'in', workoutIds).orderBy('order_index').execute()
-    : []
-
-  const exercisesByWorkout = new Map<string, typeof exercises>()
-  for (const ex of exercises) {
-    const list = exercisesByWorkout.get(ex.workout_id) ?? []
-    list.push(ex)
-    exercisesByWorkout.set(ex.workout_id, list)
-  }
-  const workoutByDate = new Map<string, typeof workouts[number]>()
-  for (const w of workouts) if (w.scheduled_date) workoutByDate.set(w.scheduled_date, w)
-
-  const [sy, sm, sd] = program.start_date.split('-').map(Number)
-  const [ey, em, ed] = program.end_date.split('-').map(Number)
-  const rawStart = new Date(Date.UTC(sy, sm - 1, sd))
-  const startDow = rawStart.getUTCDay()
-  const mondayOffset = startDow === 0 ? -6 : 1 - startDow
-  const startMonday = new Date(rawStart)
-  startMonday.setUTCDate(rawStart.getUTCDate() + mondayOffset)
-  const endDate = new Date(Date.UTC(ey, em - 1, ed))
-  const totalDays = Math.round((endDate.getTime() - startMonday.getTime()) / 86400000) + 1
-  const numWeeks = Math.max(1, Math.ceil(totalDays / 7))
-  const isoDate = (d: Date) => d.toISOString().slice(0, 10)
-
-  type Ex = typeof exercises[number]
-
-  const DOW_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-  const dayData: Array<{ perWeek: Ex[][]; maxRows: number }> = []
-  for (let dow = 0; dow < 7; dow++) {
-    const perWeek: Ex[][] = []
-    let maxRows = 0
-    for (let w = 0; w < numWeeks; w++) {
-      const date = new Date(startMonday)
-      date.setUTCDate(startMonday.getUTCDate() + w * 7 + dow)
-      const workout = workoutByDate.get(isoDate(date))
-      const exes = workout ? exercisesByWorkout.get(workout.id) ?? [] : []
-      perWeek.push(exes)
-      if (exes.length > maxRows) maxRows = exes.length
+router.get('/:id/export', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const program = await db.selectFrom('programs').selectAll().where('id', '=', req.params.id).executeTakeFirst()
+    if (!program) {
+      res.status(404).json({ error: 'Program not found' })
+      return
     }
-    dayData.push({ perWeek, maxRows })
-  }
-
-  type PerWeekCol = { key: string; label: string; color: string; width: number; get: (ex: Ex) => string | number | null }
-  const PURPLE = 'FFB39DDB'
-  const GREEN = 'FF4DB6AC'
-  const perWeekCols: PerWeekCol[] = []
-  perWeekCols.push({ key: 'name', label: 'Discipline', color: PURPLE, width: 22, get: (ex) => ex.name ?? '' })
-  if (isEnabled('rest_time')) perWeekCols.push({ key: 'rest_time', label: 'Rest Time(mins)', color: PURPLE, width: 12, get: (ex) => ex.rest_time ?? '' })
-  perWeekCols.push({ key: 'sets', label: 'Sets', color: PURPLE, width: 6, get: (ex) => ex.sets ?? '' })
-  perWeekCols.push({ key: 'reps', label: 'Reps', color: PURPLE, width: 6, get: (ex) => ex.reps ?? '' })
-  if (isEnabled('intensity')) perWeekCols.push({ key: 'intensity', label: 'Intensity/Weight', color: PURPLE, width: 16, get: (ex) => ex.intensity ?? '' })
-  if (isEnabled('load_cap')) perWeekCols.push({ key: 'load_cap', label: 'Load Cap', color: GREEN, width: 10, get: (ex) => ex.weight ?? '' })
-  if (isEnabled('load_used')) perWeekCols.push({ key: 'load_used', label: 'Load Used', color: GREEN, width: 10, get: (ex) => ex.load_used ?? '' })
-  if (isEnabled('rpe')) perWeekCols.push({ key: 'rpe', label: 'Last Set RPE', color: GREEN, width: 13, get: (ex) => ex.rpe ?? '' })
-
-  const fixedColCount = 1 // Day
-  const perWeekColCount = perWeekCols.length
-  const weekColStart = (w: number) => fixedColCount + 1 + w * (perWeekColCount + 1)
-  const totalCols = fixedColCount + numWeeks * perWeekColCount + (numWeeks - 1)
-
-  const RED = 'FFE57373'
-  const BORDER_COLOR = 'FFCCCCCC'
-  const fill = (argb: string): ExcelJS.FillPattern => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } })
-  const border: ExcelJS.Border = { style: 'thin', color: { argb: BORDER_COLOR } }
-  const allBorders = { top: border, left: border, bottom: border, right: border }
-
-  const wb = new ExcelJS.Workbook()
-  const sheetName = (program.name || 'Program').replace(/[\\/?*[\]:]/g, '').slice(0, 31) || 'Program'
-  const ws = wb.addWorksheet(sheetName)
-
-  ws.getColumn(1).width = 13
-  for (let w = 0; w < numWeeks; w++) {
-    const c = weekColStart(w)
-    perWeekCols.forEach((pc, i) => {
-      ws.getColumn(c + i).width = pc.width
-    })
-    if (w < numWeeks - 1) ws.getColumn(c + perWeekColCount).width = 3
-  }
-
-  let row = 1
-  for (let w = 0; w < numWeeks; w++) {
-    const c = weekColStart(w)
-    const cell = ws.getCell(row, c)
-    cell.value = `Week ${w + 1}`
-    cell.fill = fill(RED)
-    cell.font = { bold: true, italic: true, color: { argb: 'FFFFFFFF' } }
-    cell.alignment = { horizontal: 'center', vertical: 'middle' }
-    cell.border = allBorders
-    if (perWeekColCount > 1) {
-      ws.mergeCells(row, c, row, c + perWeekColCount - 1)
+    if (!program.start_date || !program.end_date) {
+      res.status(400).json({ error: 'Program needs a date range before export' })
+      return
     }
-  }
-  row++
 
-  const writeDayHeader = (r: number, dow: number) => {
-    const dayCell = ws.getCell(r, 1)
-    dayCell.value = DOW_NAMES[dow]
-    dayCell.fill = fill(RED)
-    dayCell.font = { bold: true, italic: true, color: { argb: 'FFFFFFFF' } }
-    dayCell.alignment = { horizontal: 'left', vertical: 'middle' }
-    dayCell.border = allBorders
+    const enabledSet = (() => {
+      if (!program.enabled_columns) return new Set(TOGGLEABLE_COLUMNS as readonly string[])
+      try {
+        const parsed = JSON.parse(program.enabled_columns)
+        if (Array.isArray(parsed)) return new Set(parsed.filter((c) => typeof c === 'string'))
+      } catch { /* fall through */ }
+      return new Set(TOGGLEABLE_COLUMNS as readonly string[])
+    })()
+    const isEnabled = (k: ToggleableColumn) => enabledSet.has(k)
 
-    for (let w = 0; w < numWeeks; w++) {
-      const c = weekColStart(w)
-      perWeekCols.forEach((pc, i) => {
-        const cell = ws.getCell(r, c + i)
-        cell.value = pc.label
-        cell.fill = fill(pc.color)
-        cell.font = { bold: true, italic: true }
-        cell.alignment = { horizontal: 'left', vertical: 'middle' }
-        cell.border = allBorders
+    const workouts = await db.selectFrom('workouts').selectAll().where('program_id', '=', program.id).execute()
+    const workoutIds = workouts.map((workout) => workout.id)
+    const exercises = workoutIds.length
+      ? await db.selectFrom('exercises').selectAll().where('workout_id', 'in', workoutIds).orderBy('order_index').execute()
+      : []
+
+    const exercisesByWorkout = new Map<string, typeof exercises>()
+    for (const exercise of exercises) {
+      const list = exercisesByWorkout.get(exercise.workout_id) ?? []
+      list.push(exercise)
+      exercisesByWorkout.set(exercise.workout_id, list)
+    }
+    const workoutByDate = new Map<string, typeof workouts[number]>()
+    for (const workout of workouts) {
+      if (workout.scheduled_date) workoutByDate.set(workout.scheduled_date, workout)
+    }
+
+    const [sy, sm, sd] = program.start_date.split('-').map(Number)
+    const [ey, em, ed] = program.end_date.split('-').map(Number)
+    const rawStart = new Date(Date.UTC(sy, sm - 1, sd))
+    const startMonday = mondayOf(rawStart)
+    const endDate = new Date(Date.UTC(ey, em - 1, ed))
+    const totalDays = Math.round((endDate.getTime() - startMonday.getTime()) / 86400000) + 1
+    const numWeeks = Math.max(1, Math.ceil(totalDays / 7))
+
+    type ExerciseRow = typeof exercises[number]
+
+    const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    const dayData: Array<{ perWeek: ExerciseRow[][]; maxRows: number }> = []
+    for (let dayOfWeek = 0; dayOfWeek < 7; dayOfWeek++) {
+      const perWeek: ExerciseRow[][] = []
+      let maxRows = 0
+      for (let weekIndex = 0; weekIndex < numWeeks; weekIndex++) {
+        const date = new Date(startMonday)
+        date.setUTCDate(startMonday.getUTCDate() + weekIndex * 7 + dayOfWeek)
+        const workout = workoutByDate.get(toIsoDate(date))
+        const workoutExercises = workout ? exercisesByWorkout.get(workout.id) ?? [] : []
+        perWeek.push(workoutExercises)
+        if (workoutExercises.length > maxRows) maxRows = workoutExercises.length
+      }
+      dayData.push({ perWeek, maxRows })
+    }
+
+    type ExportColumn = { key: string; label: string; color: string; width: number; get: (ex: ExerciseRow) => string | number | null }
+    const HEADER_COLOR = 'FFB39DDB'
+    const TRACKING_COLOR = 'FF4DB6AC'
+    const exportColumns: ExportColumn[] = []
+    exportColumns.push({ key: 'name', label: 'Discipline', color: HEADER_COLOR, width: 22, get: (ex) => ex.name ?? '' })
+    if (isEnabled('rest_time')) exportColumns.push({ key: 'rest_time', label: 'Rest Time(mins)', color: HEADER_COLOR, width: 12, get: (ex) => ex.rest_time ?? '' })
+    exportColumns.push({ key: 'sets', label: 'Sets', color: HEADER_COLOR, width: 6, get: (ex) => ex.sets ?? '' })
+    exportColumns.push({ key: 'reps', label: 'Reps', color: HEADER_COLOR, width: 6, get: (ex) => ex.reps ?? '' })
+    if (isEnabled('intensity')) exportColumns.push({ key: 'intensity', label: 'Intensity/Weight', color: HEADER_COLOR, width: 16, get: (ex) => ex.intensity ?? '' })
+    if (isEnabled('load_cap')) exportColumns.push({ key: 'load_cap', label: 'Load Cap', color: TRACKING_COLOR, width: 10, get: (ex) => ex.weight ?? '' })
+    if (isEnabled('load_used')) exportColumns.push({ key: 'load_used', label: 'Load Used', color: TRACKING_COLOR, width: 10, get: (ex) => ex.load_used ?? '' })
+    if (isEnabled('rpe')) exportColumns.push({ key: 'rpe', label: 'Last Set RPE', color: TRACKING_COLOR, width: 13, get: (ex) => ex.rpe ?? '' })
+
+    const fixedColumnCount = 1 // Day column
+    const exportColumnCount = exportColumns.length
+    const weekColumnStart = (weekIndex: number) => fixedColumnCount + 1 + weekIndex * (exportColumnCount + 1)
+    const totalCols = fixedColumnCount + numWeeks * exportColumnCount + (numWeeks - 1)
+
+    const RED = 'FFE57373'
+    const BORDER_COLOR = 'FFCCCCCC'
+    const fill = (argb: string): ExcelJS.FillPattern => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } })
+    const border: ExcelJS.Border = { style: 'thin', color: { argb: BORDER_COLOR } }
+    const allBorders = { top: border, left: border, bottom: border, right: border }
+
+    const wb = new ExcelJS.Workbook()
+    const sheetName = (program.name || 'Program').replace(/[\\/?*[\]:]/g, '').slice(0, 31) || 'Program'
+    const ws = wb.addWorksheet(sheetName)
+
+    ws.getColumn(1).width = 13
+    for (let weekIndex = 0; weekIndex < numWeeks; weekIndex++) {
+      const col = weekColumnStart(weekIndex)
+      exportColumns.forEach((exportCol, i) => {
+        ws.getColumn(col + i).width = exportCol.width
       })
+      if (weekIndex < numWeeks - 1) ws.getColumn(col + exportColumnCount).width = 3
     }
-  }
 
-  for (let dow = 0; dow < 7; dow++) {
-    const { perWeek, maxRows } = dayData[dow]
-    writeDayHeader(row, dow)
+    let row = 1
+    for (let weekIndex = 0; weekIndex < numWeeks; weekIndex++) {
+      const col = weekColumnStart(weekIndex)
+      const cell = ws.getCell(row, col)
+      cell.value = `Week ${weekIndex + 1}`
+      cell.fill = fill(RED)
+      cell.font = { bold: true, italic: true, color: { argb: 'FFFFFFFF' } }
+      cell.alignment = { horizontal: 'center', vertical: 'middle' }
+      cell.border = allBorders
+      if (exportColumnCount > 1) {
+        ws.mergeCells(row, col, row, col + exportColumnCount - 1)
+      }
+    }
     row++
 
-    const bodyCount = Math.max(maxRows, 1)
-    for (let r = 0; r < bodyCount; r++) {
-      if (r === 0) {
-        const noteCell = ws.getCell(row, 1)
-        noteCell.value = 'notes:'
-        noteCell.font = { italic: true, color: { argb: 'FF888888' } }
-      }
-      for (let w = 0; w < numWeeks; w++) {
-        const ex = perWeek[w][r]
-        if (!ex) continue
-        const c = weekColStart(w)
-        perWeekCols.forEach((pc, i) => {
-          const cell = ws.getCell(row, c + i)
-          cell.value = pc.get(ex)
-          if (pc.key === 'name') cell.font = { bold: true }
+    const writeDayHeader = (rowIndex: number, dayOfWeek: number) => {
+      const dayCell = ws.getCell(rowIndex, 1)
+      dayCell.value = DAY_NAMES[dayOfWeek]
+      dayCell.fill = fill(RED)
+      dayCell.font = { bold: true, italic: true, color: { argb: 'FFFFFFFF' } }
+      dayCell.alignment = { horizontal: 'left', vertical: 'middle' }
+      dayCell.border = allBorders
+
+      for (let weekIndex = 0; weekIndex < numWeeks; weekIndex++) {
+        const col = weekColumnStart(weekIndex)
+        exportColumns.forEach((exportCol, i) => {
+          const cell = ws.getCell(rowIndex, col + i)
+          cell.value = exportCol.label
+          cell.fill = fill(exportCol.color)
+          cell.font = { bold: true, italic: true }
+          cell.alignment = { horizontal: 'left', vertical: 'middle' }
+          cell.border = allBorders
         })
       }
-      for (let c = 1; c <= totalCols; c++) {
-        const offset = c - fixedColCount - 1
-        const isGap = c > fixedColCount && offset >= 0 && (offset % (perWeekColCount + 1)) === perWeekColCount
-        if (isGap) continue
-        const cell = ws.getCell(row, c)
-        cell.border = allBorders
-        if (c >= fixedColCount + 1) {
-          const pc = perWeekCols[offset % (perWeekColCount + 1)]
-          cell.alignment = { horizontal: pc?.key === 'name' ? 'left' : 'center', vertical: 'middle' }
+    }
+
+    for (let dayOfWeek = 0; dayOfWeek < 7; dayOfWeek++) {
+      const { perWeek, maxRows } = dayData[dayOfWeek]
+      writeDayHeader(row, dayOfWeek)
+      row++
+
+      const bodyCount = Math.max(maxRows, 1)
+      for (let r = 0; r < bodyCount; r++) {
+        if (r === 0) {
+          const noteCell = ws.getCell(row, 1)
+          noteCell.value = 'notes:'
+          noteCell.font = { italic: true, color: { argb: 'FF888888' } }
         }
+        for (let weekIndex = 0; weekIndex < numWeeks; weekIndex++) {
+          const exercise = perWeek[weekIndex][r]
+          if (!exercise) continue
+          const col = weekColumnStart(weekIndex)
+          exportColumns.forEach((exportCol, i) => {
+            const cell = ws.getCell(row, col + i)
+            cell.value = exportCol.get(exercise)
+            if (exportCol.key === 'name') cell.font = { bold: true }
+          })
+        }
+        for (let c = 1; c <= totalCols; c++) {
+          const offset = c - fixedColumnCount - 1
+          const isGap = c > fixedColumnCount && offset >= 0 && (offset % (exportColumnCount + 1)) === exportColumnCount
+          if (isGap) continue
+          const cell = ws.getCell(row, c)
+          cell.border = allBorders
+          if (c >= fixedColumnCount + 1) {
+            const exportCol = exportColumns[offset % (exportColumnCount + 1)]
+            cell.alignment = { horizontal: exportCol?.key === 'name' ? 'left' : 'center', vertical: 'middle' }
+          }
+        }
+        row++
       }
       row++
     }
-    row++
-  }
 
-  const buffer = await wb.xlsx.writeBuffer()
-  const safeName = (program.name || 'program').replace(/[^\w\s-]/g, '_').replace(/\s+/g, '_').slice(0, 60) || 'program'
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-  res.setHeader('Content-Disposition', `attachment; filename="${safeName}.xlsx"`)
-  res.send(Buffer.from(buffer as ArrayBuffer))
+    const buffer = await wb.xlsx.writeBuffer()
+    const safeName = (program.name || 'program').replace(/[^\w\s-]/g, '_').replace(/\s+/g, '_').slice(0, 60) || 'program'
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.xlsx"`)
+    res.send(Buffer.from(buffer as ArrayBuffer))
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to export program' })
+  }
 })
 
 router.put('/:programId/duration', async (req: Request, res: Response): Promise<void> => {
@@ -368,96 +409,108 @@ router.put('/:programId/duration', async (req: Request, res: Response): Promise<
     res.status(400).json({ error: 'invalid start_date' })
     return
   }
-  const day = start.getUTCDay()
-  const offset = day === 0 ? -6 : 1 - day
-  const monday = new Date(start)
-  monday.setUTCDate(start.getUTCDate() + offset)
-  const end = new Date(monday)
-  end.setUTCDate(monday.getUTCDate() + Number(weeks) * 7 - 1)
-  const iso = (d: Date) => d.toISOString().slice(0, 10)
-  const updated = await db
-    .updateTable('programs')
-    .set({
-      start_date: iso(monday),
-      end_date: iso(end),
-      updated_at: new Date().toISOString(),
-    })
-    .where('id', '=', req.params.programId)
-    .returningAll()
-    .executeTakeFirst()
-  if (!updated) {
-    res.status(404).json({ error: 'Program not found' })
-    return
+  try {
+    const monday = mondayOf(start)
+    const end = new Date(monday)
+    end.setUTCDate(monday.getUTCDate() + Number(weeks) * 7 - 1)
+    const updated = await db
+      .updateTable('programs')
+      .set({
+        start_date: toIsoDate(monday),
+        end_date: toIsoDate(end),
+        updated_at: new Date().toISOString(),
+      })
+      .where('id', '=', req.params.programId)
+      .returningAll()
+      .executeTakeFirst()
+    if (!updated) {
+      res.status(404).json({ error: 'Program not found' })
+      return
+    }
+    res.json(updated)
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update program duration' })
   }
-  res.json(updated)
 })
 
-router.post<{ programId: string; workoutId: string }>('/:programId/workouts/:workoutId/exercises', async (req, res): Promise<void> => {
+router.post('/:programId/workouts/:workoutId/exercises', async (req: Request, res: Response): Promise<void> => {
   const { name, sets, reps, weight, duration, distance, notes, order_index, rest_time, intensity, load_used, rpe } = req.body
-  const exercise = await db
-    .insertInto('exercises')
-    .values({
-      id: uuidv4(),
-      workout_id: req.params.workoutId,
-      name: name ?? '',
-      sets: sets ?? null,
-      reps: reps ?? null,
-      weight: weight ?? null,
-      duration: duration ?? null,
-      distance: distance ?? null,
-      notes: notes ?? null,
-      order_index: order_index ?? 0,
-      rest_time: rest_time ?? null,
-      intensity: intensity ?? null,
-      load_used: load_used ?? null,
-      rpe: rpe ?? null,
-    })
-    .returningAll()
-    .executeTakeFirstOrThrow()
-  res.status(201).json(exercise)
+  try {
+    const exercise = await db
+      .insertInto('exercises')
+      .values({
+        id: uuidv4(),
+        workout_id: req.params.workoutId,
+        name: name ?? '',
+        sets: sets ?? null,
+        reps: reps ?? null,
+        weight: weight ?? null,
+        duration: duration ?? null,
+        distance: distance ?? null,
+        notes: notes ?? null,
+        order_index: order_index ?? 0,
+        rest_time: rest_time ?? null,
+        intensity: intensity ?? null,
+        load_used: load_used ?? null,
+        rpe: rpe ?? null,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow()
+    res.status(201).json(exercise)
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create exercise' })
+  }
 })
 
 router.put('/:programId/workouts/:workoutId/exercises/:exerciseId', async (req: Request, res: Response): Promise<void> => {
   const { name, sets, reps, weight, duration, distance, notes, order_index, rest_time, intensity, load_used, rpe } = req.body
-  const updated = await db
-    .updateTable('exercises')
-    .set({
-      ...(name !== undefined ? { name } : {}),
-      ...(sets !== undefined ? { sets: sets ?? null } : {}),
-      ...(reps !== undefined ? { reps: reps ?? null } : {}),
-      ...(weight !== undefined ? { weight: weight ?? null } : {}),
-      ...(duration !== undefined ? { duration: duration ?? null } : {}),
-      ...(distance !== undefined ? { distance: distance ?? null } : {}),
-      ...(notes !== undefined ? { notes: notes ?? null } : {}),
-      ...(order_index !== undefined ? { order_index } : {}),
-      ...(rest_time !== undefined ? { rest_time: rest_time ?? null } : {}),
-      ...(intensity !== undefined ? { intensity: intensity ?? null } : {}),
-      ...(load_used !== undefined ? { load_used: load_used ?? null } : {}),
-      ...(rpe !== undefined ? { rpe: rpe ?? null } : {}),
-    })
-    .where('id', '=', req.params.exerciseId)
-    .where('workout_id', '=', req.params.workoutId)
-    .returningAll()
-    .executeTakeFirst()
-  if (!updated) {
-    res.status(404).json({ error: 'Exercise not found' })
-    return
+  try {
+    const updated = await db
+      .updateTable('exercises')
+      .set({
+        ...(name !== undefined ? { name } : {}),
+        ...(sets !== undefined ? { sets: sets ?? null } : {}),
+        ...(reps !== undefined ? { reps: reps ?? null } : {}),
+        ...(weight !== undefined ? { weight: weight ?? null } : {}),
+        ...(duration !== undefined ? { duration: duration ?? null } : {}),
+        ...(distance !== undefined ? { distance: distance ?? null } : {}),
+        ...(notes !== undefined ? { notes: notes ?? null } : {}),
+        ...(order_index !== undefined ? { order_index } : {}),
+        ...(rest_time !== undefined ? { rest_time: rest_time ?? null } : {}),
+        ...(intensity !== undefined ? { intensity: intensity ?? null } : {}),
+        ...(load_used !== undefined ? { load_used: load_used ?? null } : {}),
+        ...(rpe !== undefined ? { rpe: rpe ?? null } : {}),
+      })
+      .where('id', '=', req.params.exerciseId)
+      .where('workout_id', '=', req.params.workoutId)
+      .returningAll()
+      .executeTakeFirst()
+    if (!updated) {
+      res.status(404).json({ error: 'Exercise not found' })
+      return
+    }
+    res.json(updated)
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update exercise' })
   }
-  res.json(updated)
 })
 
 router.delete('/:programId/workouts/:workoutId/exercises/:exerciseId', async (req: Request, res: Response): Promise<void> => {
-  const deleted = await db
-    .deleteFrom('exercises')
-    .where('id', '=', req.params.exerciseId)
-    .where('workout_id', '=', req.params.workoutId)
-    .returningAll()
-    .executeTakeFirst()
-  if (!deleted) {
-    res.status(404).json({ error: 'Exercise not found' })
-    return
+  try {
+    const deleted = await db
+      .deleteFrom('exercises')
+      .where('id', '=', req.params.exerciseId)
+      .where('workout_id', '=', req.params.workoutId)
+      .returningAll()
+      .executeTakeFirst()
+    if (!deleted) {
+      res.status(404).json({ error: 'Exercise not found' })
+      return
+    }
+    res.status(204).send()
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete exercise' })
   }
-  res.status(204).send()
 })
 
 export default router

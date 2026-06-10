@@ -12,7 +12,7 @@ export function createApp(staticDir?: string, logPath?: string) {
   const log = (msg: string) => {
     const line = `[${new Date().toISOString()}] ${msg}\n`
     if (logPath) try { fs.appendFileSync(logPath, line) } catch { /* ignore */ }
-    console.error(msg)
+    console.log(msg)
   }
 
   app.use(cors({ origin: ['http://localhost:3000', 'http://localhost:3001'] }))

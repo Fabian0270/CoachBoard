@@ -33,7 +33,8 @@ export default function AthleteDetail() {
     Promise.all([
       fetch(`/api/athletes/${id}`).then((r) => r.json()),
       fetch(`/api/programs?athlete_id=${id}`).then((r) => r.json()),
-    ]).then(([a, p]) => { setAthlete(a); setPrograms(p) })
+    ]).then(([athlete, programs]) => { setAthlete(athlete); setPrograms(Array.isArray(programs) ? programs : []) })
+      .catch(() => {})
   }, [id])
 
   const handleDelete = async () => {
@@ -73,12 +74,12 @@ export default function AthleteDetail() {
             <Link to={`/programs/new?athlete_id=${id}`}><Button size="sm"><Plus className="h-4 w-4 mr-2" />New Program</Button></Link>
             {programs.length === 0 ? (
               <Card><CardContent className="py-8 text-center text-muted-foreground">No programs yet.</CardContent></Card>
-            ) : programs.map((p) => (
-              <Link key={p.id} to={`/programs/${p.id}`}>
+            ) : programs.map((program) => (
+              <Link key={program.id} to={`/programs/${program.id}`}>
                 <Card className="hover:shadow-md transition-shadow cursor-pointer">
                   <CardHeader className="py-4">
-                    <CardTitle className="text-base">{p.name}</CardTitle>
-                    <Badge variant={p.status === 'active' ? 'default' : 'secondary'}>{p.status}</Badge>
+                    <CardTitle className="text-base">{program.name}</CardTitle>
+                    <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
                   </CardHeader>
                 </Card>
               </Link>

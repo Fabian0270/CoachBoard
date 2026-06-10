@@ -18,14 +18,14 @@ export default function ProgramComparison() {
     Promise.all([
       fetch('/api/athletes').then((r) => r.json()).catch(() => []),
       fetch('/api/programs').then((r) => r.json()).catch(() => []),
-    ]).then(([a, p]) => {
-      setAthletes(Array.isArray(a) ? a : [])
-      setPrograms(Array.isArray(p) ? p : [])
+    ]).then(([fetchedAthletes, fetchedPrograms]) => {
+      setAthletes(Array.isArray(fetchedAthletes) ? fetchedAthletes : [])
+      setPrograms(Array.isArray(fetchedPrograms) ? fetchedPrograms : [])
     }).catch(() => {})
   }, [])
 
-  const filtered = selectedAthlete === 'all' ? programs : programs.filter((p) => p.athlete_id === selectedAthlete)
-  const athleteMap = Object.fromEntries(athletes.map((a) => [a.id, a.name]))
+  const filtered = selectedAthlete === 'all' ? programs : programs.filter((program) => program.athlete_id === selectedAthlete)
+  const athleteMap = Object.fromEntries(athletes.map((athlete) => [athlete.id, athlete.name]))
 
   return (
     <div className="space-y-6">
@@ -38,7 +38,7 @@ export default function ProgramComparison() {
           <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Athletes</SelectItem>
-            {athletes.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+            {athletes.map((athlete) => <SelectItem key={athlete.id} value={athlete.id}>{athlete.name}</SelectItem>)}
           </SelectContent>
         </Select>
       )}
@@ -53,16 +53,16 @@ export default function ProgramComparison() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((p) => (
-            <Link key={p.id} to={`/programs/${p.id}`}>
+          {filtered.map((program) => (
+            <Link key={program.id} to={`/programs/${program.id}`}>
               <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
                 <CardHeader>
-                  <CardTitle className="text-base">{p.name}</CardTitle>
-                  <div className="text-sm text-muted-foreground">{athleteMap[p.athlete_id] ?? 'Unknown'}</div>
+                  <CardTitle className="text-base">{program.name}</CardTitle>
+                  <div className="text-sm text-muted-foreground">{athleteMap[program.athlete_id] ?? 'Unknown'}</div>
                 </CardHeader>
                 <CardContent>
-                  <Badge variant={p.status === 'active' ? 'default' : 'secondary'}>{p.status}</Badge>
-                  {p.start_date && <div className="text-sm text-muted-foreground mt-2">Started: {p.start_date}</div>}
+                  <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
+                  {program.start_date && <div className="text-sm text-muted-foreground mt-2">Started: {program.start_date}</div>}
                 </CardContent>
               </Card>
             </Link>
