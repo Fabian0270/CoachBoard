@@ -1,243 +1,81 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useProgramData } from '../hooks/useProgramData'
+import { useProgramCalendar, useWorkoutByDate } from '../hooks/useProgramCalendar'
+import { useWorkoutActions } from '../hooks/useWorkoutActions'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
-import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check, Download, SlidersHorizontal } from 'lucide-react'
-
-type ToggleableColumn = 'rest_time' | 'intensity' | 'load_cap' | 'load_used' | 'rpe'
-const TOGGLEABLE_COLUMNS: ToggleableColumn[] = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe']
-const COLUMN_LABELS: Record<ToggleableColumn, string> = {
-  rest_time: 'Rest Time (mins)',
-  intensity: 'Intensity/Weight',
-  load_cap: 'Load Cap',
-  load_used: 'Load Used',
-  rpe: 'Last Set RPE',
-}
-
-interface Exercise {
-  id: string
-  name: string
-  sets: string | null
-  reps: string | null
-  weight: number | null
-  duration: number | null
-  distance: number | null
-  notes: string | null
-  order_index?: number
-  rest_time: string | null
-  intensity: string | null
-  load_used: string | null
-  rpe: string | null
-}
-
-interface Workout {
-  id: string
-  name: string
-  scheduled_date: string | null
-  completed_at: string | null
-  notes: string | null
-  exercises: Exercise[]
-}
-
-interface Program {
-  id: string
-  name: string
-  description: string | null
-  status: string
-  start_date: string | null
-  end_date: string | null
-  enabled_columns: ToggleableColumn[] | null
-  workouts: Workout[]
-}
-
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
-function toIsoDate(d: Date): string {
-  const y = d.getUTCFullYear()
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(d.getUTCDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-function parseIsoDate(s: string): Date {
-  const [y, m, d] = s.split('-').map(Number)
-  return new Date(Date.UTC(y, m - 1, d))
-}
-
-function mondayOf(d: Date): Date {
-  const day = d.getUTCDay()
-  const diff = (day === 0 ? -6 : 1 - day)
-  const monday = new Date(d)
-  monday.setUTCDate(d.getUTCDate() + diff)
-  return monday
-}
-
-function addDays(d: Date, days: number): Date {
-  const r = new Date(d)
-  r.setUTCDate(d.getUTCDate() + days)
-  return r
-}
-
-function weeksBetween(start: string, end: string): number {
-  const s = parseIsoDate(start)
-  const e = parseIsoDate(end)
-  const diffDays = Math.round((e.getTime() - s.getTime()) / 86400000) + 1
-  return Math.max(1, Math.ceil(diffDays / 7))
-}
-
-function dayName(date: string): string {
-  const d = parseIsoDate(date)
-  return DAY_LABELS[(d.getUTCDay() + 6) % 7]
-}
+import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check, X, Download, SlidersHorizontal } from 'lucide-react'
+import {
+  type ToggleableColumn,
+  type Exercise,
+  type Workout,
+  type ColKey,
+  type ColDef,
+  TOGGLEABLE_COLUMNS,
+  COLUMN_LABELS,
+  DAY_LABELS,
+  DEFAULT_COL_WIDTH,
+  weeksBetween,
+  dayName,
+  exerciseValue,
+  buildColumns,
+} from '../lib/programUtils'
 
 export default function ProgramDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [program, setProgram] = useState<Program | null>(null)
+  const { program, setProgram, notFound } = useProgramData(id)
   const [setupForm, setSetupForm] = useState({ start_date: '', weeks: '4' })
   const [savingDuration, setSavingDuration] = useState(false)
   const [openDate, setOpenDate] = useState<string | null>(null)
-  const [cellStatus, setCellStatus] = useState<Record<string, 'saving' | 'saved'>>({})
+  const [cellStatus, setCellStatus] = useState<Record<string, 'saving' | 'saved' | 'error'>>({})
   const [columnsOpen, setColumnsOpen] = useState(false)
   const savedTimers = useRef<Record<string, number>>({})
 
-  useEffect(() => {
-    if (!id) return
-    fetch(`/api/programs/${id}`).then((r) => r.json()).then(setProgram)
-  }, [id])
+  const grid = useProgramCalendar(program)
+  const workoutByDate = useWorkoutByDate(program)
 
-  const grid = useMemo(() => {
-    if (!program?.start_date) return null
-    const startMonday = mondayOf(parseIsoDate(program.start_date))
-    const weeks = program.end_date
-      ? weeksBetween(toIsoDate(startMonday), program.end_date)
-      : 4
-    const rows: { weekIndex: number; days: { date: string; label: number }[] }[] = []
-    for (let w = 0; w < weeks; w++) {
-      const days: { date: string; label: number }[] = []
-      for (let d = 0; d < 7; d++) {
-        const date = addDays(startMonday, w * 7 + d)
-        days.push({ date: toIsoDate(date), label: date.getUTCDate() })
-      }
-      rows.push({ weekIndex: w, days })
-    }
-    return { weeks, rows }
-  }, [program?.start_date, program?.end_date])
-
-  const workoutByDate = useMemo(() => {
-    const m = new Map<string, Workout>()
-    for (const w of program?.workouts ?? []) {
-      if (w.scheduled_date) m.set(w.scheduled_date, w)
-    }
-    return m
-  }, [program?.workouts])
-
-  const flashCell = (date: string, status: 'saving' | 'saved') => {
+  const flashCell = (date: string, status: 'saving' | 'saved' | 'error') => {
     setCellStatus((s) => ({ ...s, [date]: status }))
-    if (status === 'saved') {
+    if (status !== 'saving') {
       if (savedTimers.current[date]) window.clearTimeout(savedTimers.current[date])
       savedTimers.current[date] = window.setTimeout(() => {
         setCellStatus((s) => { const n = { ...s }; delete n[date]; return n })
-      }, 1200)
+      }, status === 'error' ? 2500 : 1200)
     }
   }
 
-  const ensureWorkout = async (date: string): Promise<Workout | null> => {
-    if (!id) return null
-    const existing = workoutByDate.get(date)
-    if (existing) return existing
-    const res = await fetch(`/api/programs/${id}/workouts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: date, scheduled_date: date }),
-    })
-    if (!res.ok) return null
-    const w = await res.json()
-    const created: Workout = { ...w, exercises: [] }
-    setProgram((p) => p ? { ...p, workouts: [...p.workouts, created] } : p)
-    return created
-  }
-
-  const updateWorkout = (workoutId: string, mut: (w: Workout) => Workout) => {
-    setProgram((p) => p ? { ...p, workouts: p.workouts.map((w) => w.id === workoutId ? mut(w) : w) } : p)
-  }
-
-  const addExercise = async (date: string) => {
-    if (!id) return
-    flashCell(date, 'saving')
-    const workout = await ensureWorkout(date)
-    if (!workout) { flashCell(date, 'saved'); return }
-    const orderIndex = workout.exercises.length
-    const res = await fetch(`/api/programs/${id}/workouts/${workout.id}/exercises`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: '', order_index: orderIndex }),
-    })
-    if (res.ok) {
-      const ex: Exercise = await res.json()
-      updateWorkout(workout.id, (w) => ({ ...w, exercises: [...w.exercises, ex] }))
-      flashCell(date, 'saved')
-    }
-  }
-
-  const saveExerciseField = async (date: string, workoutId: string, exerciseId: string, patch: Partial<Exercise>) => {
-    if (!id) return
-    flashCell(date, 'saving')
-    const res = await fetch(`/api/programs/${id}/workouts/${workoutId}/exercises/${exerciseId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    })
-    if (res.ok) {
-      const updated: Exercise = await res.json()
-      updateWorkout(workoutId, (w) => ({
-        ...w,
-        exercises: w.exercises.map((ex) => ex.id === exerciseId ? updated : ex),
-      }))
-      flashCell(date, 'saved')
-    }
-  }
-
-  const deleteExercise = async (date: string, workoutId: string, exerciseId: string) => {
-    if (!id) return
-    flashCell(date, 'saving')
-    const res = await fetch(`/api/programs/${id}/workouts/${workoutId}/exercises/${exerciseId}`, {
-      method: 'DELETE',
-    })
-    if (res.ok || res.status === 404) {
-      updateWorkout(workoutId, (w) => ({ ...w, exercises: w.exercises.filter((ex) => ex.id !== exerciseId) }))
-      flashCell(date, 'saved')
-    }
-  }
-
-  const deleteWorkout = async (workoutId: string) => {
-    if (!id) return
-    if (!confirm('Clear this day? All exercises will be removed.')) return
-    const res = await fetch(`/api/programs/${id}/workouts/${workoutId}`, { method: 'DELETE' })
-    if (res.ok || res.status === 404) {
-      setProgram((p) => p ? { ...p, workouts: p.workouts.filter((w) => w.id !== workoutId) } : p)
-      setOpenDate(null)
-    }
-  }
+  const { addExercise, saveExerciseField, deleteExercise, deleteWorkout } = useWorkoutActions(
+    id, workoutByDate, setProgram, flashCell,
+  )
 
   const handleSetupSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!id) return
     setSavingDuration(true)
-    const res = await fetch(`/api/programs/${id}/duration`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ start_date: setupForm.start_date, weeks: Number(setupForm.weeks) }),
-    })
-    if (res.ok) {
-      const updated = await res.json()
-      setProgram((p) => p ? { ...p, ...updated } : p)
+    try {
+      const res = await fetch(`/api/programs/${id}/duration`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start_date: setupForm.start_date, weeks: Number(setupForm.weeks) }),
+      })
+      if (res.ok) {
+        const updated = await res.json()
+        setProgram((p) => p ? { ...p, ...updated } : p)
+      } else {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        alert(`Failed to set duration: ${err.error ?? JSON.stringify(err)}`)
+      }
+    } catch (err) {
+      alert(`Network error: ${String(err)}`)
+    } finally {
+      setSavingDuration(false)
     }
-    setSavingDuration(false)
   }
 
   const handleDelete = async () => {
@@ -268,6 +106,14 @@ export default function ProgramDetail() {
     })
   }
 
+  if (notFound) {
+    return (
+      <div className="space-y-3">
+        <p className="text-muted-foreground">Program not found — it may have been deleted.</p>
+        <Link to="/programs" className="text-primary underline">Back to programs</Link>
+      </div>
+    )
+  }
   if (!program) return <div className="text-muted-foreground">Loading...</div>
 
   const openWorkout = openDate ? workoutByDate.get(openDate) ?? null : null
@@ -380,6 +226,7 @@ export default function ProgramDetail() {
                               <span>{cell.label}</span>
                               {status === 'saving' && <Loader2 className="h-3 w-3 animate-spin" />}
                               {status === 'saved' && <Check className="h-3 w-3 text-green-600" />}
+                              {status === 'error' && <X className="h-3 w-3 text-destructive" />}
                             </div>
                             {exercises.length === 0 ? (
                               <div className="text-[11px] text-muted-foreground/60 mt-1">+ Add</div>
@@ -433,7 +280,7 @@ export default function ProgramDetail() {
                 if (openWorkout) deleteExercise(openDate, openWorkout.id, exerciseId)
               }}
               onDeleteWorkout={() => {
-                if (openWorkout) deleteWorkout(openWorkout.id)
+                if (openWorkout) deleteWorkout(openWorkout.id, () => setOpenDate(null))
               }}
             />
           )}
@@ -473,45 +320,6 @@ export default function ProgramDetail() {
   )
 }
 
-function asStr(v: unknown): string {
-  return v == null ? '' : String(v)
-}
-
-type ColKey = 'name' | 'sets' | 'reps' | ToggleableColumn
-
-interface ColDef {
-  key: ColKey
-  label: string
-  width?: number
-  numeric?: boolean
-  placeholder?: string
-}
-
-function buildColumns(enabled: ToggleableColumn[]): ColDef[] {
-  const cols: ColDef[] = [{ key: 'name', label: 'Exercise', placeholder: 'Exercise name' }]
-  if (enabled.includes('rest_time')) cols.push({ key: 'rest_time', label: 'Rest (min)', width: 80, placeholder: 'e.g. 2 or 2-3' })
-  cols.push({ key: 'sets', label: 'Sets', width: 64, placeholder: '3 or 3-5' })
-  cols.push({ key: 'reps', label: 'Reps', width: 64, placeholder: '8 or 8-12' })
-  if (enabled.includes('intensity')) cols.push({ key: 'intensity', label: 'Intensity/Weight', width: 140, placeholder: 'e.g. RPE 8, 70%' })
-  if (enabled.includes('load_cap')) cols.push({ key: 'load_cap', label: 'Load Cap', width: 90, numeric: true })
-  if (enabled.includes('load_used')) cols.push({ key: 'load_used', label: 'Load Used', width: 90 })
-  if (enabled.includes('rpe')) cols.push({ key: 'rpe', label: 'Last Set RPE', width: 90, placeholder: 'e.g. 8' })
-  return cols
-}
-
-function exerciseValue(ex: Exercise, key: ColKey): string {
-  switch (key) {
-    case 'name': return ex.name ?? ''
-    case 'sets': return asStr(ex.sets)
-    case 'reps': return asStr(ex.reps)
-    case 'load_cap': return asStr(ex.weight)
-    case 'rest_time': return ex.rest_time ?? ''
-    case 'intensity': return ex.intensity ?? ''
-    case 'load_used': return ex.load_used ?? ''
-    case 'rpe': return ex.rpe ?? ''
-  }
-}
-
 interface ExerciseEditorProps {
   workout: Workout | null
   enabledColumns: ToggleableColumn[]
@@ -520,17 +328,6 @@ interface ExerciseEditorProps {
   onSaveField: (exerciseId: string, patch: Partial<Exercise>) => void
   onDeleteExercise: (exerciseId: string) => void
   onDeleteWorkout: () => void
-}
-
-const DEFAULT_COL_WIDTH: Record<ColKey, number> = {
-  name: 220,
-  sets: 64,
-  reps: 64,
-  rest_time: 80,
-  intensity: 140,
-  load_cap: 90,
-  load_used: 90,
-  rpe: 90,
 }
 
 function useColumnWidths(programId: string, columns: ColDef[]): [Record<string, number>, (key: ColKey, width: number) => void] {
@@ -560,6 +357,14 @@ function ExerciseEditor({ workout, enabledColumns, programId, onAdd, onSaveField
   const exercises = workout?.exercises ?? []
   const columns = buildColumns(enabledColumns)
   const [widths, setWidth] = useColumnWidths(programId, columns)
+  const activeResizeCleanup = useRef<(() => void) | null>(null)
+
+  useEffect(() => {
+    return () => {
+      activeResizeCleanup.current?.()
+      activeResizeCleanup.current = null
+    }
+  }, [])
 
   const startResize = (key: ColKey) => (e: React.MouseEvent) => {
     e.preventDefault()
@@ -571,9 +376,14 @@ function ExerciseEditor({ workout, enabledColumns, programId, onAdd, onSaveField
     const onUp = () => {
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
+      activeResizeCleanup.current = null
     }
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
+    activeResizeCleanup.current = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
   }
 
   return (

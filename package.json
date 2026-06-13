@@ -5,6 +5,7 @@
   "workspaces": [
     "client",
     "server",
+    "shared",
     "electron"
   ],
   "scripts": {
@@ -13,6 +14,7 @@
     "build:electron": "npm run build -w electron",
     "package": "npm run build && npm run build:electron && cd electron && set CSC_IDENTITY_AUTO_DISCOVERY=false&& npx electron-builder --config electron-builder.yml",
     "typecheck": "npm exec -w client -- tsc --noEmit && npm exec -w server -- tsc --noEmit",
+    "test": "npm run test -w client && npm run test -w server",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
   },
   "devDependencies": {

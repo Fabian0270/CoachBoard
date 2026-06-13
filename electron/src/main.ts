@@ -6,11 +6,11 @@ import { createServer } from 'http'
 const isDev = process.env.NODE_ENV === 'development'
 const SERVER_PORT = 3001
 
-const logPath = path.join(app.getPath('userData'), 'coachboard.log')
+let logPath = ''
 
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`
-  try { fs.appendFileSync(logPath, line) } catch { /* ignore */ }
+  if (logPath) try { fs.appendFileSync(logPath, line) } catch { /* ignore */ }
   console.log(msg)
 }
 
@@ -80,7 +80,21 @@ async function createWindow(): Promise<void> {
   }
 }
 
+// A second instance would fail to bind the server port — focus the existing window instead.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const [win] = BrowserWindow.getAllWindows()
+    if (win) {
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
+  })
+}
+
 app.whenReady().then(async () => {
+  logPath = path.join(app.getPath('userData'), 'coachboard.log')
   log(`CoachBoard starting — packaged: ${app.isPackaged}, resourcesPath: ${process.resourcesPath}`)
   try {
     await startServer()

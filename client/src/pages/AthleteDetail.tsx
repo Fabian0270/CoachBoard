@@ -27,14 +27,19 @@ export default function AthleteDetail() {
   const navigate = useNavigate()
   const [athlete, setAthlete] = useState<Athlete | null>(null)
   const [programs, setPrograms] = useState<Program[]>([])
+  const [notFound, setNotFound] = useState(false)
 
   useEffect(() => {
     if (!id) return
+    setNotFound(false)
     Promise.all([
-      fetch(`/api/athletes/${id}`).then((r) => r.json()),
-      fetch(`/api/programs?athlete_id=${id}`).then((r) => r.json()),
-    ]).then(([athlete, programs]) => { setAthlete(athlete); setPrograms(Array.isArray(programs) ? programs : []) })
-      .catch(() => {})
+      fetch(`/api/athletes/${id}`).then(async (r) => (r.ok ? r.json() : null)),
+      fetch(`/api/programs?athlete_id=${id}`).then((r) => (r.ok ? r.json() : [])),
+    ]).then(([athlete, programs]) => {
+      if (athlete) setAthlete(athlete)
+      else setNotFound(true)
+      setPrograms(Array.isArray(programs) ? programs : [])
+    }).catch(() => {})
   }, [id])
 
   const handleDelete = async () => {
@@ -43,6 +48,14 @@ export default function AthleteDetail() {
     navigate('/athletes')
   }
 
+  if (notFound) {
+    return (
+      <div className="space-y-3">
+        <p className="text-muted-foreground">Athlete not found — they may have been deleted.</p>
+        <Link to="/athletes" className="text-primary underline">Back to athletes</Link>
+      </div>
+    )
+  }
   if (!athlete) return <div className="text-muted-foreground">Loading...</div>
 
   return (

@@ -23,6 +23,11 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api/programs', programsRouter)
   app.use('/api/progress', progressRouter)
 
+  // Unknown API routes must 404 as JSON, not fall through to the static catch-all
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'Not found' })
+  })
+
   if (staticDir) {
     app.use(express.static(staticDir))
     // Catch-all: serve index.html for any non-API path (HashRouter handles client routing)
