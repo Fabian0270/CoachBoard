@@ -5,6 +5,9 @@ import {
   findAthleteById,
   createAthlete,
   deleteAthlete,
+  findMaxesByAthlete,
+  createAthleteMax,
+  deleteAthleteMax,
 } from '../services/athleteService.js'
 
 const router = Router()
@@ -44,6 +47,42 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
     res.status(204).send()
   } catch {
     res.status(500).json({ error: 'Failed to delete athlete' })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Maxes (PRs)
+// ---------------------------------------------------------------------------
+
+router.get('/:id/maxes', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const athlete = await findAthleteById(String(req.params.id))
+    if (!athlete) { res.status(404).json({ error: 'Athlete not found' }); return }
+    res.json(await findMaxesByAthlete(athlete.id))
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch maxes' })
+  }
+})
+
+router.post('/:id/maxes', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.athleteMax.create, req.body, res)
+  if (!body) return
+  try {
+    const athlete = await findAthleteById(String(req.params.id))
+    if (!athlete) { res.status(404).json({ error: 'Athlete not found' }); return }
+    res.status(201).json(await createAthleteMax({ athlete_id: athlete.id, ...body }))
+  } catch {
+    res.status(500).json({ error: 'Failed to create max' })
+  }
+})
+
+router.delete('/:id/maxes/:maxId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const deleted = await deleteAthleteMax(String(req.params.maxId), String(req.params.id))
+    if (!deleted) { res.status(404).json({ error: 'Max not found' }); return }
+    res.status(204).send()
+  } catch {
+    res.status(500).json({ error: 'Failed to delete max' })
   }
 })
 

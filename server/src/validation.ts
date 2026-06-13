@@ -97,6 +97,16 @@ export const schemas = {
     }),
   },
 
+  athleteMax: {
+    create: z.object({
+      lift_name: z.string().min(1).max(100),
+      weight: z.number().positive().finite(),
+      unit: z.preprocess(emptyToNull, z.string().max(20).nullable().optional()),
+      recorded_at: z.preprocess(emptyToUndefined, isoDate.optional()),
+      notes: optionalString(2000),
+    }),
+  },
+
   progress: {
     create: z.object({
       athlete_id: z.uuid(),

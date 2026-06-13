@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
+import AthleteMaxes from '../components/AthleteMaxes'
 import { Plus, ArrowLeft, Trash2 } from 'lucide-react'
 
 interface Athlete {
@@ -72,6 +73,7 @@ export default function AthleteDetail() {
         <TabsList>
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="programs">Programs ({programs.length})</TabsTrigger>
+          <TabsTrigger value="maxes">Maxes &amp; RPE</TabsTrigger>
         </TabsList>
         <TabsContent value="info">
           <Card>
@@ -98,6 +100,9 @@ export default function AthleteDetail() {
               </Link>
             ))}
           </div>
+        </TabsContent>
+        <TabsContent value="maxes">
+          {id && <AthleteMaxes athleteId={id} />}
         </TabsContent>
       </Tabs>
     </div>
