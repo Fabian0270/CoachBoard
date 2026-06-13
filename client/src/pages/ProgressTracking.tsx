@@ -8,11 +8,11 @@ import { TrendingUp, Plus, Trash2 } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 interface Athlete { id: string; name: string }
-interface Record { id: string; athlete_id: string; metric_name: string; value: number; unit: string | null; recorded_at: string }
+interface ProgressRecord { id: string; athlete_id: string; metric_name: string; value: number; unit: string | null; recorded_at: string }
 
 export default function ProgressTracking() {
   const [athletes, setAthletes] = useState<Athlete[]>([])
-  const [records, setRecords] = useState<Record[]>([])
+  const [progressRecords, setProgressRecords] = useState<ProgressRecord[]>([])
   const [selectedAthlete, setSelectedAthlete] = useState<string>('')
   const [form, setForm] = useState({ metric_name: '', value: '', unit: '', recorded_at: new Date().toISOString().split('T')[0] })
 
@@ -31,29 +31,42 @@ export default function ProgressTracking() {
     if (!selectedAthlete) return
     fetch(`/api/progress?athlete_id=${selectedAthlete}`)
       .then((r) => r.json())
-      .then((data) => setRecords(Array.isArray(data) ? data : []))
+      .then((data) => setProgressRecords(Array.isArray(data) ? data : []))
       .catch(() => {})
   }, [selectedAthlete])
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault()
-    const res = await fetch('/api/progress', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, athlete_id: selectedAthlete, value: Number(form.value) }),
-    })
-    const record = await res.json()
-    setRecords([record, ...records])
-    setForm({ metric_name: '', value: '', unit: '', recorded_at: new Date().toISOString().split('T')[0] })
+    try {
+      const res = await fetch('/api/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, athlete_id: selectedAthlete, value: Number(form.value) }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        alert(`Failed to add record: ${err.error ?? JSON.stringify(err)}`)
+        return
+      }
+      const record = await res.json()
+      setProgressRecords([record, ...progressRecords])
+      setForm({ metric_name: '', value: '', unit: '', recorded_at: new Date().toISOString().split('T')[0] })
+    } catch (err) {
+      alert(`Network error: ${String(err)}`)
+    }
   }
 
   const handleDelete = async (id: string) => {
-    await fetch(`/api/progress/${id}`, { method: 'DELETE' })
-    setRecords(records.filter((r) => r.id !== id))
+    try {
+      await fetch(`/api/progress/${id}`, { method: 'DELETE' })
+      setProgressRecords(progressRecords.filter((record) => record.id !== id))
+    } catch (err) {
+      alert(`Failed to delete record: ${String(err)}`)
+    }
   }
 
-  const metrics = [...new Set(records.map((r) => r.metric_name))]
-  const chartData = records.slice().reverse().map((r) => ({ date: r.recorded_at.split('T')[0], value: r.value, metric: r.metric_name }))
+  const uniqueMetrics = [...new Set(progressRecords.map((record) => record.metric_name))]
+  const chartData = progressRecords.slice().reverse().map((record) => ({ date: record.recorded_at.split('T')[0], value: record.value, metric: record.metric_name }))
 
   return (
     <div className="space-y-6">
@@ -64,7 +77,7 @@ export default function ProgressTracking() {
         <>
           <Select value={selectedAthlete} onValueChange={setSelectedAthlete}>
             <SelectTrigger className="w-48"><SelectValue placeholder="Select athlete" /></SelectTrigger>
-            <SelectContent>{athletes.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
+            <SelectContent>{athletes.map((athlete) => <SelectItem key={athlete.id} value={athlete.id}>{athlete.name}</SelectItem>)}</SelectContent>
           </Select>
           <Card>
             <CardHeader><CardTitle>Log Performance</CardTitle></CardHeader>
@@ -78,7 +91,7 @@ export default function ProgressTracking() {
               </form>
             </CardContent>
           </Card>
-          {metrics.length > 0 && (
+          {uniqueMetrics.length > 0 && (
             <Card>
               <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="h-5 w-5" />Performance Chart</CardTitle></CardHeader>
               <CardContent>
@@ -88,8 +101,8 @@ export default function ProgressTracking() {
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} />
                     <Tooltip />
-                    {metrics.map((m, i) => (
-                      <Line key={m} type="monotone" dataKey="value" data={chartData.filter((d) => d.metric === m)} name={m} stroke={`hsl(${i * 60}, 70%, 50%)`} strokeWidth={2} dot={false} />
+                    {uniqueMetrics.map((metric, i) => (
+                      <Line key={metric} type="monotone" dataKey="value" data={chartData.filter((d) => d.metric === metric)} name={metric} stroke={`hsl(${i * 60}, 70%, 50%)`} strokeWidth={2} dot={false} />
                     ))}
                   </LineChart>
                 </ResponsiveContainer>
@@ -97,17 +110,17 @@ export default function ProgressTracking() {
             </Card>
           )}
           <div className="space-y-2">
-            {records.length === 0 ? (
+            {progressRecords.length === 0 ? (
               <Card><CardContent className="py-6 text-center text-muted-foreground">No records yet.</CardContent></Card>
-            ) : records.map((r) => (
-              <Card key={r.id}>
+            ) : progressRecords.map((record) => (
+              <Card key={record.id}>
                 <CardContent className="flex items-center justify-between py-3">
                   <div>
-                    <span className="font-medium">{r.metric_name}</span>
-                    <span className="ml-2 text-primary font-semibold">{r.value}{r.unit ? ` ${r.unit}` : ''}</span>
-                    <span className="ml-2 text-sm text-muted-foreground">{r.recorded_at.split('T')[0]}</span>
+                    <span className="font-medium">{record.metric_name}</span>
+                    <span className="ml-2 text-primary font-semibold">{record.value}{record.unit ? ` ${record.unit}` : ''}</span>
+                    <span className="ml-2 text-sm text-muted-foreground">{record.recorded_at.split('T')[0]}</span>
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => handleDelete(r.id)}><Trash2 className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="icon" onClick={() => handleDelete(record.id)}><Trash2 className="h-4 w-4" /></Button>
                 </CardContent>
               </Card>
             ))}

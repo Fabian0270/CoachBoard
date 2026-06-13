@@ -25,19 +25,33 @@ export default function NewProgram() {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    fetch('/api/athletes').then((r) => r.json()).then(setAthletes)
+    fetch('/api/athletes')
+      .then((r) => r.json())
+      .then((data) => setAthletes(Array.isArray(data) ? data : []))
+      .catch(() => {})
   }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
-    const res = await fetch('/api/programs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    })
-    const program = await res.json()
-    navigate(`/programs/${program.id}`)
+    try {
+      const res = await fetch('/api/programs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        alert(`Failed to create program: ${err.error ?? JSON.stringify(err)}`)
+        setSaving(false)
+        return
+      }
+      const program = await res.json()
+      navigate(`/programs/${program.id}`)
+    } catch (err) {
+      alert(`Network error: ${String(err)}`)
+      setSaving(false)
+    }
   }
 
   return (
@@ -55,7 +69,7 @@ export default function NewProgram() {
               <Select value={form.athlete_id} onValueChange={(v) => setForm({ ...form, athlete_id: v })}>
                 <SelectTrigger><SelectValue placeholder="Select athlete" /></SelectTrigger>
                 <SelectContent>
-                  {athletes.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                  {athletes.map((athlete) => <SelectItem key={athlete.id} value={athlete.id}>{athlete.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -64,8 +78,8 @@ export default function NewProgram() {
               <Input id="name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="desc">Description</Label>
-              <Textarea id="desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              <Label htmlFor="description">Description</Label>
+              <Textarea id="description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">

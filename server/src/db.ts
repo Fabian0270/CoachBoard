@@ -153,13 +153,16 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   `.execute(_db)
 
   const addColumnIfMissing = async (table: string, column: string, type: string): Promise<void> => {
-    try {
+    const result = await sql<{ name: string }>`PRAGMA table_info(${sql.raw(table)})`.execute(_db!)
+    const exists = result.rows.some((row) => row.name === column)
+    if (!exists) {
       await sql`ALTER TABLE ${sql.raw(table)} ADD COLUMN ${sql.raw(column)} ${sql.raw(type)}`.execute(_db!)
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (!msg.toLowerCase().includes('duplicate column')) throw e
     }
   }
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_programs_athlete_id ON programs(athlete_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_workouts_program_id ON workouts(program_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_exercises_workout_id ON exercises(workout_id)`.execute(_db)
 
   await addColumnIfMissing('programs', 'enabled_columns', 'TEXT')
   await addColumnIfMissing('exercises', 'rest_time', 'TEXT')
@@ -179,4 +182,6 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
       FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
     )
   `.execute(_db)
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_progress_athlete_id ON progress_records(athlete_id)`.execute(_db)
 }

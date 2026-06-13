@@ -12,7 +12,7 @@ export function createApp(staticDir?: string, logPath?: string) {
   const log = (msg: string) => {
     const line = `[${new Date().toISOString()}] ${msg}\n`
     if (logPath) try { fs.appendFileSync(logPath, line) } catch { /* ignore */ }
-    console.error(msg)
+    console.log(msg)
   }
 
   app.use(cors({ origin: ['http://localhost:3000', 'http://localhost:3001'] }))
@@ -22,6 +22,11 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api/athletes', athletesRouter)
   app.use('/api/programs', programsRouter)
   app.use('/api/progress', progressRouter)
+
+  // Unknown API routes must 404 as JSON, not fall through to the static catch-all
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'Not found' })
+  })
 
   if (staticDir) {
     app.use(express.static(staticDir))

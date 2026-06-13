@@ -58,8 +58,8 @@ export default function NewAthlete() {
               <Input id="sport" value={form.sport} onChange={(e) => setForm({ ...form, sport: e.target.value })} />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="dob">Date of Birth</Label>
-              <Input id="dob" type="date" value={form.date_of_birth} onChange={(e) => setForm({ ...form, date_of_birth: e.target.value })} />
+              <Label htmlFor="date_of_birth">Date of Birth</Label>
+              <Input id="date_of_birth" type="date" value={form.date_of_birth} onChange={(e) => setForm({ ...form, date_of_birth: e.target.value })} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="notes">Notes</Label>

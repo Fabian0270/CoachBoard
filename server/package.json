@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "tsc && npm run bundle",
-    "bundle": "esbuild src/electron-entry.ts --bundle --platform=node --target=node20 --outfile=dist/electron-bundle.cjs --external:better-sqlite3 --format=cjs"
+    "bundle": "esbuild src/electron-entry.ts --bundle --platform=node --target=node20 --outfile=dist/electron-bundle.cjs --external:better-sqlite3 --format=cjs",
+    "test": "node scripts/run-tests.cjs run",
+    "test:watch": "node scripts/run-tests.cjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
@@ -13,7 +15,8 @@
     "exceljs": "^4.4.0",
     "express": "^5.0.1",
     "kysely": "^0.27.4",
-    "uuid": "^11.0.3"
+    "uuid": "^11.0.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
@@ -22,6 +25,7 @@
     "@types/node": "^22.10.1",
     "@types/uuid": "^10.0.0",
     "esbuild": "^0.24.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.8"
   }
 }
