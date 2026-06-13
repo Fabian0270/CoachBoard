@@ -36,3 +36,49 @@ export async function createAthlete(data: {
 export async function deleteAthlete(id: string) {
   return getDb().deleteFrom('athletes').where('id', '=', id).returningAll().executeTakeFirst()
 }
+
+// ---------------------------------------------------------------------------
+// Athlete maxes (PRs) — history is kept; "current max" = latest row per lift
+// ---------------------------------------------------------------------------
+
+export async function findMaxesByAthlete(athleteId: string) {
+  return getDb()
+    .selectFrom('athlete_maxes')
+    .selectAll()
+    .where('athlete_id', '=', athleteId)
+    .orderBy('lift_name')
+    .orderBy('recorded_at', 'desc')
+    .execute()
+}
+
+export async function createAthleteMax(data: {
+  athlete_id: string
+  lift_name: string
+  weight: number
+  unit?: string | null
+  recorded_at?: string
+  notes?: string | null
+}) {
+  return getDb()
+    .insertInto('athlete_maxes')
+    .values({
+      id: uuidv4(),
+      athlete_id: data.athlete_id,
+      lift_name: data.lift_name,
+      weight: data.weight,
+      unit: data.unit ?? 'kg',
+      recorded_at: data.recorded_at ?? new Date().toISOString().slice(0, 10),
+      notes: data.notes ?? null,
+    })
+    .returningAll()
+    .executeTakeFirstOrThrow()
+}
+
+export async function deleteAthleteMax(id: string, athleteId: string) {
+  return getDb()
+    .deleteFrom('athlete_maxes')
+    .where('id', '=', id)
+    .where('athlete_id', '=', athleteId)
+    .returningAll()
+    .executeTakeFirst()
+}

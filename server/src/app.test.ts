@@ -63,6 +63,60 @@ describe('athletes API', () => {
   })
 })
 
+describe('athlete maxes API', () => {
+  let athleteId: string
+
+  beforeAll(async () => {
+    const { body } = await post('/api/athletes', { name: 'Max Owner' })
+    athleteId = body.id
+  })
+
+  it('creates a PR with kg as default unit', async () => {
+    const { status, body } = await post(`/api/athletes/${athleteId}/maxes`, {
+      lift_name: 'Squat', weight: 200, recorded_at: '2026-06-01',
+    })
+    expect(status).toBe(201)
+    expect(body.unit).toBe('kg')
+    expect(body.weight).toBe(200)
+  })
+
+  it('lists maxes newest-first per lift', async () => {
+    await post(`/api/athletes/${athleteId}/maxes`, { lift_name: 'Squat', weight: 205, recorded_at: '2026-06-10' })
+    const { status, body } = await json(`/api/athletes/${athleteId}/maxes`)
+    expect(status).toBe(200)
+    expect(body).toHaveLength(2)
+    expect(body[0].weight).toBe(205) // latest squat first
+  })
+
+  it('rejects a non-positive weight', async () => {
+    const { status } = await post(`/api/athletes/${athleteId}/maxes`, { lift_name: 'Bench Press', weight: 0 })
+    expect(status).toBe(400)
+  })
+
+  it('returns 404 when the athlete does not exist', async () => {
+    const { status } = await post('/api/athletes/00000000-0000-0000-0000-000000000000/maxes', {
+      lift_name: 'Squat', weight: 100,
+    })
+    expect(status).toBe(404)
+  })
+
+  it('deletes a PR', async () => {
+    const { body: created } = await post(`/api/athletes/${athleteId}/maxes`, { lift_name: 'Deadlift', weight: 240 })
+    const res = await api(`/api/athletes/${athleteId}/maxes/${created.id}`, { method: 'DELETE' })
+    expect(res.status).toBe(204)
+    const { body } = await json(`/api/athletes/${athleteId}/maxes`)
+    expect(body.some((m: { id: string }) => m.id === created.id)).toBe(false)
+  })
+
+  it('cascades when the athlete is deleted', async () => {
+    const { body: a } = await post('/api/athletes', { name: 'Cascade Max' })
+    await post(`/api/athletes/${a.id}/maxes`, { lift_name: 'Squat', weight: 150 })
+    await api(`/api/athletes/${a.id}`, { method: 'DELETE' })
+    const { status } = await json(`/api/athletes/${a.id}/maxes`)
+    expect(status).toBe(404)
+  })
+})
+
 describe('programs API', () => {
   let athleteId: string
   let programId: string

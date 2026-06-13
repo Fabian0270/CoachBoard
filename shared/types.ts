@@ -68,6 +68,16 @@ export interface ProgressRecord {
   notes: string | null
 }
 
+export interface AthleteMax {
+  id: string
+  athlete_id: string
+  lift_name: string
+  weight: number
+  unit: string
+  recorded_at: string
+  notes: string | null
+}
+
 // Request body shapes — mirrors what routes accept
 export interface CreateAthleteBody {
   name: string

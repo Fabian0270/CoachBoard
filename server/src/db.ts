@@ -64,12 +64,23 @@ export interface ProgressRecordTable {
   notes: string | null
 }
 
+export interface AthleteMaxTable {
+  id: string
+  athlete_id: string
+  lift_name: string
+  weight: number
+  unit: string
+  recorded_at: string
+  notes: string | null
+}
+
 export interface DB {
   athletes: AthleteTable
   programs: ProgramTable
   workouts: WorkoutTable
   exercises: ExerciseTable
   progress_records: ProgressRecordTable
+  athlete_maxes: AthleteMaxTable
 }
 
 let _db: Kysely<DB> | null = null
@@ -184,4 +195,19 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   `.execute(_db)
 
   await sql`CREATE INDEX IF NOT EXISTS idx_progress_athlete_id ON progress_records(athlete_id)`.execute(_db)
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS athlete_maxes (
+      id TEXT PRIMARY KEY,
+      athlete_id TEXT NOT NULL,
+      lift_name TEXT NOT NULL,
+      weight REAL NOT NULL,
+      unit TEXT NOT NULL DEFAULT 'kg',
+      recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+      notes TEXT,
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+    )
+  `.execute(_db)
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_athlete_maxes_athlete_id ON athlete_maxes(athlete_id)`.execute(_db)
 }
