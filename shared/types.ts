@@ -78,7 +78,47 @@ export interface AthleteMax {
   notes: string | null
 }
 
+// ---------------------------------------------------------------------------
+// Excel import types
+// ---------------------------------------------------------------------------
+
+export interface ImportMatch {
+  exerciseId: string
+  exerciseName: string      // from DB
+  sheetName: string | null  // read from Excel cell (sanity check)
+  weekIndex: number         // 0-based
+  dayOfWeek: number         // 0-based (0 = Monday)
+  rowIndex: number          // 0-based within this day+week
+  load_used: string | null  // parsed from "Load Used" column
+  rpe: string | null        // parsed from "Last Set RPE" column
+  nameMismatch: boolean     // sheet name didn't match the DB exercise name
+}
+
+export interface ImportWarning {
+  weekIndex?: number
+  dayOfWeek?: number
+  rowIndex?: number
+  message: string
+}
+
+export interface E1RMEstimate {
+  liftName: string   // exercise name as stored in DB
+  e1rm: number       // kg, rounded to 1 decimal
+  weight: number     // load used (kg)
+  reps: number       // reps prescribed
+  rpe: number        // reported RPE
+  weekIndex: number  // 0-based (will be the last week of the program)
+}
+
+export interface ImportPreview {
+  matched: ImportMatch[]
+  warnings: ImportWarning[]
+  e1rmEstimates: E1RMEstimate[]
+}
+
+// ---------------------------------------------------------------------------
 // Request body shapes — mirrors what routes accept
+// ---------------------------------------------------------------------------
 export interface CreateAthleteBody {
   name: string
   email?: string | null

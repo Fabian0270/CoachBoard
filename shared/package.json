@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./types.ts",
-    "./rpe": "./rpe.ts"
+    "./rpe": "./rpe.ts",
+    "./exportLayout": "./exportLayout.ts"
   }
 }

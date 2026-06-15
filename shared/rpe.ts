@@ -5,7 +5,7 @@
 // the whole table collapse into one sequence indexed by
 // (reps - 1) + (10 - RPE), in half-step increments.
 
-export const RPE_VALUES = [6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10] as const
+export const RPE_VALUES = [5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10] as const
 export type RpeValue = (typeof RPE_VALUES)[number]
 
 export const MIN_REPS = 1
@@ -19,12 +19,14 @@ const PCT_SEQUENCE = [
 ]
 
 function isValidRpe(rpe: number): boolean {
-  return rpe >= RPE_VALUES[0] && rpe <= 10 && Number.isInteger(rpe * 2)
+  return rpe >= 5 && rpe <= 10 && Number.isInteger(rpe * 2)
 }
 
 /**
  * Fraction of 1RM (0–1) for `reps` at `rpe`, e.g. pctOf1RM(5, 8) === 0.811.
- * Returns null outside the chart (reps 1–10, RPE 6.5–10 in half steps).
+ * Returns null outside the chart (reps 1–10, RPE 5–10 in half steps).
+ * Note: for RPE 5–6, very high rep counts (9–10 reps) exceed the published
+ * chart and also return null.
  */
 export function pctOf1RM(reps: number, rpe: number): number | null {
   if (!Number.isInteger(reps) || reps < MIN_REPS || reps > MAX_REPS) return null
