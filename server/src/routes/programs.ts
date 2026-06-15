@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express'
+import express, { Router, Request, Response } from 'express'
 import ExcelJS from 'exceljs'
 import { schemas, validate } from '../validation.js'
 import { z } from 'zod'
@@ -17,6 +17,7 @@ import {
   updateExercise,
   deleteExercise,
 } from '../services/programService.js'
+import { parseImportFile, commitImport } from '../services/importService.js'
 
 const router = Router()
 
@@ -353,5 +354,40 @@ router.get('/:id/export', async (req: Request, res: Response): Promise<void> => 
     res.status(500).json({ error: 'Failed to export program' })
   }
 })
+
+// ---------------------------------------------------------------------------
+// Import — athletes fill in Load Used / Last Set RPE and send the sheet back
+// ---------------------------------------------------------------------------
+
+// dry_run=1 → parse file, return preview (no DB writes)
+// no query param → parse file, commit, return summary
+router.post(
+  '/:id/import',
+  express.raw({ type: 'application/octet-stream', limit: '10mb' }),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const programId = String(req.params.id)
+      const buffer = req.body as Buffer
+
+      if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+        res.status(400).json({ error: 'Request body must be an xlsx file sent as application/octet-stream' })
+        return
+      }
+
+      const preview = await parseImportFile(buffer, programId)
+
+      if (req.query.dry_run === '1') {
+        res.json(preview)
+        return
+      }
+
+      const result = await commitImport(programId, preview.matched)
+      res.json({ ...result, warnings: preview.warnings })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Import failed'
+      res.status(500).json({ error: msg })
+    }
+  },
+)
 
 export default router

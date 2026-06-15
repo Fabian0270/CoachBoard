@@ -9,7 +9,8 @@ import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
-import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check, X, Download, SlidersHorizontal } from 'lucide-react'
+import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check, X, Download, SlidersHorizontal, Upload } from 'lucide-react'
+import ImportDialog from '../components/ImportDialog'
 import {
   type ToggleableColumn,
   type Exercise,
@@ -35,6 +36,7 @@ export default function ProgramDetail() {
   const [openDate, setOpenDate] = useState<string | null>(null)
   const [cellStatus, setCellStatus] = useState<Record<string, 'saving' | 'saved' | 'error'>>({})
   const [columnsOpen, setColumnsOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const savedTimers = useRef<Record<string, number>>({})
 
   const grid = useProgramCalendar(program)
@@ -135,8 +137,11 @@ export default function ProgramDetail() {
               </Button>
               <Button variant="outline" size="sm" asChild>
                 <a href={`/api/programs/${program.id}/export`} download>
-                  <Download className="h-4 w-4 mr-1" />Export
+                  <Upload className="h-4 w-4 mr-1" />Export
                 </a>
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+                <Download className="h-4 w-4 mr-1" />Import
               </Button>
               <Button variant="outline" size="sm" onClick={handleChangeDuration}>
                 <CalendarRange className="h-4 w-4 mr-1" />Change duration
@@ -316,6 +321,20 @@ export default function ProgramDetail() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {program.start_date && (
+        <ImportDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          programId={program.id}
+          onImported={() => {
+            fetch(`/api/programs/${program.id}`)
+              .then((r) => r.json())
+              .then((data) => setProgram(data))
+              .catch(() => {})
+          }}
+        />
+      )}
     </div>
   )
 }
