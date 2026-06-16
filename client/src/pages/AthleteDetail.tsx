@@ -3,9 +3,12 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
+import { Input } from '../components/ui/input'
+import { Label } from '../components/ui/label'
+import { Textarea } from '../components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import AthleteMaxes from '../components/AthleteMaxes'
-import { Plus, ArrowLeft, Trash2 } from 'lucide-react'
+import { Plus, ArrowLeft, Trash2, Pencil } from 'lucide-react'
 
 interface Athlete {
   id: string
@@ -29,6 +32,9 @@ export default function AthleteDetail() {
   const [athlete, setAthlete] = useState<Athlete | null>(null)
   const [programs, setPrograms] = useState<Program[]>([])
   const [notFound, setNotFound] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editForm, setEditForm] = useState({ name: '', email: '', sport: '', date_of_birth: '', notes: '' })
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -47,6 +53,43 @@ export default function AthleteDetail() {
     if (!confirm('Delete this athlete?')) return
     await fetch(`/api/athletes/${id}`, { method: 'DELETE' })
     navigate('/athletes')
+  }
+
+  const startEdit = () => {
+    if (!athlete) return
+    setEditForm({
+      name: athlete.name,
+      email: athlete.email ?? '',
+      sport: athlete.sport ?? '',
+      date_of_birth: athlete.date_of_birth ?? '',
+      notes: athlete.notes ?? '',
+    })
+    setEditing(true)
+  }
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id) return
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/athletes/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm),
+      })
+      if (res.ok) {
+        const updated = await res.json()
+        setAthlete(updated)
+        setEditing(false)
+      } else {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        alert(`Failed to save: ${err.error ?? JSON.stringify(err)}`)
+      }
+    } catch (err) {
+      alert(`Network error: ${String(err)}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (notFound) {
@@ -77,11 +120,51 @@ export default function AthleteDetail() {
         </TabsList>
         <TabsContent value="info">
           <Card>
-            <CardContent className="p-6 space-y-3">
-              {athlete.email && <div><span className="font-medium">Email:</span> {athlete.email}</div>}
-              {athlete.date_of_birth && <div><span className="font-medium">Date of Birth:</span> {athlete.date_of_birth}</div>}
-              {athlete.notes && <div><span className="font-medium">Notes:</span> {athlete.notes}</div>}
-            </CardContent>
+            {editing ? (
+              <CardContent className="p-6">
+                <form onSubmit={handleSave} className="space-y-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="edit-name">Name *</Label>
+                    <Input id="edit-name" required value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="edit-email">Email</Label>
+                    <Input id="edit-email" type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="edit-sport">Sport</Label>
+                    <Input id="edit-sport" value={editForm.sport} onChange={(e) => setEditForm({ ...editForm, sport: e.target.value })} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="edit-dob">Date of Birth</Label>
+                    <Input id="edit-dob" type="date" value={editForm.date_of_birth} onChange={(e) => setEditForm({ ...editForm, date_of_birth: e.target.value })} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="edit-notes">Notes</Label>
+                    <Textarea id="edit-notes" value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+                    <Button type="button" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
+                  </div>
+                </form>
+              </CardContent>
+            ) : (
+              <CardContent className="p-6 space-y-3">
+                <div className="flex justify-end">
+                  <Button type="button" variant="outline" size="sm" onClick={startEdit}>
+                    <Pencil className="h-4 w-4 mr-1" />Edit
+                  </Button>
+                </div>
+                {athlete.email && <div><span className="font-medium">Email:</span> {athlete.email}</div>}
+                {athlete.sport && <div><span className="font-medium">Sport:</span> {athlete.sport}</div>}
+                {athlete.date_of_birth && <div><span className="font-medium">Date of Birth:</span> {athlete.date_of_birth}</div>}
+                {athlete.notes && <div><span className="font-medium">Notes:</span> {athlete.notes}</div>}
+                {!athlete.email && !athlete.sport && !athlete.date_of_birth && !athlete.notes && (
+                  <p className="text-muted-foreground text-sm">No details yet.</p>
+                )}
+              </CardContent>
+            )}
           </Card>
         </TabsContent>
         <TabsContent value="programs">
