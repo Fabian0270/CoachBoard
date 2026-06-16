@@ -27,6 +27,13 @@ export const schemas = {
       date_of_birth: optionalIsoDate,
       notes: optionalString(2000),
     }),
+    update: z.object({
+      name: z.string().min(1).max(200).optional(),
+      email: optionalEmail,
+      sport: optionalString(100),
+      date_of_birth: optionalIsoDate,
+      notes: optionalString(2000),
+    }),
   },
 
   program: {

@@ -4,6 +4,7 @@ import {
   findAllAthletes,
   findAthleteById,
   createAthlete,
+  updateAthlete,
   deleteAthlete,
   findMaxesByAthlete,
   createAthleteMax,
@@ -37,6 +38,18 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     res.status(201).json(await createAthlete(body))
   } catch {
     res.status(500).json({ error: 'Failed to create athlete' })
+  }
+})
+
+router.put('/:id', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.athlete.update, req.body, res)
+  if (!body) return
+  try {
+    const updated = await updateAthlete(String(req.params.id), body)
+    if (!updated) { res.status(404).json({ error: 'Athlete not found' }); return }
+    res.json(updated)
+  } catch {
+    res.status(500).json({ error: 'Failed to update athlete' })
   }
 })
 

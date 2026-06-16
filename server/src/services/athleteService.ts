@@ -33,6 +33,32 @@ export async function createAthlete(data: {
     .executeTakeFirstOrThrow()
 }
 
+export async function updateAthlete(
+  id: string,
+  data: {
+    name?: string
+    email?: string | null
+    sport?: string | null
+    date_of_birth?: string | null
+    notes?: string | null
+  },
+) {
+  const row = await getDb()
+    .updateTable('athletes')
+    .set({
+      ...(data.name !== undefined ? { name: data.name } : {}),
+      ...(data.email !== undefined ? { email: data.email ?? null } : {}),
+      ...(data.sport !== undefined ? { sport: data.sport ?? null } : {}),
+      ...(data.date_of_birth !== undefined ? { date_of_birth: data.date_of_birth ?? null } : {}),
+      ...(data.notes !== undefined ? { notes: data.notes ?? null } : {}),
+      updated_at: new Date().toISOString(),
+    })
+    .where('id', '=', id)
+    .returningAll()
+    .executeTakeFirst()
+  return row ?? null
+}
+
 export async function deleteAthlete(id: string) {
   return getDb().deleteFrom('athletes').where('id', '=', id).returningAll().executeTakeFirst()
 }
