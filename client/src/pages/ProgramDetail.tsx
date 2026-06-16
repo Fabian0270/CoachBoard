@@ -37,6 +37,8 @@ export default function ProgramDetail() {
   const [cellStatus, setCellStatus] = useState<Record<string, 'saving' | 'saved' | 'error'>>({})
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [exportToast, setExportToast] = useState(false)
+  const exportToastTimer = useRef<number | null>(null)
   const savedTimers = useRef<Record<string, number>>({})
 
   const grid = useProgramCalendar(program)
@@ -141,6 +143,16 @@ export default function ProgramDetail() {
   const openWorkout = openDate ? workoutByDate.get(openDate) ?? null : null
   const enabledColumns = program.enabled_columns ?? TOGGLEABLE_COLUMNS
 
+  const handleExport = () => {
+    const a = document.createElement('a')
+    a.href = `/api/programs/${program.id}/export`
+    a.download = ''
+    a.click()
+    if (exportToastTimer.current) window.clearTimeout(exportToastTimer.current)
+    setExportToast(true)
+    exportToastTimer.current = window.setTimeout(() => setExportToast(false), 3000)
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -155,10 +167,8 @@ export default function ProgramDetail() {
               <Button variant="outline" size="sm" onClick={() => setColumnsOpen(true)}>
                 <SlidersHorizontal className="h-4 w-4 mr-1" />Columns
               </Button>
-              <Button variant="outline" size="sm" asChild>
-                <a href={`/api/programs/${program.id}/export`} download>
-                  <Upload className="h-4 w-4 mr-1" />Export
-                </a>
+              <Button variant="outline" size="sm" onClick={handleExport}>
+                <Upload className="h-4 w-4 mr-1" />Export
               </Button>
               <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
                 <Download className="h-4 w-4 mr-1" />Import
@@ -375,6 +385,13 @@ export default function ProgramDetail() {
               .catch(() => {})
           }}
         />
+      )}
+
+      {exportToast && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-lg bg-green-600 px-4 py-3 text-sm font-medium text-white shadow-lg">
+          <Check className="h-4 w-4" />
+          Program exported successfully
+        </div>
       )}
     </div>
   )
