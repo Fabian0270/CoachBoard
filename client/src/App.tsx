@@ -7,6 +7,7 @@ import AthleteDetail from './pages/AthleteDetail'
 import NewAthlete from './pages/NewAthlete'
 import NewProgram from './pages/NewProgram'
 import ProgramDetail from './pages/ProgramDetail'
+import ProgramReport from './pages/ProgramReport'
 import ProgramComparison from './pages/ProgramComparison'
 import ProgressTracking from './pages/ProgressTracking'
 
@@ -23,6 +24,7 @@ export default function App() {
             <Route path="/programs" element={<ProgramComparison />} />
             <Route path="/programs/new" element={<NewProgram />} />
             <Route path="/programs/:id" element={<ProgramDetail />} />
+            <Route path="/programs/:id/report" element={<ProgramReport />} />
             <Route path="/progress" element={<ProgressTracking />} />
           </Routes>
         </Layout>

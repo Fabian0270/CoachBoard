@@ -80,6 +80,7 @@ export const schemas = {
       intensity: optionalString(100),
       load_used: optionalString(100),
       rpe: optionalString(50),
+      group_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
     }),
     update: z.object({
       name: z.string().max(200).optional(),
@@ -94,8 +95,18 @@ export const schemas = {
       intensity: optionalString(100),
       load_used: optionalString(100),
       rpe: optionalString(50),
+      group_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
     }),
   },
+
+  copyDay: z.object({
+    sourceDate: isoDate,
+    targetDates: z.array(isoDate).min(1).max(52),
+  }),
+
+  reorderExercises: z.object({
+    exerciseIds: z.array(z.string().uuid()).min(1).max(200),
+  }),
 
   athleteMax: {
     create: z.object({

@@ -16,8 +16,12 @@ import {
   createExercise,
   updateExercise,
   deleteExercise,
+  addSetToExercise,
+  copyWorkoutDay,
+  reorderExercises,
 } from '../services/programService.js'
 import { parseImportFile, commitImport } from '../services/importService.js'
+import { getProgramReport } from '../services/analysisService.js'
 
 const router = Router()
 
@@ -150,6 +154,22 @@ router.post('/:programId/workouts/:workoutId/exercises', async (req: Request, re
   }
 })
 
+router.put('/:programId/workouts/:workoutId/exercises/reorder', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.reorderExercises, req.body, res)
+  if (!body) return
+  try {
+    const result = await reorderExercises(
+      String(req.params.workoutId),
+      String(req.params.programId),
+      body.exerciseIds,
+    )
+    if (!result) { res.status(404).json({ error: 'Workout not found' }); return }
+    res.json({ exercises: result })
+  } catch {
+    res.status(500).json({ error: 'Failed to reorder exercises' })
+  }
+})
+
 router.put('/:programId/workouts/:workoutId/exercises/:exerciseId', async (req: Request, res: Response): Promise<void> => {
   const body = validate(schemas.exercise.update, req.body, res)
   if (!body) return
@@ -169,6 +189,45 @@ router.delete('/:programId/workouts/:workoutId/exercises/:exerciseId', async (re
     res.status(204).send()
   } catch {
     res.status(500).json({ error: 'Failed to delete exercise' })
+  }
+})
+
+router.post('/:programId/workouts/:workoutId/exercises/:exerciseId/add-set', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await addSetToExercise(
+      String(req.params.exerciseId),
+      String(req.params.workoutId),
+      String(req.params.programId),
+    )
+    if (!result) { res.status(404).json({ error: 'Exercise not found' }); return }
+    res.status(201).json(result)
+  } catch {
+    res.status(500).json({ error: 'Failed to add set' })
+  }
+})
+
+router.post('/:programId/copy-day', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.copyDay, req.body, res)
+  if (!body) return
+  try {
+    const result = await copyWorkoutDay(String(req.params.programId), body.sourceDate, body.targetDates)
+    res.json(result)
+  } catch {
+    res.status(500).json({ error: 'Failed to copy day' })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Program report — e1RM trends, RPE deviation, completion rate (Phase 3)
+// ---------------------------------------------------------------------------
+
+router.get('/:id/report', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const report = await getProgramReport(String(req.params.id))
+    if (!report) { res.status(404).json({ error: 'Program not found' }); return }
+    res.json(report)
+  } catch {
+    res.status(500).json({ error: 'Failed to generate report' })
   }
 })
 
@@ -322,11 +381,13 @@ router.get('/:id/export', async (req: Request, res: Response): Promise<void> => 
         for (let weekIndex = 0; weekIndex < numWeeks; weekIndex++) {
           const exercise = perWeek[weekIndex][r]
           if (!exercise) continue
+          const prevExercise = r > 0 ? perWeek[weekIndex][r - 1] : null
+          const isSubSet = !!(prevExercise && exercise.group_id && exercise.group_id === prevExercise.group_id)
           const col = weekColumnStart(weekIndex)
           exportColumns.forEach((c, i) => {
             const cell = ws.getCell(row, col + i)
-            cell.value = c.get(exercise)
-            if (c.key === 'name') cell.font = { bold: true }
+            cell.value = isSubSet && c.key === 'name' ? '' : c.get(exercise)
+            if (c.key === 'name' && !isSubSet) cell.font = { bold: true }
           })
         }
         for (let c = 1; c <= totalCols; c++) {

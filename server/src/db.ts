@@ -52,6 +52,7 @@ export interface ExerciseTable {
   intensity: string | null
   load_used: string | null
   rpe: string | null
+  group_id: string | null
 }
 
 export interface ProgressRecordTable {
@@ -180,6 +181,7 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await addColumnIfMissing('exercises', 'intensity', 'TEXT')
   await addColumnIfMissing('exercises', 'load_used', 'TEXT')
   await addColumnIfMissing('exercises', 'rpe', 'TEXT')
+  await addColumnIfMissing('exercises', 'group_id', 'TEXT')
 
   await sql`
     CREATE TABLE IF NOT EXISTS progress_records (
