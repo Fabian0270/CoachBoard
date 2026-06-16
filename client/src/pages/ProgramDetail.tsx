@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useProgramData } from '../hooks/useProgramData'
 import { useProgramCalendar, useWorkoutByDate } from '../hooks/useProgramCalendar'
@@ -9,7 +9,7 @@ import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
-import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check, X, Download, SlidersHorizontal, Upload } from 'lucide-react'
+import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, Copy, GripVertical } from 'lucide-react'
 import ImportDialog from '../components/ImportDialog'
 import {
   type ToggleableColumn,
@@ -52,9 +52,29 @@ export default function ProgramDetail() {
     }
   }
 
-  const { addExercise, saveExerciseField, deleteExercise, deleteWorkout } = useWorkoutActions(
+  const { addExercise, saveExerciseField, deleteExercise, deleteWorkout, addSet, reorderExercises } = useWorkoutActions(
     id, workoutByDate, setProgram, flashCell,
   )
+
+  // Dates for the same day-of-week across all weeks (excluding openDate itself)
+  const sameDayDates = useMemo<{ date: string; weekIndex: number }[]>(() => {
+    if (!grid || !openDate) return []
+    let colIndex = -1
+    for (const row of grid.rows) {
+      const idx = row.days.findIndex((d) => d.date === openDate)
+      if (idx !== -1) { colIndex = idx; break }
+    }
+    if (colIndex === -1) return []
+    return grid.rows
+      .filter((row) => row.days[colIndex]?.date !== openDate)
+      .map((row) => ({ date: row.days[colIndex].date, weekIndex: row.weekIndex }))
+  }, [grid, openDate])
+
+  const reloadProgram = async () => {
+    if (!id) return
+    const data = await fetch(`/api/programs/${id}`).then((r) => r.json()).catch(() => null)
+    if (data) setProgram(data)
+  }
 
   const handleSetupSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -142,6 +162,11 @@ export default function ProgramDetail() {
               </Button>
               <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
                 <Download className="h-4 w-4 mr-1" />Import
+              </Button>
+              <Button variant="outline" size="sm" asChild>
+                <Link to={`/programs/${program.id}/report`}>
+                  <BarChart2 className="h-4 w-4 mr-1" />Report
+                </Link>
               </Button>
               <Button variant="outline" size="sm" onClick={handleChangeDuration}>
                 <CalendarRange className="h-4 w-4 mr-1" />Change duration
@@ -277,6 +302,7 @@ export default function ProgramDetail() {
               workout={openWorkout}
               enabledColumns={enabledColumns}
               programId={id ?? ''}
+              sameDayDates={sameDayDates}
               onAdd={() => addExercise(openDate)}
               onSaveField={(exerciseId, patch) => {
                 if (openWorkout) saveExerciseField(openDate, openWorkout.id, exerciseId, patch)
@@ -286,6 +312,21 @@ export default function ProgramDetail() {
               }}
               onDeleteWorkout={() => {
                 if (openWorkout) deleteWorkout(openWorkout.id, () => setOpenDate(null))
+              }}
+              onAddSet={(exerciseId) => {
+                if (openWorkout) addSet(openDate, openWorkout.id, exerciseId)
+              }}
+              onReorder={(exerciseIds) => {
+                if (openWorkout) reorderExercises(openDate, openWorkout.id, exerciseIds)
+              }}
+              onCopyDay={async (targetDates) => {
+                if (!id || !openDate) return
+                await fetch(`/api/programs/${id}/copy-day`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ sourceDate: openDate, targetDates }),
+                })
+                await reloadProgram()
               }}
             />
           )}
@@ -343,10 +384,14 @@ interface ExerciseEditorProps {
   workout: Workout | null
   enabledColumns: ToggleableColumn[]
   programId: string
+  sameDayDates: { date: string; weekIndex: number }[]
   onAdd: () => void
   onSaveField: (exerciseId: string, patch: Partial<Exercise>) => void
   onDeleteExercise: (exerciseId: string) => void
   onDeleteWorkout: () => void
+  onAddSet: (exerciseId: string) => void
+  onCopyDay: (targetDates: string[]) => Promise<void>
+  onReorder: (exerciseIds: string[]) => void
 }
 
 function useColumnWidths(programId: string, columns: ColDef[]): [Record<string, number>, (key: ColKey, width: number) => void] {
@@ -372,11 +417,152 @@ function useColumnWidths(programId: string, columns: ColDef[]): [Record<string, 
   return [widths, setWidth]
 }
 
-function ExerciseEditor({ workout, enabledColumns, programId, onAdd, onSaveField, onDeleteExercise, onDeleteWorkout }: ExerciseEditorProps) {
+// Group consecutive exercises that share the same group_id
+function buildGroups(exercises: Exercise[]) {
+  type Group = { groupId: string | null; exercises: Exercise[] }
+  const groups: Group[] = []
+  for (const ex of exercises) {
+    const gid = ex.group_id ?? null
+    const last = groups[groups.length - 1]
+    if (gid && last && last.groupId === gid) {
+      last.exercises.push(ex)
+    } else {
+      groups.push({ groupId: gid, exercises: [ex] })
+    }
+  }
+  return groups
+}
+
+function ExerciseEditor({ workout, enabledColumns, programId, sameDayDates, onAdd, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
   const exercises = workout?.exercises ?? []
   const columns = buildColumns(enabledColumns)
   const [widths, setWidth] = useColumnWidths(programId, columns)
   const activeResizeCleanup = useRef<(() => void) | null>(null)
+  const [copyOpen, setCopyOpen] = useState(false)
+  const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
+  const [copying, setCopying] = useState(false)
+
+  // Drag-and-drop state
+  type DragInfo = { exerciseId: string; mode: 'group' | 'set'; groupId: string | null }
+  const draggingRef = useRef<DragInfo | null>(null)
+  const [dragging, setDragging] = useState<DragInfo | null>(null)
+  // null = no drag, 'end' = insert after all, string = insert before this exercise ID
+  const [dropBeforeId, setDropBeforeId] = useState<string | 'end' | null>(null)
+  // Lock the table wrapper height during drag so the dialog doesn't resize as
+  // placeholder rows appear/disappear, which would cause twitching.
+  const tableWrapperRef = useRef<HTMLDivElement>(null)
+  const [dragLockedHeight, setDragLockedHeight] = useState<number | null>(null)
+
+  const startGroupDrag = (exerciseId: string, groupId: string | null) => (e: React.DragEvent) => {
+    e.dataTransfer.effectAllowed = 'move'
+    const info: DragInfo = { exerciseId, mode: 'group', groupId }
+    draggingRef.current = info
+    const h = tableWrapperRef.current?.getBoundingClientRect().height
+    if (h) setDragLockedHeight(h)
+    setDragging(info)
+  }
+
+  const startSetDrag = (exerciseId: string, groupId: string) => (e: React.DragEvent) => {
+    e.dataTransfer.effectAllowed = 'move'
+    const info: DragInfo = { exerciseId, mode: 'set', groupId }
+    draggingRef.current = info
+    const h = tableWrapperRef.current?.getBoundingClientRect().height
+    if (h) setDragLockedHeight(h)
+    setDragging(info)
+  }
+
+  const stopDrag = () => {
+    draggingRef.current = null
+    setDragging(null)
+    setDropBeforeId(null)
+    setDragLockedHeight(null)
+  }
+
+  // The editor lives inside a Radix <Dialog> portal (rendered to document.body, outside
+  // the React root container). React 18 attaches synthetic event listeners to the root
+  // container, so onDragEnd on the grip span never fires in a portal. Register a native
+  // document listener instead whenever a drag is in progress.
+  useEffect(() => {
+    if (!dragging) return
+    const handler = () => {
+      draggingRef.current = null
+      setDragging(null)
+      setDropBeforeId(null)
+      setDragLockedHeight(null)
+    }
+    document.addEventListener('dragend', handler, { capture: true })
+    return () => document.removeEventListener('dragend', handler, { capture: true })
+  }, [dragging]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Called by onDragOver on each row — determines where the placeholder appears
+  const handleDragOverRow = (ex: Exercise, group: ReturnType<typeof buildGroups>[0]) => (e: React.DragEvent) => {
+    const info = draggingRef.current
+    if (!info) return
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const isTopHalf = e.clientY < rect.top + rect.height / 2
+
+    if (info.mode === 'group') {
+      const dragGroup = groups.find(g => g.exercises.some(x => x.id === info.exerciseId))
+      // Hovering own group — no valid drop, clear placeholder, don't prevent default
+      if (!dragGroup || dragGroup === group) { setDropBeforeId(null); return }
+      e.preventDefault()
+      if (isTopHalf) {
+        setDropBeforeId(group.exercises[0].id)
+      } else {
+        const gi = groups.indexOf(group)
+        let next: string | 'end' = 'end'
+        for (let k = gi + 1; k < groups.length; k++) {
+          if (groups[k] !== dragGroup) { next = groups[k].exercises[0].id; break }
+        }
+        setDropBeforeId(next)
+      }
+    } else {
+      // Hovering own exercise or wrong group — clear placeholder
+      if (group.groupId !== info.groupId || ex.id === info.exerciseId) { setDropBeforeId(null); return }
+      e.preventDefault()
+      if (isTopHalf) {
+        setDropBeforeId(ex.id)
+      } else {
+        const idx = group.exercises.findIndex(x => x.id === ex.id)
+        let next: string | 'end' = 'end'
+        for (let k = idx + 1; k < group.exercises.length; k++) {
+          if (group.exercises[k].id !== info.exerciseId) { next = group.exercises[k].id; break }
+        }
+        setDropBeforeId(next)
+      }
+    }
+  }
+
+  const executeDrop = () => {
+    const info = draggingRef.current
+    if (!info || dropBeforeId === null) { stopDrag(); return }
+
+    if (info.mode === 'group') {
+      const dragGroup = groups.find(g => g.exercises.some(x => x.id === info.exerciseId))
+      if (!dragGroup) { stopDrag(); return }
+      const others = groups.filter(g => g !== dragGroup)
+      const insertAt = dropBeforeId === 'end'
+        ? others.length
+        : others.findIndex(g => g.exercises[0].id === dropBeforeId)
+      if (insertAt === -1) { stopDrag(); return }
+      const newGroups = [...others.slice(0, insertAt), dragGroup, ...others.slice(insertAt)]
+      onReorder(newGroups.flatMap(g => g.exercises.map(x => x.id)))
+    } else {
+      const group = groups.find(g => g.groupId === info.groupId)
+      if (!group) { stopDrag(); return }
+      const ids = group.exercises.map(x => x.id)
+      const otherIds = ids.filter(id => id !== info.exerciseId)
+      const insertAt = dropBeforeId === 'end'
+        ? otherIds.length
+        : otherIds.indexOf(dropBeforeId)
+      if (insertAt === -1) { stopDrag(); return }
+      const newIds = [...otherIds.slice(0, insertAt), info.exerciseId, ...otherIds.slice(insertAt)]
+      const groupSet = new Set(ids)
+      let gi = 0
+      onReorder(exercises.map(x => groupSet.has(x.id) ? newIds[gi++] : x.id))
+    }
+    stopDrag()
+  }
 
   useEffect(() => {
     return () => {
@@ -405,60 +591,190 @@ function ExerciseEditor({ workout, enabledColumns, programId, onAdd, onSaveField
     }
   }
 
+  const toggleDate = (date: string) => {
+    setSelectedDates((prev) => {
+      const next = new Set(prev)
+      if (next.has(date)) next.delete(date); else next.add(date)
+      return next
+    })
+  }
+
+  const handleCopy = async () => {
+    if (selectedDates.size === 0) return
+    setCopying(true)
+    try {
+      await onCopyDay([...selectedDates])
+      setCopyOpen(false)
+      setSelectedDates(new Set())
+    } finally {
+      setCopying(false)
+    }
+  }
+
+  const groups = buildGroups(exercises)
+
   return (
     <div className="space-y-3">
-      <div className="overflow-x-auto rounded-md border border-border">
+      <div
+        ref={tableWrapperRef}
+        className="overflow-x-auto rounded-md border border-border"
+        style={dragLockedHeight != null ? { height: dragLockedHeight, overflowY: 'auto' } : undefined}
+      >
         <table className="w-full border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
           <colgroup>
-            {columns.map((c) => <col key={c.key} style={{ width: widths[c.key] ?? DEFAULT_COL_WIDTH[c.key] }} />)}
-            <col style={{ width: 36 }} />
+            {columns.flatMap((c) => {
+              const col = <col key={c.key} style={{ width: widths[c.key] ?? DEFAULT_COL_WIDTH[c.key] }} />
+              return c.key === 'sets' ? [col, <col key="add-set-col" style={{ width: 24 }} />] : [col]
+            })}
+            {/* delete action */}
+            <col style={{ width: 28 }} />
           </colgroup>
           <thead>
             <tr className="bg-muted/50 text-xs text-muted-foreground">
-              {columns.map((c) => (
-                <th key={c.key} className="relative border-b border-r border-border px-2 py-1.5 text-left font-medium whitespace-nowrap select-none">
-                  {c.label}
-                  <span
-                    onMouseDown={startResize(c.key)}
-                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary/60 active:bg-primary/80"
-                    aria-hidden
-                  />
-                </th>
-              ))}
+              {columns.flatMap((c) => {
+                const th = (
+                  <th key={c.key} className="relative border-b border-r border-border px-2 py-1.5 text-left font-medium whitespace-nowrap select-none">
+                    {c.label}
+                    <span
+                      onMouseDown={startResize(c.key)}
+                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary/60 active:bg-primary/80"
+                      aria-hidden
+                    />
+                  </th>
+                )
+                return c.key === 'sets' ? [th, <th key="add-set-col" className="border-b border-r border-border" />] : [th]
+              })}
               <th className="border-b border-border px-2 py-1.5"></th>
             </tr>
           </thead>
           <tbody>
             {exercises.length === 0 && (
               <tr>
-                <td colSpan={columns.length + 1} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                <td colSpan={columns.length + 2} className="px-3 py-6 text-center text-sm text-muted-foreground">
                   No exercises yet — click "Add exercise" below to start.
                 </td>
               </tr>
             )}
-            {exercises.map((ex) => (
-              <ExerciseRow
-                key={ex.id}
-                exercise={ex}
-                columns={columns}
-                onSave={(patch) => onSaveField(ex.id, patch)}
-                onDelete={() => onDeleteExercise(ex.id)}
-              />
-            ))}
+            {groups.map((group, gi) => {
+              const isOwnDragGroup = dragging?.mode === 'group' && group.exercises.some(ex => ex.id === dragging.exerciseId)
+
+              return (
+                <Fragment key={group.groupId ?? group.exercises[0]?.id ?? gi}>
+                  {/* Placeholder before this group during group drag */}
+                  {dragging?.mode === 'group' && dropBeforeId === group.exercises[0]?.id && (
+                    <PlaceholderRow colCount={columns.length + 2} onDrop={executeDrop} />
+                  )}
+
+                  {group.exercises.map((ex, i) => {
+                    const isDraggedSet = dragging?.mode === 'set' && ex.id === dragging.exerciseId
+                    const isValidSetTarget = dragging?.mode === 'set' && group.groupId === dragging.groupId
+                    return (
+                      <Fragment key={ex.id}>
+                        {isValidSetTarget && !isDraggedSet && dropBeforeId === ex.id && (
+                          <PlaceholderRow colCount={columns.length + 2} onDrop={executeDrop} />
+                        )}
+                        <ExerciseRow
+                          exercise={ex}
+                          columns={columns}
+                          isSubSet={i > 0}
+                          isInGroup={group.groupId !== null}
+                          isDragging={isOwnDragGroup || isDraggedSet}
+                          onSave={(patch) => onSaveField(ex.id, patch)}
+                          onDelete={() => onDeleteExercise(ex.id)}
+                          onAddSet={i === group.exercises.length - 1 ? () => onAddSet(ex.id) : undefined}
+                          onGroupDragStart={i === 0 ? startGroupDrag(ex.id, group.groupId) : undefined}
+                          onSetDragStart={i > 0 && group.groupId ? startSetDrag(ex.id, group.groupId) : undefined}
+                          onDragEnd={stopDrag}
+                          onDragOverRow={dragging ? handleDragOverRow(ex, group) : undefined}
+                          onDropRow={dragging ? executeDrop : undefined}
+                        />
+                      </Fragment>
+                    )
+                  })}
+
+                  {/* Placeholder at end of group during set drag */}
+                  {dragging?.mode === 'set' && dragging.groupId === group.groupId && dropBeforeId === 'end' && (
+                    <PlaceholderRow colCount={columns.length + 2} onDrop={executeDrop} />
+                  )}
+                </Fragment>
+              )
+            })}
+            {/* Placeholder after all groups during group drag */}
+            {dragging?.mode === 'group' && dropBeforeId === 'end' && (
+              <PlaceholderRow colCount={columns.length + 2} onDrop={executeDrop} />
+            )}
           </tbody>
         </table>
       </div>
+
+      {/* Footer: add exercise / clear day / copy to weeks */}
       <div className="flex items-center justify-between">
-        <Button type="button" size="sm" variant="outline" onClick={onAdd}>
-          <Plus className="h-4 w-4 mr-1" />Add exercise
-        </Button>
+        <div className="flex gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={onAdd}>
+            <Plus className="h-4 w-4 mr-1" />Add exercise
+          </Button>
+          {sameDayDates.length > 0 && exercises.length > 0 && !copyOpen && (
+            <Button type="button" size="sm" variant="outline" onClick={() => setCopyOpen(true)}>
+              <Copy className="h-4 w-4 mr-1" />Copy to weeks…
+            </Button>
+          )}
+        </div>
         {workout && (
           <Button type="button" size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={onDeleteWorkout}>
             <Trash2 className="h-4 w-4 mr-1" />Clear day
           </Button>
         )}
       </div>
+
+      {/* Inline copy-to-weeks panel */}
+      {copyOpen && (
+        <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+          <p className="text-sm font-medium">Copy exercises to:</p>
+          <div className="space-y-1.5">
+            {sameDayDates.map(({ date, weekIndex }) => (
+              <label key={date} className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-primary"
+                  checked={selectedDates.has(date)}
+                  onChange={() => toggleDate(date)}
+                />
+                Week {weekIndex + 1}
+                <span className="text-muted-foreground">{date}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">Existing exercises on the target days will be replaced.</p>
+          <div className="flex gap-2 pt-1">
+            <Button size="sm" disabled={copying || selectedDates.size === 0} onClick={handleCopy}>
+              {copying ? 'Copying…' : `Copy to ${selectedDates.size || 0} week${selectedDates.size === 1 ? '' : 's'}`}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => { setCopyOpen(false); setSelectedDates(new Set()) }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+function PlaceholderRow({ colCount, onDrop }: { colCount: number; onDrop: () => void }) {
+  return (
+    <tr aria-hidden>
+      <td
+        colSpan={colCount}
+        className="py-0.5 px-1"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); onDrop() }}
+      >
+        <div className="h-7 rounded border-2 border-dashed border-primary/50 bg-primary/5" />
+      </td>
+    </tr>
   )
 }
 
@@ -467,9 +783,18 @@ interface ExerciseRowProps {
   columns: ColDef[]
   onSave: (patch: Partial<Exercise>) => void
   onDelete: () => void
+  onAddSet?: () => void
+  isSubSet?: boolean
+  isInGroup?: boolean
+  isDragging?: boolean
+  onGroupDragStart?: (e: React.DragEvent) => void
+  onSetDragStart?: (e: React.DragEvent) => void
+  onDragEnd?: () => void
+  onDragOverRow?: (e: React.DragEvent) => void
+  onDropRow?: () => void
 }
 
-function ExerciseRow({ exercise, columns, onSave, onDelete }: ExerciseRowProps) {
+function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, isSubSet, isInGroup, isDragging, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow }: ExerciseRowProps) {
   const initDraft = () => {
     const d: Record<string, string> = {}
     for (const c of columns) d[c.key] = exerciseValue(exercise, c.key)
@@ -498,43 +823,109 @@ function ExerciseRow({ exercise, columns, onSave, onDelete }: ExerciseRowProps) 
 
   const inputCls = "w-full bg-transparent px-2 py-1.5 text-sm outline-none focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary"
   const textareaStyle: React.CSSProperties = { fieldSizing: 'content' } as React.CSSProperties
+  const groupBorder = isInGroup ? 'border-l-2 border-l-primary/30' : ''
 
   return (
-    <tr>
-      {columns.map((c) => (
-        <td key={c.key} className="border-b border-r border-border p-0 align-top">
-          {c.numeric ? (
-            <input
-              type="number"
-              min="0"
-              step="0.5"
-              value={draft[c.key] ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
-              onBlur={() => commit(c)}
-              placeholder={c.placeholder}
-              className={inputCls}
-            />
-          ) : (
-            <textarea
-              rows={1}
-              value={draft[c.key] ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
-              onBlur={() => commit(c)}
-              placeholder={c.placeholder}
-              style={textareaStyle}
-              className={`${inputCls} resize-none block leading-snug`}
-            />
-          )}
-        </td>
-      ))}
-      <td className="border-b border-border p-0 text-center">
+    <tr
+      className={isDragging ? 'opacity-30' : undefined}
+      onDragOver={onDragOverRow}
+      onDrop={onDropRow ? (e) => { e.preventDefault(); onDropRow() } : undefined}
+    >
+      {columns.flatMap((c) => {
+        if (c.key === 'name') {
+          return [
+            <td key="name" className={`border-b border-r border-border p-0 align-top ${groupBorder}`}>
+              {isSubSet ? (
+                <div className="flex items-center gap-1 px-2 py-1.5">
+                  <span
+                    draggable
+                    onDragStart={onSetDragStart}
+                    onDragEnd={onDragEnd}
+                    className="flex-shrink-0 cursor-grab text-muted-foreground/30 hover:text-muted-foreground/60 active:cursor-grabbing"
+                  >
+                    <GripVertical className="h-3 w-3" />
+                  </span>
+                  <span className="text-xs text-muted-foreground/40 select-none">↳</span>
+                </div>
+              ) : (
+                <div className="flex items-start">
+                  <span
+                    draggable
+                    onDragStart={onGroupDragStart}
+                    onDragEnd={onDragEnd}
+                    className="flex-shrink-0 mt-[7px] ml-1 cursor-grab text-muted-foreground/30 hover:text-muted-foreground/60 active:cursor-grabbing"
+                  >
+                    <GripVertical className="h-3.5 w-3.5" />
+                  </span>
+                  <textarea
+                    rows={1}
+                    value={draft[c.key] ?? ''}
+                    onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
+                    onBlur={() => commit(c)}
+                    placeholder={c.placeholder}
+                    style={textareaStyle}
+                    className="flex-1 min-w-0 bg-transparent px-1 py-1.5 text-sm outline-none focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary resize-none block leading-snug"
+                  />
+                </div>
+              )}
+            </td>,
+          ]
+        }
+        const cellContent = c.numeric ? (
+          <input
+            type="number"
+            min="0"
+            step="0.5"
+            value={draft[c.key] ?? ''}
+            onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
+            onBlur={() => commit(c)}
+            placeholder={c.placeholder}
+            className={inputCls}
+          />
+        ) : (
+          <textarea
+            rows={1}
+            value={draft[c.key] ?? ''}
+            onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
+            onBlur={() => commit(c)}
+            placeholder={c.placeholder}
+            style={textareaStyle}
+            className={`${inputCls} resize-none block leading-snug`}
+          />
+        )
+        const mainTd = (
+          <td key={c.key} className="border-b border-r border-border p-0 align-top">
+            {cellContent}
+          </td>
+        )
+        if (c.key === 'sets') {
+          return [
+            mainTd,
+            <td key="add-set-col" className="border-b border-r border-border p-0 text-center align-middle">
+              {onAddSet && (
+                <button
+                  type="button"
+                  onClick={onAddSet}
+                  className="p-1 text-muted-foreground hover:text-primary"
+                  aria-label="Add set"
+                  title="Add set"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+              )}
+            </td>,
+          ]
+        }
+        return [mainTd]
+      })}
+      <td className="border-b border-border p-0 text-center align-middle">
         <button
           type="button"
           onClick={onDelete}
-          className="p-1.5 text-muted-foreground hover:text-destructive"
+          className="p-1 text-muted-foreground hover:text-destructive"
           aria-label="Delete exercise"
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2 className="h-3.5 w-3.5" />
         </button>
       </td>
     </tr>

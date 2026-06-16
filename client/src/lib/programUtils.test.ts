@@ -131,6 +131,7 @@ const baseExercise: Exercise = {
   intensity: 'RPE 8',
   load_used: '95',
   rpe: '8',
+  group_id: null,
 }
 
 describe('exerciseValue', () => {

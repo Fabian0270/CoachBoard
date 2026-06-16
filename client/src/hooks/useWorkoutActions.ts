@@ -108,5 +108,40 @@ export function useWorkoutActions(
     } catch { /* leave state unchanged on network failure */ }
   }
 
-  return { addExercise, saveExerciseField, deleteExercise, deleteWorkout }
+  const addSet = async (date: string, workoutId: string, exerciseId: string): Promise<void> => {
+    if (!id) return
+    flashCell(date, 'saving')
+    try {
+      const res = await fetch(
+        `/api/programs/${id}/workouts/${workoutId}/exercises/${exerciseId}/add-set`,
+        { method: 'POST' },
+      )
+      if (!res.ok) { flashCell(date, 'error'); return }
+      const data: { exercises: Exercise[] } = await res.json()
+      updateWorkout(workoutId, (w) => ({ ...w, exercises: data.exercises }))
+      flashCell(date, 'saved')
+    } catch {
+      flashCell(date, 'error')
+    }
+  }
+
+  const reorderExercises = async (date: string, workoutId: string, exerciseIds: string[]): Promise<void> => {
+    if (!id) return
+    flashCell(date, 'saving')
+    try {
+      const res = await fetch(`/api/programs/${id}/workouts/${workoutId}/exercises/reorder`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exerciseIds }),
+      })
+      if (!res.ok) { flashCell(date, 'error'); return }
+      const data: { exercises: Exercise[] } = await res.json()
+      updateWorkout(workoutId, (w) => ({ ...w, exercises: data.exercises }))
+      flashCell(date, 'saved')
+    } catch {
+      flashCell(date, 'error')
+    }
+  }
+
+  return { addExercise, saveExerciseField, deleteExercise, deleteWorkout, addSet, reorderExercises }
 }

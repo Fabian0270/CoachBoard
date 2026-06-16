@@ -28,6 +28,7 @@ export interface Exercise {
   intensity: string | null
   load_used: string | null
   rpe: string | null
+  group_id: string | null
 }
 
 export interface Workout {
@@ -114,6 +115,48 @@ export interface ImportPreview {
   matched: ImportMatch[]
   warnings: ImportWarning[]
   e1rmEstimates: E1RMEstimate[]
+}
+
+// ---------------------------------------------------------------------------
+// Program analysis / report types (Phase 3)
+// ---------------------------------------------------------------------------
+
+export interface E1RMDataPoint {
+  weekIndex: number
+  e1rm: number
+  weight: number
+  reps: number
+  rpe: number
+  exerciseName: string
+}
+
+export interface LiftE1RMTrend {
+  liftKey: string
+  displayName: string
+  dataPoints: E1RMDataPoint[]
+  latestE1RM: number | null
+  bestE1RM: number | null
+}
+
+export interface RPEDeviationRow {
+  exerciseName: string
+  weekIndex: number
+  dayOfWeek: number
+  prescribedRpe: number | null
+  reportedRpe: number | null
+  delta: number | null
+}
+
+export interface ProgramReport {
+  programId: string
+  athleteId: string
+  e1rmTrends: LiftE1RMTrend[]
+  rpeDeviations: RPEDeviationRow[]
+  avgRpeDeviation: number | null
+  completionRate: number
+  exercisesTotal: number
+  exercisesCompleted: number
+  storedMaxes: AthleteMax[]
 }
 
 // ---------------------------------------------------------------------------
