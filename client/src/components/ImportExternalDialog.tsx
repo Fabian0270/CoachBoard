@@ -1,8 +1,10 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
 import { Button } from './ui/button'
-import { Upload, Loader2, AlertTriangle, XCircle } from 'lucide-react'
+import { Upload, Loader2, AlertTriangle, XCircle, Check } from 'lucide-react'
 import type { ExternalImportPreview, ExternalColumnMapping } from 'coachboard-shared'
+
+interface Athlete { id: string; name: string }
 
 /** 1-based column index → spreadsheet letter (1 → A, 27 → AA). */
 function colLetter(n: number): string {
@@ -13,6 +15,13 @@ function colLetter(n: number): string {
     n = Math.floor((n - 1) / 26)
   }
   return s
+}
+
+/** Local YYYY-MM-DD for an <input type="date"> default. */
+function todayIso(): string {
+  const d = new Date()
+  const off = d.getTimezoneOffset()
+  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10)
 }
 
 function ColumnMapping({ mapping }: { mapping: ExternalColumnMapping }) {
@@ -44,6 +53,7 @@ function ExerciseTable({ preview }: { preview: ExternalImportPreview }) {
             <th className="px-3 py-2 text-left font-medium">Exercise</th>
             <th className="px-3 py-2 text-center font-medium">Sets</th>
             <th className="px-3 py-2 text-center font-medium">Reps</th>
+            <th className="px-3 py-2 text-center font-medium">Intensity</th>
             <th className="px-3 py-2 text-center font-medium">Load</th>
             <th className="px-3 py-2 text-center font-medium">RPE</th>
           </tr>
@@ -56,6 +66,7 @@ function ExerciseTable({ preview }: { preview: ExternalImportPreview }) {
               <td className="px-3 py-1.5 font-medium">{ex.name}</td>
               <td className="px-3 py-1.5 text-center">{ex.sets ?? '—'}</td>
               <td className="px-3 py-1.5 text-center">{ex.reps ?? '—'}</td>
+              <td className="px-3 py-1.5 text-center">{ex.intensity ?? '—'}</td>
               <td className="px-3 py-1.5 text-center">{ex.load ?? '—'}</td>
               <td className="px-3 py-1.5 text-center">{ex.rpe ?? '—'}</td>
             </tr>
@@ -69,20 +80,44 @@ function ExerciseTable({ preview }: { preview: ExternalImportPreview }) {
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onCreated: (programId: string) => void
 }
 
-type Step = 'pick' | 'previewing' | 'preview'
+type Step = 'pick' | 'previewing' | 'preview' | 'finalize' | 'committing' | 'done'
 
-export default function ImportExternalDialog({ open, onOpenChange }: Props) {
+const inputClass = 'w-full rounded border bg-background px-3 py-2 text-sm'
+
+export default function ImportExternalDialog({ open, onOpenChange, onCreated }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>('pick')
   const [preview, setPreview] = useState<ExternalImportPreview | null>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // finalize form state
+  const [athletes, setAthletes] = useState<Athlete[]>([])
+  const [athleteId, setAthleteId] = useState('')
+  const [name, setName] = useState('')
+  const [status, setStatus] = useState('active')
+  const [startDate, setStartDate] = useState(todayIso())
+
+  useEffect(() => {
+    if (!open) return
+    fetch('/api/athletes')
+      .then((r) => r.json())
+      .then((data) => setAthletes(Array.isArray(data) ? data : []))
+      .catch(() => setAthletes([]))
+  }, [open])
 
   function reset() {
     setStep('pick')
     setPreview(null)
+    setPendingFile(null)
     setError(null)
+    setAthleteId('')
+    setName('')
+    setStatus('active')
+    setStartDate(todayIso())
     if (fileRef.current) fileRef.current.value = ''
   }
 
@@ -94,6 +129,8 @@ export default function ImportExternalDialog({ open, onOpenChange }: Props) {
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
+    setPendingFile(file)
+    setName(file.name.replace(/\.xlsx$/i, ''))
     setError(null)
     setStep('previewing')
     try {
@@ -117,8 +154,37 @@ export default function ImportExternalDialog({ open, onOpenChange }: Props) {
     }
   }
 
+  async function handleConfirm() {
+    if (!pendingFile) return
+    setError(null)
+    setStep('committing')
+    try {
+      const buf = await pendingFile.arrayBuffer()
+      const params = new URLSearchParams({ athlete_id: athleteId, name, status })
+      // Archived programs don't carry a start date — server places days in order.
+      if (status !== 'archived' && startDate) params.set('start_date', startDate)
+      const res = await fetch(`/api/programs/import-external?${params.toString()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: buf,
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error ?? 'Import failed')
+        setStep('finalize')
+        return
+      }
+      setStep('done')
+      onCreated(data.programId)
+    } catch {
+      setError('Failed to reach server')
+      setStep('finalize')
+    }
+  }
+
   const hasErrors = preview && preview.errors.length > 0
   const hasWarnings = preview && preview.warnings.length > 0
+  const canConfirm = athleteId !== '' && name.trim() !== '' && (status === 'archived' || startDate !== '')
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -132,7 +198,7 @@ export default function ImportExternalDialog({ open, onOpenChange }: Props) {
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
               Upload an Excel program built outside CoachBoard. We'll detect its structure and show a
-              preview — nothing is saved yet.
+              preview before anything is saved.
             </p>
             <div className="flex items-center gap-3">
               <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={step === 'previewing'}>
@@ -162,6 +228,9 @@ export default function ImportExternalDialog({ open, onOpenChange }: Props) {
                   {preview.errors.map((err, i) => <li key={i}>{err}</li>)}
                 </ul>
                 <ColumnMapping mapping={preview.columnMapping} />
+                <div className="flex justify-end pt-2">
+                  <Button variant="outline" onClick={reset}>Choose another file</Button>
+                </div>
               </div>
             ) : (
               <>
@@ -169,6 +238,9 @@ export default function ImportExternalDialog({ open, onOpenChange }: Props) {
                   Detected <strong>{preview.weeks}</strong> week{preview.weeks !== 1 ? 's' : ''} ×{' '}
                   <strong>{preview.days}</strong> day-block{preview.days !== 1 ? 's' : ''},{' '}
                   <strong>{preview.exerciseCount}</strong> exercise{preview.exerciseCount !== 1 ? 's' : ''}.
+                  <span className="text-muted-foreground">
+                    {' '}Layout: {preview.layout === 'horizontal' ? 'weeks across columns' : 'stacked sections'}.
+                  </span>
                 </p>
                 <ColumnMapping mapping={preview.columnMapping} />
 
@@ -185,13 +257,83 @@ export default function ImportExternalDialog({ open, onOpenChange }: Props) {
                 )}
 
                 {preview.exercises.length > 0 && <ExerciseTable preview={preview} />}
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={reset}>Choose another file</Button>
+                  <Button onClick={() => setStep('finalize')} disabled={preview.exerciseCount === 0}>
+                    Continue →
+                  </Button>
+                </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* Step: finalize */}
+        {step === 'finalize' && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Set up the program. Days are placed in order starting from the Monday of the chosen week.
+            </p>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Athlete</label>
+                <select className={inputClass} value={athleteId} onChange={(e) => setAthleteId(e.target.value)}>
+                  <option value="">Select an athlete…</option>
+                  {athletes.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Program name</label>
+                <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Status</label>
+                  <select className={inputClass} value={status} onChange={(e) => setStatus(e.target.value)}>
+                    <option value="active">Active</option>
+                    <option value="completed">Completed</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </div>
+                {status === 'archived' ? (
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">Start date</label>
+                    <p className="text-xs text-muted-foreground pt-2">
+                      Not needed for archived programs — days are placed in order automatically.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">Start date</label>
+                    <input type="date" className={inputClass} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {error && <p className="text-sm text-destructive">{error}</p>}
 
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={reset}>Choose another file</Button>
-              <Button onClick={() => handleClose(false)}>Close</Button>
+              <Button variant="outline" onClick={() => setStep('preview')}>← Back</Button>
+              <Button onClick={handleConfirm} disabled={!canConfirm}>Create program</Button>
             </div>
+          </div>
+        )}
+
+        {/* Step: committing */}
+        {step === 'committing' && (
+          <div className="flex items-center gap-3 py-4">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">Creating program…</span>
+          </div>
+        )}
+
+        {/* Step: done */}
+        {step === 'done' && (
+          <div className="flex items-center gap-3 py-4 text-green-600">
+            <Check className="h-5 w-5" />
+            <span className="text-sm font-medium">Program created — opening it now…</span>
           </div>
         )}
       </DialogContent>

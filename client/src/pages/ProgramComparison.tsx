@@ -213,6 +213,7 @@ export default function ProgramComparison() {
       <ImportExternalDialog
         open={importExternalOpen}
         onOpenChange={setImportExternalOpen}
+        onCreated={(programId) => navigate(`/programs/${programId}`)}
       />
     </div>
   )

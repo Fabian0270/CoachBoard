@@ -143,10 +143,17 @@ export interface ExternalExerciseRow {
   name: string
   sets: string | null
   reps: string | null
-  load: string | null    // null for bodyweight / blank
+  load: string | null    // null for bodyweight / blank; = "Load Used" in horizontal layout
   rpe: string | null     // post-RIR-conversion
   sheetRow: number       // source row for traceability in warnings
+  // Extra columns captured from CoachBoard-style horizontal sheets (optional;
+  // the vertical parser leaves these undefined).
+  intensity?: string | null  // "Intensity/Weight" — prescribed
+  loadCap?: number | null    // "Load Cap" — prescribed weight
+  restTime?: string | null   // "Rest Time"
 }
+
+export type ExternalLayout = 'horizontal' | 'vertical'
 
 export interface ExternalImportWarning {
   sheetRow?: number
@@ -154,6 +161,7 @@ export interface ExternalImportWarning {
 }
 
 export interface ExternalImportPreview {
+  layout: ExternalLayout
   columnMapping: ExternalColumnMapping
   weeks: number
   days: number           // distinct (week,day) blocks total
@@ -161,6 +169,10 @@ export interface ExternalImportPreview {
   exercises: ExternalExerciseRow[]
   warnings: ExternalImportWarning[]
   errors: string[]       // fatal; non-empty means the file cannot be imported
+}
+
+export interface ExternalImportCommitResult {
+  programId: string
 }
 
 // ---------------------------------------------------------------------------

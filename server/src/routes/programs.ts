@@ -22,7 +22,7 @@ import {
   reorderExercises,
 } from '../services/programService.js'
 import { parseImportFile, commitImport } from '../services/importService.js'
-import { parseExternalFile } from '../services/externalImportService.js'
+import { parseExternalFile, commitExternalProgram } from '../services/externalImportService.js'
 import { getProgramReport } from '../services/analysisService.js'
 import { generateDraftProgram } from '../services/suggestionService.js'
 
@@ -498,15 +498,31 @@ router.post(
 
       const preview = await parseExternalFile(buffer)
 
-      if (req.query.dry_run !== '1') {
-        res.status(501).json({ error: 'External import commit is not implemented yet (Feature 4b).' })
+      // dry_run=1 → preview only (Feature 4a)
+      if (req.query.dry_run === '1') {
+        res.json(preview)
         return
       }
 
-      res.json(preview)
+      // Otherwise commit: create a real program (Feature 4b)
+      const meta = validate(schemas.externalImportCommit, req.query, res)
+      if (!meta) return
+      if (preview.errors.length > 0) {
+        res.status(400).json({ error: preview.errors[0] })
+        return
+      }
+
+      const result = await commitExternalProgram(preview.exercises, {
+        athleteId: meta.athlete_id,
+        name: meta.name,
+        status: meta.status,
+        startDate: meta.start_date ?? undefined,
+        weeks: preview.weeks,
+      })
+      res.status(201).json(result)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'External import failed'
-      res.status(500).json({ error: msg })
+      res.status(msg.includes('not found') ? 400 : 500).json({ error: msg })
     }
   },
 )
