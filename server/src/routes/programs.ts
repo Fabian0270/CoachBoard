@@ -18,10 +18,12 @@ import {
   deleteExercise,
   addSetToExercise,
   copyWorkoutDay,
+  moveWorkoutDay,
   reorderExercises,
 } from '../services/programService.js'
 import { parseImportFile, commitImport } from '../services/importService.js'
 import { getProgramReport } from '../services/analysisService.js'
+import { generateDraftProgram } from '../services/suggestionService.js'
 
 const router = Router()
 
@@ -206,6 +208,18 @@ router.post('/:programId/workouts/:workoutId/exercises/:exerciseId/add-set', asy
   }
 })
 
+router.post('/:programId/move-day', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.moveDay, req.body, res)
+  if (!body) return
+  try {
+    await moveWorkoutDay(String(req.params.programId), body.sourceDate, body.targetDate)
+    res.json({ ok: true })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Move failed'
+    res.status(msg.includes('No workout') ? 400 : 500).json({ error: msg })
+  }
+})
+
 router.post('/:programId/copy-day', async (req: Request, res: Response): Promise<void> => {
   const body = validate(schemas.copyDay, req.body, res)
   if (!body) return
@@ -228,6 +242,19 @@ router.get('/:id/report', async (req: Request, res: Response): Promise<void> => 
     res.json(report)
   } catch {
     res.status(500).json({ error: 'Failed to generate report' })
+  }
+})
+
+router.post('/:id/suggest', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.suggestion, req.body, res)
+  if (!body) return
+  try {
+    const result = await generateDraftProgram(String(req.params.id), body)
+    res.status(201).json(result)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Suggestion failed'
+    const status = msg.includes('not found') || msg.includes('not completed') || msg.includes('Unknown template') ? 400 : 500
+    res.status(status).json({ error: msg })
   }
 })
 

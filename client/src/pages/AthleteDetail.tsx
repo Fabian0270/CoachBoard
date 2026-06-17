@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -8,7 +8,8 @@ import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import AthleteMaxes from '../components/AthleteMaxes'
-import { Plus, ArrowLeft, Trash2, Pencil } from 'lucide-react'
+import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles } from 'lucide-react'
+import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
 
 interface Athlete {
   id: string
@@ -35,6 +36,9 @@ export default function AthleteDetail() {
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState({ name: '', email: '', sport: '', date_of_birth: '', notes: '' })
   const [saving, setSaving] = useState(false)
+  const [newMenuOpen, setNewMenuOpen] = useState(false)
+  const [suggestOpen, setSuggestOpen] = useState(false)
+  const newMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!id) return
@@ -48,6 +52,13 @@ export default function AthleteDetail() {
       setPrograms(Array.isArray(programs) ? programs : [])
     }).catch(() => {})
   }, [id])
+
+  useEffect(() => {
+    if (!newMenuOpen) return
+    const close = () => setNewMenuOpen(false)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [newMenuOpen])
 
   const handleDelete = async () => {
     if (!confirm('Delete this athlete?')) return
@@ -169,7 +180,27 @@ export default function AthleteDetail() {
         </TabsContent>
         <TabsContent value="programs">
           <div className="space-y-3">
-            <Link to={`/programs/new?athlete_id=${id}`}><Button size="sm"><Plus className="h-4 w-4 mr-2" />New Program</Button></Link>
+            <div className="relative inline-block" ref={newMenuRef}>
+              <Button size="sm" onClick={(e) => { e.stopPropagation(); setNewMenuOpen((v) => !v) }}>
+                <Plus className="h-4 w-4 mr-2" />New Program<ChevronDown className="h-4 w-4 ml-2" />
+              </Button>
+              {newMenuOpen && (
+                <div className="absolute left-0 top-full mt-1 z-20 min-w-[200px] rounded-md border bg-card shadow-lg py-1" onClick={(e) => e.stopPropagation()}>
+                  <Link to={`/programs/new?athlete_id=${id}`} onClick={() => setNewMenuOpen(false)}>
+                    <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent">
+                      <Plus className="h-4 w-4" />New program
+                    </button>
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => { setNewMenuOpen(false); setSuggestOpen(true) }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+                  >
+                    <Sparkles className="h-4 w-4" />Generate next program
+                  </button>
+                </div>
+              )}
+            </div>
             {programs.length === 0 ? (
               <Card><CardContent className="py-8 text-center text-muted-foreground">No programs yet.</CardContent></Card>
             ) : programs.map((program) => (
@@ -188,6 +219,14 @@ export default function AthleteDetail() {
           {id && <AthleteMaxes athleteId={id} />}
         </TabsContent>
       </Tabs>
+      {id && (
+        <SuggestProgramDialog
+          open={suggestOpen}
+          onOpenChange={setSuggestOpen}
+          athleteId={id}
+          onCreated={(draftId) => navigate(`/programs/${draftId}`)}
+        />
+      )}
     </div>
   )
 }
