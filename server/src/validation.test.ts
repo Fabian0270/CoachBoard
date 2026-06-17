@@ -130,3 +130,21 @@ describe('exercise schemas', () => {
     expect(schemas.exercise.update.safeParse({ weight: -5 }).success).toBe(false)
   })
 })
+
+describe('externalImportCommit', () => {
+  const base = { athlete_id: ATHLETE_ID, name: 'Block' }
+
+  it('requires a start date for active programs', () => {
+    expect(schemas.externalImportCommit.safeParse({ ...base, status: 'active' }).success).toBe(false)
+    expect(schemas.externalImportCommit.safeParse({ ...base, status: 'active', start_date: '2026-06-15' }).success).toBe(true)
+  })
+
+  it('allows archived programs without a start date', () => {
+    expect(schemas.externalImportCommit.safeParse({ ...base, status: 'archived' }).success).toBe(true)
+    expect(schemas.externalImportCommit.safeParse({ ...base, status: 'archived', start_date: '' }).success).toBe(true)
+  })
+
+  it('rejects an unknown status', () => {
+    expect(schemas.externalImportCommit.safeParse({ ...base, status: 'draft', start_date: '2026-06-15' }).success).toBe(false)
+  })
+})

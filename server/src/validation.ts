@@ -138,6 +138,18 @@ export const schemas = {
     startDate: isoDate,
   }),
 
+  // Commit metadata for external program import — arrives as query-string params.
+  // Archived (historical) programs don't require a start date; active/completed do.
+  externalImportCommit: z.object({
+    athlete_id: z.uuid(),
+    name: z.string().min(1).max(200),
+    status: z.enum(['active', 'completed', 'archived']),
+    start_date: optionalIsoDate,
+  }).refine(
+    (data) => data.status === 'archived' || !!data.start_date,
+    { message: 'start_date is required unless the program is archived', path: ['start_date'] },
+  ),
+
   progress: {
     create: z.object({
       athlete_id: z.uuid(),

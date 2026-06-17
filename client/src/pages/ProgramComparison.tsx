@@ -4,8 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles } from 'lucide-react'
+import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X } from 'lucide-react'
 import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
+import ImportExternalDialog from '../components/ImportExternalDialog'
 
 interface Athlete { id: string; name: string }
 interface Program { id: string; name: string; status: string; athlete_id: string; start_date: string | null }
@@ -19,8 +20,12 @@ export default function ProgramComparison() {
   const [selectedAthlete, setSelectedAthlete] = useState<string>('all')
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [savingRename, setSavingRename] = useState(false)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
+  const [importExternalOpen, setImportExternalOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const newMenuRef = useRef<HTMLDivElement>(null)
 
@@ -70,6 +75,37 @@ export default function ProgramComparison() {
     }
   }
 
+  const startRename = (program: Program) => {
+    setMenuOpen(null)
+    setRenameDraft(program.name)
+    setRenamingId(program.id)
+  }
+
+  const handleRename = async (program: Program) => {
+    const trimmed = renameDraft.trim()
+    if (trimmed === '' || trimmed === program.name) { setRenamingId(null); return }
+    setSavingRename(true)
+    try {
+      const res = await fetch(`/api/programs/${program.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      })
+      if (res.ok) {
+        const updated = await res.json()
+        setPrograms((prev) => prev.map((p) => p.id === program.id ? { ...p, name: updated.name } : p))
+        setRenamingId(null)
+      } else {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        alert(`Failed to rename program: ${err.error ?? JSON.stringify(err)}`)
+      }
+    } catch (err) {
+      alert(`Network error: ${String(err)}`)
+    } finally {
+      setSavingRename(false)
+    }
+  }
+
   const filtered = programs
     .filter((p) => selectedAthlete === 'all' || p.athlete_id === selectedAthlete)
     .filter((p) => selectedStatus === 'all' || p.status === selectedStatus)
@@ -79,26 +115,31 @@ export default function ProgramComparison() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Programs</h1>
-        <div className="relative" ref={newMenuRef}>
-          <Button onClick={(e) => { e.stopPropagation(); setNewMenuOpen((v) => !v) }}>
-            <Plus className="h-4 w-4 mr-2" />New Program<ChevronDown className="h-4 w-4 ml-2" />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setImportExternalOpen(true)}>
+            <FileUp className="h-4 w-4 mr-2" />Import program
           </Button>
-          {newMenuOpen && (
-            <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-md border bg-card shadow-lg py-1" onClick={(e) => e.stopPropagation()}>
-              <Link to="/programs/new" onClick={() => setNewMenuOpen(false)}>
-                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent">
-                  <Plus className="h-4 w-4" />New program
+          <div className="relative" ref={newMenuRef}>
+            <Button onClick={(e) => { e.stopPropagation(); setNewMenuOpen((v) => !v) }}>
+              <Plus className="h-4 w-4 mr-2" />New Program<ChevronDown className="h-4 w-4 ml-2" />
+            </Button>
+            {newMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-md border bg-card shadow-lg py-1" onClick={(e) => e.stopPropagation()}>
+                <Link to="/programs/new" onClick={() => setNewMenuOpen(false)}>
+                  <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent">
+                    <Plus className="h-4 w-4" />New program
+                  </button>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => { setNewMenuOpen(false); setSuggestOpen(true) }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+                >
+                  <Sparkles className="h-4 w-4" />Generate next program
                 </button>
-              </Link>
-              <button
-                type="button"
-                onClick={() => { setNewMenuOpen(false); setSuggestOpen(true) }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-              >
-                <Sparkles className="h-4 w-4" />Generate next program
-              </button>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <div className="flex gap-3 flex-wrap">
@@ -134,10 +175,40 @@ export default function ProgramComparison() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((program) => (
             <div key={program.id} className="relative group" ref={menuOpen === program.id ? menuRef : null}>
-              <Link to={`/programs/${program.id}`}>
-                <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
-                  <CardHeader className="pr-10">
-                    <CardTitle className="text-base">{program.name}</CardTitle>
+              {renamingId === program.id ? (
+                <Card className="h-full">
+                  <CardHeader className="pr-4">
+                    <div className="flex items-center gap-2">
+                      <input
+                        autoFocus
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleRename(program)
+                          else if (e.key === 'Escape') setRenamingId(null)
+                        }}
+                        disabled={savingRename}
+                        className="flex-1 min-w-0 rounded-md border border-input bg-background px-2 py-1 text-base font-semibold outline-none focus:ring-2 focus:ring-primary"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRename(program)}
+                        disabled={savingRename}
+                        className="p-1.5 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                        aria-label="Save name"
+                      >
+                        <Check className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRenamingId(null)}
+                        disabled={savingRename}
+                        className="p-1.5 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                        aria-label="Cancel rename"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
                     <div className="text-sm text-muted-foreground">{athleteMap[program.athlete_id] ?? 'Unknown'}</div>
                   </CardHeader>
                   <CardContent>
@@ -145,21 +216,36 @@ export default function ProgramComparison() {
                     {program.start_date && <div className="text-sm text-muted-foreground mt-2">Started: {program.start_date}</div>}
                   </CardContent>
                 </Card>
-              </Link>
+              ) : (
+                <Link to={`/programs/${program.id}`}>
+                  <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
+                    <CardHeader className="pr-10">
+                      <CardTitle className="text-base">{program.name}</CardTitle>
+                      <div className="text-sm text-muted-foreground">{athleteMap[program.athlete_id] ?? 'Unknown'}</div>
+                    </CardHeader>
+                    <CardContent>
+                      <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
+                      {program.start_date && <div className="text-sm text-muted-foreground mt-2">Started: {program.start_date}</div>}
+                    </CardContent>
+                  </Card>
+                </Link>
+              )}
 
               {/* Three-dot menu button */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setMenuOpen(menuOpen === program.id ? null : program.id)
-                }}
-                className={`absolute top-3 right-3 p-1.5 rounded-md text-muted-foreground transition-opacity hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary ${menuOpen === program.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                aria-label="Program options"
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </button>
+              {renamingId !== program.id && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setMenuOpen(menuOpen === program.id ? null : program.id)
+                  }}
+                  className={`absolute top-3 right-3 p-1.5 rounded-md text-muted-foreground transition-opacity hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary ${menuOpen === program.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                  aria-label="Program options"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+              )}
 
               {/* Dropdown menu */}
               {menuOpen === program.id && (
@@ -184,6 +270,14 @@ export default function ProgramComparison() {
                   <div className="my-1 border-t border-border" />
                   <button
                     type="button"
+                    onClick={() => startRename(program)}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    Rename
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => handleDelete(program)}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10"
                   >
@@ -200,6 +294,11 @@ export default function ProgramComparison() {
         open={suggestOpen}
         onOpenChange={setSuggestOpen}
         onCreated={(draftId) => navigate(`/programs/${draftId}`)}
+      />
+      <ImportExternalDialog
+        open={importExternalOpen}
+        onOpenChange={setImportExternalOpen}
+        onCreated={(programId) => navigate(`/programs/${programId}`)}
       />
     </div>
   )
