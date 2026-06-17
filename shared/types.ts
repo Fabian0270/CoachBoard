@@ -119,6 +119,51 @@ export interface ImportPreview {
 }
 
 // ---------------------------------------------------------------------------
+// External program import types (Feature 4) — arbitrary Excel files, not
+// CoachBoard's own export. Parser discovers structure rather than replaying it.
+// ---------------------------------------------------------------------------
+
+export type ExternalColumnKey = 'exercise' | 'sets' | 'reps' | 'load' | 'rpe'
+
+export interface ExternalColumnMapping {
+  // 1-based worksheet column index detected for each key, or null if not found
+  exercise: number | null
+  sets: number | null
+  reps: number | null
+  load: number | null
+  rpe: number | null
+  rpeFromRir: boolean   // true when the RPE column was actually an RIR column (converted)
+}
+
+export interface ExternalExerciseRow {
+  weekIndex: number      // 0-based; 0 if no week markers found
+  dayIndex: number       // 0-based within the week; 0 if no day markers found
+  weekLabel: string      // e.g. "Week 1" (raw detected text or synthesized)
+  dayLabel: string       // e.g. "Day 1" / "Monday" / "Upper"
+  name: string
+  sets: string | null
+  reps: string | null
+  load: string | null    // null for bodyweight / blank
+  rpe: string | null     // post-RIR-conversion
+  sheetRow: number       // source row for traceability in warnings
+}
+
+export interface ExternalImportWarning {
+  sheetRow?: number
+  message: string
+}
+
+export interface ExternalImportPreview {
+  columnMapping: ExternalColumnMapping
+  weeks: number
+  days: number           // distinct (week,day) blocks total
+  exerciseCount: number
+  exercises: ExternalExerciseRow[]
+  warnings: ExternalImportWarning[]
+  errors: string[]       // fatal; non-empty means the file cannot be imported
+}
+
+// ---------------------------------------------------------------------------
 // Program analysis / report types (Phase 3)
 // ---------------------------------------------------------------------------
 

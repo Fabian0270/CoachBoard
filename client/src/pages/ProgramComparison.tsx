@@ -4,8 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles } from 'lucide-react'
+import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp } from 'lucide-react'
 import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
+import ImportExternalDialog from '../components/ImportExternalDialog'
 
 interface Athlete { id: string; name: string }
 interface Program { id: string; name: string; status: string; athlete_id: string; start_date: string | null }
@@ -21,6 +22,7 @@ export default function ProgramComparison() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
+  const [importExternalOpen, setImportExternalOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const newMenuRef = useRef<HTMLDivElement>(null)
 
@@ -96,6 +98,13 @@ export default function ProgramComparison() {
                 className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
               >
                 <Sparkles className="h-4 w-4" />Generate next program
+              </button>
+              <button
+                type="button"
+                onClick={() => { setNewMenuOpen(false); setImportExternalOpen(true) }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+              >
+                <FileUp className="h-4 w-4" />Import external program
               </button>
             </div>
           )}
@@ -200,6 +209,10 @@ export default function ProgramComparison() {
         open={suggestOpen}
         onOpenChange={setSuggestOpen}
         onCreated={(draftId) => navigate(`/programs/${draftId}`)}
+      />
+      <ImportExternalDialog
+        open={importExternalOpen}
+        onOpenChange={setImportExternalOpen}
       />
     </div>
   )

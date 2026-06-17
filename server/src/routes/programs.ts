@@ -22,6 +22,7 @@ import {
   reorderExercises,
 } from '../services/programService.js'
 import { parseImportFile, commitImport } from '../services/importService.js'
+import { parseExternalFile } from '../services/externalImportService.js'
 import { getProgramReport } from '../services/analysisService.js'
 import { generateDraftProgram } from '../services/suggestionService.js'
 
@@ -473,6 +474,38 @@ router.post(
       res.json({ ...result, warnings: preview.warnings })
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Import failed'
+      res.status(500).json({ error: msg })
+    }
+  },
+)
+
+// ---------------------------------------------------------------------------
+// External import (Feature 4) — arbitrary Excel files built outside CoachBoard.
+// 4a: dry_run=1 parses the file and returns a structure preview. The commit
+// path (creating the program) arrives in 4b.
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/import-external',
+  express.raw({ type: 'application/octet-stream', limit: '10mb' }),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const buffer = req.body as Buffer
+      if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+        res.status(400).json({ error: 'Request body must be an xlsx file sent as application/octet-stream' })
+        return
+      }
+
+      const preview = await parseExternalFile(buffer)
+
+      if (req.query.dry_run !== '1') {
+        res.status(501).json({ error: 'External import commit is not implemented yet (Feature 4b).' })
+        return
+      }
+
+      res.json(preview)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'External import failed'
       res.status(500).json({ error: msg })
     }
   },
