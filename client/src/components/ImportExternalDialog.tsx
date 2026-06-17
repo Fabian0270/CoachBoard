@@ -130,7 +130,10 @@ export default function ImportExternalDialog({ open, onOpenChange, onCreated }: 
     const file = e.target.files?.[0]
     if (!file) return
     setPendingFile(file)
-    setName(file.name.replace(/\.xlsx$/i, ''))
+    // Default the program name from the filename, turning the underscores that
+    // download names use ("block_2") into spaces → "block 2". Hyphens are left
+    // alone since they're often intentional (e.g. "Off-Season").
+    setName(file.name.replace(/\.xlsx$/i, '').replace(/_+/g, ' ').replace(/\s+/g, ' ').trim())
     setError(null)
     setStep('previewing')
     try {
@@ -239,7 +242,12 @@ export default function ImportExternalDialog({ open, onOpenChange, onCreated }: 
                   <strong>{preview.days}</strong> day-block{preview.days !== 1 ? 's' : ''},{' '}
                   <strong>{preview.exerciseCount}</strong> exercise{preview.exerciseCount !== 1 ? 's' : ''}.
                   <span className="text-muted-foreground">
-                    {' '}Layout: {preview.layout === 'horizontal' ? 'weeks across columns' : 'stacked sections'}.
+                    {' '}Layout: {
+                      preview.layout === 'horizontal' ? 'weeks across columns'
+                        : preview.layout === 'block-grid' ? 'week blocks with day sections'
+                        : preview.layout === 'week-grid' ? 'week blocks with weekday sections'
+                        : 'stacked sections'
+                    }.
                   </span>
                 </p>
                 <ColumnMapping mapping={preview.columnMapping} />

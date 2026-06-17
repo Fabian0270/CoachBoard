@@ -171,6 +171,22 @@ describe('parseExternalFile', () => {
     const buf = await buildSheet([HEADER, ['Squat', 3, 5, 100, 8]])
     expect((await parseExternalFile(buf)).layout).toBe('vertical')
   })
+
+  it('recovers a rep range from a formula cell whose cached result is a Date', async () => {
+    // Weeks copy each other with "=K31"; Excel caches the result as a Date. The
+    // cell is { formula, result: Date }, not a bare Date — must still ISO-format.
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('Sheet1')
+    HEADER.forEach((h, c) => { ws.getCell(1, c + 1).value = h })
+    ws.getCell(2, 1).value = 'RDL'
+    ws.getCell(2, 2).value = 3
+    ws.getCell(2, 3).value = { formula: 'Z1', result: new Date(Date.UTC(2022, 7, 6)) } // Aug 6
+    ws.getCell(2, 4).value = 100
+    ws.getCell(2, 5).value = 8
+    const buf = Buffer.from(await wb.xlsx.writeBuffer() as ArrayBuffer)
+    const res = await parseExternalFile(buf)
+    expect(res.exercises[0].reps).toBe('6-8') // ordered low-high, not "8-6"
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -349,5 +365,283 @@ describe('parseExternalFile (horizontal, shared name column)', () => {
     const e = res.exercises[0]
     expect(e.reps).toBe('4-8')
     expect(e.intensity).toBe('-7.5%')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Block-grid layout — weeks as side-by-side blocks whose
+// lead column holds repeating "DAY n" section rows, the "Week n" banner sits one
+// column to the right of each block, and RPE is written "@6" / "@6-7".
+// ---------------------------------------------------------------------------
+
+// Block per week: Movement(0) SETS(1) REPS(2) LOAD(3) RPE(4) eRPE(5), then a
+// gap column. Block width 7 → starts at col 2, 9, 16, …
+const GRID_COLS = ['Movement', 'SETS', 'REPS', 'LOAD', 'RPE', 'eRPE']
+const GBLOCK = GRID_COLS.length + 1
+const gridStart = (w: number) => 2 + w * GBLOCK // 1-based block-start (the Movement / DAY column)
+
+interface GWeekCell { sets?: Cell; reps?: Cell; load?: Cell; rpe?: Cell; erpe?: Cell }
+interface GRow { name?: string; weeks: GWeekCell[] }
+interface GDay { day: string; rows: GRow[] }
+
+async function buildGridSheet(numWeeks: number, days: GDay[]): Promise<Buffer> {
+  const grid: Cell[][] = []
+  const place = (row: Cell[], w: number, vals: Cell[]) => {
+    const s = gridStart(w) - 1
+    vals.forEach((v, off) => { if (v !== null && v !== undefined && v !== '') row[s + off] = v })
+  }
+
+  // Banner row: each block's lead column holds the FIRST "DAY n" label, with the
+  // "Week n" banner one column to its right.
+  const banner: Cell[] = []
+  for (let w = 0; w < numWeeks; w++) {
+    banner[gridStart(w) - 1] = days[0].day
+    banner[gridStart(w)] = `Week ${w + 1}`
+  }
+  grid.push(banner)
+
+  days.forEach((day, di) => {
+    // DAY 2+ get their own section row (DAY 1 already lives on the banner row).
+    if (di > 0) {
+      const dayRow: Cell[] = []
+      for (let w = 0; w < numWeeks; w++) dayRow[gridStart(w) - 1] = day.day
+      grid.push(dayRow)
+    }
+    // Header row repeats under every day.
+    const header: Cell[] = []
+    for (let w = 0; w < numWeeks; w++) place(header, w, GRID_COLS)
+    grid.push(header)
+
+    for (const r of day.rows) {
+      const xrow: Cell[] = []
+      for (let w = 0; w < numWeeks; w++) {
+        const c = r.weeks[w] ?? {}
+        place(xrow, w, [r.name ?? '', c.sets ?? '', c.reps ?? '', c.load ?? '', c.rpe ?? '', c.erpe ?? ''])
+      }
+      grid.push(xrow)
+    }
+  })
+  return buildSheet(grid)
+}
+
+describe('parseExternalFile (block-grid layout)', () => {
+  const PROGRAM: GDay[] = [
+    {
+      day: 'DAY 1',
+      rows: [
+        { name: 'Squat', weeks: [
+          { sets: 1, reps: 3, load: 180, rpe: '@6', erpe: 6 },
+          { sets: 1, reps: 3, load: 190, rpe: '@7-8', erpe: 7 },
+        ] },
+        { name: 'Squat', weeks: [ // sub-set; explicit repeated name
+          { sets: 2, reps: 5, load: 165, rpe: '@6', erpe: 6 },
+          { sets: 3, reps: 5, load: 165, rpe: '@6', erpe: 6 },
+        ] },
+        { name: 'Bench Press', weeks: [ // backoff written as a fraction in RPE col
+          { sets: 1, reps: 5, load: 115, rpe: -0.05, erpe: 6 },
+          { sets: 1, reps: 5, load: 125, rpe: -0.05, erpe: 7 },
+        ] },
+      ],
+    },
+    {
+      day: 'DAY 2',
+      rows: [
+        { name: 'Deadlift', weeks: [
+          { sets: 1, reps: 1, load: 230, rpe: '@6', erpe: 6 },
+          { sets: 1, reps: 1, load: 240, rpe: '@6-7', erpe: 8 },
+        ] },
+      ],
+    },
+  ]
+
+  it('detects the layout and counts weeks / day-blocks / exercises', async () => {
+    const res = await parseExternalFile(await buildGridSheet(2, PROGRAM))
+    expect(res.layout).toBe('block-grid')
+    expect(res.errors).toEqual([])
+    expect(res.weeks).toBe(2)
+    expect(res.days).toBe(4)          // 2 days × 2 weeks
+    expect(res.exerciseCount).toBe(8) // 4 rows × 2 weeks
+    expect(res.columnMapping).toMatchObject({ exercise: 2, sets: 3, reps: 4, load: 5, rpe: 6 })
+  })
+
+  it('reads each field from the correct week block', async () => {
+    const res = await parseExternalFile(await buildGridSheet(2, PROGRAM))
+    const w0 = res.exercises.find((e) => e.weekIndex === 0 && e.name === 'Squat')!
+    expect(w0).toMatchObject({ sets: '1', reps: '3', load: '180', rpe: '6', dayLabel: 'DAY 1', dayIndex: 0 })
+    const w1 = res.exercises.find((e) => e.weekIndex === 1 && e.name === 'Squat' && e.sheetRow === w0.sheetRow)!
+    expect(w1.load).toBe('190') // week 2's load, not week 1's
+  })
+
+  it('strips the "@" from RPE and keeps a range as-is', async () => {
+    const res = await parseExternalFile(await buildGridSheet(2, PROGRAM))
+    const dl = res.exercises.find((e) => e.weekIndex === 1 && e.name === 'Deadlift')!
+    expect(dl.rpe).toBe('6-7')
+  })
+
+  it('routes a load-backoff fraction in the RPE column to intensity', async () => {
+    const res = await parseExternalFile(await buildGridSheet(2, PROGRAM))
+    const bench = res.exercises.find((e) => e.name === 'Bench Press' && e.weekIndex === 0)!
+    expect(bench.rpe).toBeNull()
+    expect(bench.intensity).toBe('-5%')
+  })
+
+  it('groups exercises under their DAY section and ignores the eRPE column', async () => {
+    const res = await parseExternalFile(await buildGridSheet(2, PROGRAM))
+    const w0 = res.exercises.filter((e) => e.weekIndex === 0)
+    expect(w0.filter((e) => e.dayIndex === 0).map((e) => e.name)).toEqual(['Squat', 'Squat', 'Bench Press'])
+    expect(w0.filter((e) => e.dayIndex === 1).map((e) => e.name)).toEqual(['Deadlift'])
+    // eRPE (executed) is NOT mapped — rpe comes from the prescribed RPE column.
+    expect(w0.find((e) => e.name === 'Deadlift')!.rpe).toBe('6')
+  })
+
+  it('does not leak shared-formula / empty-object cells as exercise rows', async () => {
+    // Append an empty DAY 3 whose cells are formula objects with no cached value.
+    const buf = await buildGridSheet(2, [
+      ...PROGRAM,
+      { day: 'DAY 3', rows: [{ name: '', weeks: [{}, {}] }] },
+    ])
+    const res = await parseExternalFile(buf)
+    expect(res.exercises.some((e) => /object/i.test(e.name))).toBe(false)
+    expect(res.days).toBe(4) // DAY 3 produced no exercises
+  })
+
+  it('carries the exercise name forward across blank sub-set rows', async () => {
+    const res = await parseExternalFile(await buildGridSheet(1, [
+      {
+        day: 'DAY 1',
+        rows: [
+          { name: 'Squat', weeks: [{ sets: 1, reps: 5, load: 180, rpe: '@7' }] },
+          { name: '', weeks: [{ sets: 2, reps: 5, load: 160, rpe: '@6' }] }, // blank → carries "Squat"
+        ],
+      },
+    ]))
+    expect(res.exercises.map((e) => e.name)).toEqual(['Squat', 'Squat'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Week-grid layout — weeks as side-by-side blocks whose lead
+// column holds BOTH movement names and weekday day-sections (English/Swedish),
+// the Set/Reps/RPE/Load header appears ONCE (the first day shares it), the
+// "Week n" banner sits one column right of each block's lead column, RPE is
+// written "@6"/"@6-7", and trailing "eRpe"/"e1RM" columns are ignored.
+// ---------------------------------------------------------------------------
+
+// Block per week: name/day(0) Set(1) Reps(2) RPE(3) Load(4) eRpe(5) e1RM(6),
+// then a gap column → block width 8, lead columns at 1, 9, 17, …
+const WG_HEAD = ['Set', 'Reps', 'RPE', 'Load', 'eRpe', 'e1RM']
+const WBLOCK = 8
+const wgLead = (w: number) => 1 + w * WBLOCK // 1-based lead column of week w
+
+interface WGWeek { sets?: Cell; reps?: Cell; rpe?: Cell; load?: Cell; erpe?: Cell }
+interface WGRow { name?: string; weeks: WGWeek[] }
+interface WGDay { day: string; rows: WGRow[] }
+
+async function buildWeekGridSheet(numWeeks: number, days: WGDay[]): Promise<Buffer> {
+  const grid: Cell[][] = []
+  // Data columns start one column right of the lead column (i.e. on the banner).
+  const putData = (row: Cell[], w: number, vals: Cell[]) => {
+    vals.forEach((v, o) => { if (v !== null && v !== undefined && v !== '') row[wgLead(w) + o] = v })
+  }
+
+  // Banner row: "Week n" sits on the banner column (lead + 1).
+  const banner: Cell[] = []
+  for (let w = 0; w < numWeeks; w++) banner[wgLead(w)] = `Week ${w + 1}`
+  grid.push(banner)
+
+  days.forEach((day, di) => {
+    if (di === 0) {
+      // Header row — also carries the first day's weekday label in the lead column.
+      const header: Cell[] = []
+      for (let w = 0; w < numWeeks; w++) {
+        header[wgLead(w) - 1] = day.day
+        putData(header, w, WG_HEAD)
+      }
+      grid.push(header)
+    } else {
+      // Bare weekday section row (the header is NOT repeated under later days).
+      const dayRow: Cell[] = []
+      for (let w = 0; w < numWeeks; w++) dayRow[wgLead(w) - 1] = day.day
+      grid.push(dayRow)
+    }
+    for (const r of day.rows) {
+      const xrow: Cell[] = []
+      for (let w = 0; w < numWeeks; w++) {
+        if (r.name) xrow[wgLead(w) - 1] = r.name
+        const c = r.weeks[w] ?? {}
+        putData(xrow, w, [c.sets ?? '', c.reps ?? '', c.rpe ?? '', c.load ?? '', c.erpe ?? ''])
+      }
+      grid.push(xrow)
+    }
+  })
+  return buildSheet(grid)
+}
+
+const WG_PROGRAM: WGDay[] = [
+  {
+    day: 'Tisdag', // Tuesday → dayIndex 1
+    rows: [
+      { name: 'Competition Deadlift', weeks: [
+        { sets: 1, reps: 1, rpe: '@5-6', load: 240, erpe: 5 },
+        { sets: 1, reps: 1, rpe: '@7', load: 255, erpe: 7 },
+      ] },
+      { name: '', weeks: [ // sub-set; blank name → carries "Competition Deadlift"
+        { sets: 2, reps: 4, rpe: '@5-6', load: 210, erpe: 6 },
+        { sets: 3, reps: 4, rpe: '@6', load: 220, erpe: 6 },
+      ] },
+      { name: 'Bench Press', weeks: [
+        { sets: 3, reps: 5, rpe: '@6', load: 125, erpe: 6 },
+        { sets: 3, reps: 5, rpe: '@6', load: 130, erpe: 6 },
+      ] },
+    ],
+  },
+  {
+    day: 'Torsdag', // Thursday → dayIndex 3
+    rows: [
+      { name: 'SSB Squat', weeks: [
+        { sets: 3, reps: 5, rpe: '@6', load: 130, erpe: 6 },
+        { sets: 3, reps: 5, rpe: '@6-7', load: 140, erpe: 6.5 },
+      ] },
+    ],
+  },
+]
+
+describe('parseExternalFile (week-grid layout)', () => {
+  it('detects the layout and counts weeks / day-blocks / exercises', async () => {
+    const res = await parseExternalFile(await buildWeekGridSheet(2, WG_PROGRAM))
+    expect(res.layout).toBe('week-grid')
+    expect(res.errors).toEqual([])
+    expect(res.weeks).toBe(2)
+    expect(res.days).toBe(4)          // 2 days × 2 weeks
+    expect(res.exerciseCount).toBe(8) // 4 rows × 2 weeks
+    expect(res.columnMapping).toMatchObject({ exercise: 1, sets: 2, reps: 3, load: 5, rpe: 4 })
+  })
+
+  it('reads each field from the correct week block', async () => {
+    const res = await parseExternalFile(await buildWeekGridSheet(2, WG_PROGRAM))
+    const w0 = res.exercises.find((e) => e.weekIndex === 0 && e.name === 'Competition Deadlift')!
+    expect(w0).toMatchObject({ sets: '1', reps: '1', load: '240', rpe: '5-6', dayLabel: 'Tisdag' })
+    const w1 = res.exercises.find((e) => e.weekIndex === 1 && e.name === 'Competition Deadlift' && e.sheetRow === w0.sheetRow)!
+    expect(w1.load).toBe('255') // week 2's load, not week 1's
+    expect(w1.rpe).toBe('7')
+  })
+
+  it('maps Swedish weekday section labels to real weekday offsets', async () => {
+    const res = await parseExternalFile(await buildWeekGridSheet(2, WG_PROGRAM))
+    expect(res.exercises.find((e) => e.name === 'Competition Deadlift')!.dayIndex).toBe(1) // Tisdag = Tue
+    expect(res.exercises.find((e) => e.name === 'SSB Squat')!.dayIndex).toBe(3)            // Torsdag = Thu
+  })
+
+  it('carries the exercise name forward across blank sub-set rows', async () => {
+    const res = await parseExternalFile(await buildWeekGridSheet(2, WG_PROGRAM))
+    const day1 = res.exercises.filter((e) => e.weekIndex === 0 && e.dayIndex === 1)
+    expect(day1.map((e) => e.name)).toEqual(['Competition Deadlift', 'Competition Deadlift', 'Bench Press'])
+  })
+
+  it('preserves the real "Week n" banner text and ignores the eRpe column', async () => {
+    const res = await parseExternalFile(await buildWeekGridSheet(2, WG_PROGRAM))
+    expect(res.exercises.find((e) => e.weekIndex === 0)!.weekLabel).toBe('Week 1')
+    // rpe comes from the prescribed RPE column ("@5-6"), never from eRpe (5).
+    expect(res.exercises.find((e) => e.weekIndex === 0 && e.name === 'Competition Deadlift')!.rpe).toBe('5-6')
   })
 })

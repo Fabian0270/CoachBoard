@@ -50,11 +50,21 @@ function cellToString(value: ExcelJS.CellValue): string {
   if (typeof value === 'object') {
     const v = value as unknown as Record<string, unknown>
     if ('text' in v && typeof v.text === 'string') return v.text.trim()
-    if ('result' in v && v.result !== undefined && v.result !== null) return String(v.result).trim()
+    if ('result' in v && v.result !== undefined && v.result !== null) {
+      // A formula whose cached result is itself a Date must format the same way
+      // a top-level Date does (ISO yyyy-mm-dd) — String(Date) yields a locale
+      // string like "Sat Aug 06 2022 …" that the date-range recovery can't read.
+      return v.result instanceof Date
+        ? v.result.toISOString().slice(0, 10)
+        : String(v.result).trim()
+    }
     if ('richText' in v && Array.isArray(v.richText)) {
       return v.richText.map((r: { text?: string }) => r.text ?? '').join('').trim()
     }
-    if ('formula' in v) return '' // formula with no cached result
+    // A formula / shared-formula cell with no cached result, or any other
+    // object shape we can't read as text, carries no value — never stringify it
+    // to "[object Object]" (that leaks into names, reps and load as junk).
+    return ''
   }
   return String(value).trim()
 }
@@ -122,9 +132,13 @@ function normalizeReps(text: string, sheetRow: number, warnings: ExternalImportW
   let reps = text || null
   if (reps) {
     // Excel silently turns a rep RANGE like "4-8" or "6-10" into a date
-    // (e.g. 2025-04-08). Recover it as month-day → "4-8".
+    // (e.g. 2025-04-08). Recover the two numbers and order them low-high so the
+    // higher rep is the top of the range (Excel's month/day order is arbitrary).
     const d = reps.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-    if (d) reps = `${parseInt(d[2], 10)}-${parseInt(d[3], 10)}`
+    if (d) {
+      const [lo, hi] = [parseInt(d[2], 10), parseInt(d[3], 10)].sort((a, b) => a - b)
+      reps = `${lo}-${hi}`
+    }
     if (/amrap|as needed|max reps/i.test(reps)) {
       warnings.push({ sheetRow, message: `Row ${sheetRow}: variable reps "${reps}" kept as-is (no fixed value).` })
     }
@@ -172,12 +186,18 @@ function normalizeRpe(text: string, fromRir: boolean, sheetRow: number, warnings
   return fromRir ? String(10 - num) : String(num)
 }
 
-const WEEKDAY_PREFIXES = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+// Prefix → 0..6 (Mon..Sun). English plus Swedish (Scandinavian coaching sheets
+// label days "Tisdag"/"Torsdag"/…). ASCII fallbacks ('man','lor','son') cover
+// files whose accented characters were stripped on a round-trip through Excel.
+const WEEKDAY_PREFIXES: ReadonlyArray<readonly [string, number]> = [
+  ['mon', 0], ['tue', 1], ['wed', 2], ['thu', 3], ['fri', 4], ['sat', 5], ['sun', 6],
+  ['mån', 0], ['man', 0], ['tis', 1], ['ons', 2], ['tor', 3], ['fre', 4], ['lör', 5], ['lor', 5], ['sön', 6], ['son', 6],
+]
 /** Weekday name → 0..6 (Mon..Sun), or null. */
 function weekdayOffset(text: string): number | null {
   const t = text.trim().toLowerCase()
-  for (let i = 0; i < WEEKDAY_PREFIXES.length; i++) {
-    if (t.startsWith(WEEKDAY_PREFIXES[i])) return i
+  for (const [prefix, idx] of WEEKDAY_PREFIXES) {
+    if (t.startsWith(prefix)) return idx
   }
   return null
 }
@@ -240,6 +260,14 @@ export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportP
 
   const banner = findWeekBannerRow(readRow, maxRow)
   if (banner) {
+    const blockStarts = detectBlockGridStarts(readRow, banner)
+    if (blockStarts) {
+      return { layout: 'block-grid', ...parseBlockGrid(readRow, maxRow, banner, blockStarts) }
+    }
+    const weekGrid = detectWeekGrid(readRow, maxRow, banner)
+    if (weekGrid) {
+      return { layout: 'week-grid', ...parseWeekGrid(readRow, maxRow, banner, weekGrid.blockStarts, weekGrid.headerRow) }
+    }
     return { layout: 'horizontal', ...parseHorizontal(readRow, maxRow, banner) }
   }
   return { layout: 'vertical', ...parseVertical(readRow, maxRow) }
@@ -544,6 +572,382 @@ function parseHorizontal(
     sets: fields.sets !== null ? b0 + fields.sets : null,
     reps: fields.reps !== null ? b0 + fields.reps : null,
     load: fields.loadUsed !== null ? b0 + fields.loadUsed : null,
+    rpe: fields.rpe !== null ? b0 + fields.rpe : null,
+    rpeFromRir: fields.rpeFromRir,
+  }
+
+  if (exercises.length === 0) {
+    warnings.push({ message: 'No exercise rows were detected under the week blocks.' })
+  }
+
+  return {
+    columnMapping: mapping,
+    weeks: new Set(exercises.map((e) => e.weekIndex)).size,
+    days: new Set(exercises.map((e) => `${e.weekIndex}-${e.dayIndex}`)).size,
+    exerciseCount: exercises.length,
+    exercises,
+    warnings,
+    errors,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Block-grid layout (Feature 4c). Like the horizontal
+// layout, weeks are side-by-side column blocks; but it differs in three ways
+// the horizontal parser cannot absorb:
+//   1. each "Week N" banner sits one column RIGHT of its block (the block's
+//      first column holds a "DAY 1" label instead);
+//   2. days are "DAY 1".."DAY 7" SECTION ROWS inside each block's first column
+//      (not weekday names in column 1), and the Movement/Sets/… header row
+//      repeats under every day;
+//   3. RPE is written "@6" / "@6-7", with the odd "-0.05" load-backoff fraction
+//      landing in the RPE column, plus a separate executed-RPE ("eRPE") column.
+// ---------------------------------------------------------------------------
+
+const DAY_LABEL = /^day\s*(\d+)/i
+
+/**
+ * A block-grid sheet is a week-banner sheet whose blocks each begin with a
+ * "DAY n" column one to the LEFT of the "Week n" banner. Returns the 1-based
+ * block-start columns when the majority of weeks show that DAY-then-Week shape.
+ */
+function detectBlockGridStarts(readRow: ReadRow, banner: { row: number; weekCols: number[] }): number[] | null {
+  const cells = readRow(banner.row)
+  const starts: number[] = []
+  let dayHits = 0
+  for (const wc of banner.weekCols) {
+    const left = (cells[wc - 2] ?? '').trim() // cell immediately left of the banner
+    if (DAY_LABEL.test(left)) {
+      starts.push(wc - 1)
+      dayHits++
+    } else {
+      starts.push(wc)
+    }
+  }
+  return dayHits >= Math.ceil(banner.weekCols.length / 2) ? starts : null
+}
+
+interface GridFields {
+  name: number | null   // offsets relative to a block's start column
+  sets: number | null
+  reps: number | null
+  load: number | null
+  rpe: number | null
+  rpeFromRir: boolean
+}
+
+function resolveGridFields(headerCells: string[], blockStart: number, blockWidth: number): GridFields {
+  const f: GridFields = { name: null, sets: null, reps: null, load: null, rpe: null, rpeFromRir: false }
+  for (let off = 0; off < blockWidth; off++) {
+    const toks = tokenize(headerCells[blockStart - 1 + off] ?? '')
+    if (toks.length === 0) continue
+    const has = (...words: string[]) => toks.some((t) => words.includes(t))
+    // "eRPE" (executed) tokenises to ["erpe"] and is skipped — we keep the
+    // prescribed "RPE" column. Order: name, then the specific RPE before the
+    // generic set/rep/load so a stray token never steals a numeric column.
+    if (f.name === null && has('movement', 'exercise', 'lift', 'name', 'discipline')) f.name = off
+    else if (toks.includes('erpe')) continue
+    else if (f.rpe === null && has('rpe', 'effort', 'rir')) { f.rpe = off; f.rpeFromRir = toks.includes('rir') }
+    else if (f.reps === null && has('reps', 'rep', 'repetitions')) f.reps = off
+    else if (f.sets === null && has('sets', 'set')) f.sets = off
+    else if (f.load === null && has('load', 'weight', 'kg', 'lbs', 'lb', 'intensity')) f.load = off
+  }
+  return f
+}
+
+/**
+ * RPE in this style is "@6" / "@6-7". A bare negative fraction ("-0.05") is a
+ * load backoff the coach typed in the RPE column → routed to intensity instead.
+ */
+function normalizeBlockRpe(
+  text: string, fromRir: boolean, sheetRow: number, warnings: ExternalImportWarning[],
+): { rpe: string | null; intensity: string | null } {
+  if (!text) return { rpe: null, intensity: null }
+  const asPct = normalizeIntensity(text)
+  if (asPct && asPct.endsWith('%')) return { rpe: null, intensity: asPct }
+  let t = text.trim()
+  if (t.startsWith('@')) t = t.slice(1).trim()
+  if (!t) return { rpe: null, intensity: null }
+  if (RANGE.test(t)) return { rpe: t.replace(/\s*[–—]\s*/g, '-'), intensity: null }
+  const num = parseFloat(t.replace(',', '.'))
+  if (isNaN(num)) {
+    warnings.push({ sheetRow, message: `Row ${sheetRow}: could not read ${fromRir ? 'RIR' : 'RPE'} "${text}" — left blank.` })
+    return { rpe: null, intensity: null }
+  }
+  return { rpe: fromRir ? String(10 - num) : String(num), intensity: null }
+}
+
+function parseBlockGrid(
+  readRow: ReadRow,
+  maxRow: number,
+  banner: { row: number; weekCols: number[] },
+  blockStarts: number[],
+): ParseResult {
+  const warnings: ExternalImportWarning[] = []
+  const errors: string[] = []
+
+  const blockWidth = blockStarts.length >= 2 ? blockStarts[1] - blockStarts[0] : 8
+
+  // Header row = first row at/after the banner whose first block carries the
+  // Movement/Sets/Reps labels (these repeat under every day in this layout).
+  let headerRow = 0
+  const limit = Math.min(maxRow, banner.row + 8)
+  for (let r = banner.row; r <= limit; r++) {
+    const b0 = readRow(r).slice(blockStarts[0] - 1, blockStarts[0] - 1 + blockWidth).join(' ').toLowerCase()
+    if (/\bset/.test(b0) && /\brep/.test(b0)) { headerRow = r; break }
+  }
+  if (!headerRow) {
+    errors.push('Could not find the Movement/Sets/Reps column headers under the week blocks.')
+    return { columnMapping: emptyMapping(), weeks: 0, days: 0, exerciseCount: 0, exercises: [], warnings, errors }
+  }
+
+  const fields = resolveGridFields(readRow(headerRow), blockStarts[0], blockWidth)
+  const missing: string[] = []
+  if (fields.name === null) missing.push('Movement')
+  if (fields.sets === null) missing.push('Sets')
+  if (fields.reps === null) missing.push('Reps')
+  if (missing.length > 0) {
+    errors.push(`Required column(s) not found: ${missing.join(', ')}. The file cannot be imported.`)
+    return { columnMapping: emptyMapping(), weeks: 0, days: 0, exerciseCount: 0, exercises: [], warnings, errors }
+  }
+  if (fields.load === null) {
+    warnings.push({ message: 'No Load column found — the program will have no load data.' })
+  }
+  if (fields.rpe === null) {
+    warnings.push({ message: 'No RPE column found — no effort analysis will be available for this program.' })
+  }
+
+  // The banner row carries the first "DAY n" label in each block's lead column.
+  const bannerCells = readRow(banner.row)
+  const firstDay = bannerCells[blockStarts[0] - 1]?.trim() ?? ''
+  const firstDayMatch = firstDay.match(DAY_LABEL)
+  let dayIndex = firstDayMatch ? parseInt(firstDayMatch[1], 10) - 1 : 0
+  let dayLabel = firstDayMatch ? firstDay : 'Day 1'
+
+  const exercises: ExternalExerciseRow[] = []
+  const blockName: string[] = new Array(blockStarts.length).fill('') // per-block name carry-forward
+
+  for (let r = headerRow + 1; r <= maxRow; r++) {
+    const cells = readRow(r)
+
+    // A "DAY n" label in the first block's lead column starts a new day section.
+    const lead = (cells[blockStarts[0] - 1] ?? '').trim()
+    const dayMatch = lead.match(DAY_LABEL)
+    if (dayMatch) {
+      dayIndex = parseInt(dayMatch[1], 10) - 1
+      dayLabel = lead
+      blockName.fill('')
+      continue
+    }
+
+    // Skip the Movement/Sets/Reps header row that repeats under each day.
+    const blk0 = cells.slice(blockStarts[0] - 1, blockStarts[0] - 1 + blockWidth).join(' ').toLowerCase()
+    if (/\bsets?\b/.test(blk0) && /\breps?\b/.test(blk0)) continue
+
+    for (let w = 0; w < blockStarts.length; w++) {
+      const base = blockStarts[w]
+      const get = (off: number | null) => (off === null ? '' : (cells[base - 1 + off] ?? ''))
+
+      let name = get(fields.name)
+      if (name) blockName[w] = name
+      else name = blockName[w]
+
+      const setsText = get(fields.sets)
+      const repsText = get(fields.reps)
+      const loadText = get(fields.load)
+      const rpeText = get(fields.rpe)
+
+      const hasData = !!(setsText || repsText || loadText || rpeText)
+      if (!name || !hasData) continue
+
+      const { rpe, intensity } = normalizeBlockRpe(rpeText, fields.rpeFromRir, r, warnings)
+      exercises.push({
+        weekIndex: w,
+        dayIndex,
+        weekLabel: `Week ${w + 1}`,
+        dayLabel: dayLabel || `Day ${dayIndex + 1}`,
+        name,
+        sets: setsText || null,
+        reps: normalizeReps(repsText, r, warnings),
+        load: normalizeLoad(loadText, r, warnings),
+        rpe,
+        sheetRow: r,
+        intensity,
+      })
+    }
+  }
+
+  const b0 = blockStarts[0]
+  const mapping: ExternalColumnMapping = {
+    exercise: fields.name !== null ? b0 + fields.name : null,
+    sets: fields.sets !== null ? b0 + fields.sets : null,
+    reps: fields.reps !== null ? b0 + fields.reps : null,
+    load: fields.load !== null ? b0 + fields.load : null,
+    rpe: fields.rpe !== null ? b0 + fields.rpe : null,
+    rpeFromRir: fields.rpeFromRir,
+  }
+
+  if (exercises.length === 0) {
+    warnings.push({ message: 'No exercise rows were detected under the week blocks.' })
+  }
+
+  return {
+    columnMapping: mapping,
+    weeks: new Set(exercises.map((e) => e.weekIndex)).size,
+    days: new Set(exercises.map((e) => `${e.weekIndex}-${e.dayIndex}`)).size,
+    exerciseCount: exercises.length,
+    exercises,
+    warnings,
+    errors,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Week-grid layout (Feature 4d). Weeks are side-by-side column
+// blocks like block-grid, but three things set it apart:
+//   1. each block's lead column (one LEFT of its "Week N" banner) holds BOTH the
+//      movement names and the day-section labels — and those labels are weekday
+//      NAMES (English or Swedish: "Tisdag"/"Torsdag"/…), not "DAY n";
+//   2. the Set/Reps/RPE/Load header row appears ONCE (the first day's label
+//      shares that header row's lead column), not repeated under every day;
+//   3. extra "eRpe" (executed RPE) and "e1RM" (estimated 1RM formula) columns sit
+//      after Load — both are derived/executed data and are ignored on import.
+// RPE is written "@5-6" / "@7", reusing the block-grid's @-stripping.
+// ---------------------------------------------------------------------------
+
+/**
+ * A week-grid sheet is a week-banner sheet (not block-grid) whose data columns
+ * begin AT each "Week N" banner — the cell on the banner column is a "Set"
+ * header — with a non-name lead column one to the left holding day/movement
+ * labels. Returns the lead-column block starts and the single header row.
+ *
+ * The lead column header must NOT be an exercise-name alias: that shape is the
+ * horizontal "shared name column" layout (a dedicated "Discipline" column left
+ * of the blocks), which parseHorizontal already handles.
+ */
+function detectWeekGrid(
+  readRow: ReadRow,
+  maxRow: number,
+  banner: { row: number; weekCols: number[] },
+): { blockStarts: number[]; headerRow: number } | null {
+  if (banner.weekCols[0] < 2) return null // no room for a lead column
+  const blockStarts = banner.weekCols.map((c) => c - 1)
+  const blockWidth = blockStarts.length >= 2 ? blockStarts[1] - blockStarts[0] : 8
+  const limit = Math.min(maxRow, banner.row + 8)
+  for (let r = banner.row; r <= limit; r++) {
+    const cells = readRow(r)
+    const atBanner = tokenize(cells[banner.weekCols[0] - 1] ?? '')
+    const leadTokens = tokenize(cells[blockStarts[0] - 1] ?? '')
+    if (leadTokens.some((t) => ALIASES.exercise.includes(t))) return null
+    const block = cells.slice(blockStarts[0] - 1, blockStarts[0] - 1 + blockWidth).join(' ').toLowerCase()
+    if (atBanner.some((t) => t === 'set' || t === 'sets') && /\brep/.test(block)) {
+      return { blockStarts, headerRow: r }
+    }
+  }
+  return null
+}
+
+function parseWeekGrid(
+  readRow: ReadRow,
+  maxRow: number,
+  banner: { row: number; weekCols: number[] },
+  blockStarts: number[],
+  headerRow: number,
+): ParseResult {
+  const warnings: ExternalImportWarning[] = []
+  const errors: string[] = []
+
+  const blockWidth = blockStarts.length >= 2 ? blockStarts[1] - blockStarts[0] : 8
+
+  // Reuse the block-grid field resolver for Set/Reps/RPE/Load (it already skips
+  // "eRpe" and ignores the "e1RM" formula column), then pin the name to the
+  // lead column — its header here is a weekday, never a "Movement" word.
+  const headerCells = readRow(headerRow)
+  const fields = resolveGridFields(headerCells, blockStarts[0], blockWidth)
+  fields.name = 0
+
+  const missing: string[] = []
+  if (fields.sets === null) missing.push('Set')
+  if (fields.reps === null) missing.push('Reps')
+  if (missing.length > 0) {
+    errors.push(`Required column(s) not found: ${missing.join(', ')}. The file cannot be imported.`)
+    return { columnMapping: emptyMapping(), weeks: 0, days: 0, exerciseCount: 0, exercises: [], warnings, errors }
+  }
+  if (fields.load === null) {
+    warnings.push({ message: 'No Load column found — the program will have no load data.' })
+  }
+  if (fields.rpe === null) {
+    warnings.push({ message: 'No RPE column found — no effort analysis will be available for this program.' })
+  }
+
+  // Real banner text per week ("Week 14" …) reads better than a synthetic label.
+  const bannerCells = readRow(banner.row)
+  const weekLabels = banner.weekCols.map((c, w) => (bannerCells[c - 1] ?? '').trim() || `Week ${w + 1}`)
+
+  // The first day's label shares the header row's lead column ("Tisdag").
+  const headerLead = (headerCells[blockStarts[0] - 1] ?? '').trim()
+  let dayIndex = weekdayOffset(headerLead) ?? 0
+  let dayLabel = headerLead || 'Day 1'
+
+  const exercises: ExternalExerciseRow[] = []
+  const blockName: string[] = new Array(blockStarts.length).fill('') // per-block name carry-forward
+
+  for (let r = headerRow + 1; r <= maxRow; r++) {
+    const cells = readRow(r)
+
+    // A weekday name in the lead column, with the block's data cells empty,
+    // starts a new day section (movement names never tokenise to a weekday).
+    const lead = (cells[blockStarts[0] - 1] ?? '').trim()
+    const wd = weekdayOffset(lead)
+    if (wd !== null) {
+      const get0 = (off: number | null) => (off === null ? '' : (cells[blockStarts[0] - 1 + off] ?? ''))
+      if (!get0(fields.sets) && !get0(fields.reps) && !get0(fields.load)) {
+        dayIndex = wd
+        dayLabel = lead
+        blockName.fill('')
+        continue
+      }
+    }
+
+    for (let w = 0; w < blockStarts.length; w++) {
+      const base = blockStarts[w]
+      const get = (off: number | null) => (off === null ? '' : (cells[base - 1 + off] ?? ''))
+
+      let name = get(fields.name)
+      if (name) blockName[w] = name
+      else name = blockName[w]
+
+      const setsText = get(fields.sets)
+      const repsText = get(fields.reps)
+      const loadText = get(fields.load)
+      const rpeText = get(fields.rpe)
+
+      const hasData = !!(setsText || repsText || loadText || rpeText)
+      if (!name || !hasData) continue
+
+      const { rpe, intensity } = normalizeBlockRpe(rpeText, fields.rpeFromRir, r, warnings)
+      exercises.push({
+        weekIndex: w,
+        dayIndex,
+        weekLabel: weekLabels[w],
+        dayLabel: dayLabel || `Day ${dayIndex + 1}`,
+        name,
+        sets: setsText || null,
+        reps: normalizeReps(repsText, r, warnings),
+        load: normalizeLoad(loadText, r, warnings),
+        rpe,
+        sheetRow: r,
+        intensity,
+      })
+    }
+  }
+
+  const b0 = blockStarts[0]
+  const mapping: ExternalColumnMapping = {
+    exercise: b0 + fields.name,
+    sets: fields.sets !== null ? b0 + fields.sets : null,
+    reps: fields.reps !== null ? b0 + fields.reps : null,
+    load: fields.load !== null ? b0 + fields.load : null,
     rpe: fields.rpe !== null ? b0 + fields.rpe : null,
     rpeFromRir: fields.rpeFromRir,
   }

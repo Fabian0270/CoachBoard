@@ -153,7 +153,7 @@ export interface ExternalExerciseRow {
   restTime?: string | null   // "Rest Time"
 }
 
-export type ExternalLayout = 'horizontal' | 'vertical'
+export type ExternalLayout = 'horizontal' | 'vertical' | 'block-grid' | 'week-grid'
 
 export interface ExternalImportWarning {
   sheetRow?: number
