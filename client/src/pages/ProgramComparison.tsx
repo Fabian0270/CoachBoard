@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { Plus, Dumbbell, MoreHorizontal, Check } from 'lucide-react'
+import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles } from 'lucide-react'
+import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
 
 interface Athlete { id: string; name: string }
 interface Program { id: string; name: string; status: string; athlete_id: string; start_date: string | null }
@@ -12,12 +13,16 @@ interface Program { id: string; name: string; status: string; athlete_id: string
 const STATUSES = ['active', 'completed', 'archived'] as const
 
 export default function ProgramComparison() {
+  const navigate = useNavigate()
   const [athletes, setAthletes] = useState<Athlete[]>([])
   const [programs, setPrograms] = useState<Program[]>([])
   const [selectedAthlete, setSelectedAthlete] = useState<string>('all')
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [newMenuOpen, setNewMenuOpen] = useState(false)
+  const [suggestOpen, setSuggestOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const newMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     Promise.all([
@@ -29,13 +34,19 @@ export default function ProgramComparison() {
     }).catch(() => {})
   }, [])
 
-  // Close menu when clicking outside
   useEffect(() => {
     if (!menuOpen) return
     const close = () => setMenuOpen(null)
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [menuOpen])
+
+  useEffect(() => {
+    if (!newMenuOpen) return
+    const close = () => setNewMenuOpen(false)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [newMenuOpen])
 
   const handleStatusChange = async (programId: string, status: string) => {
     setMenuOpen(null)
@@ -68,7 +79,27 @@ export default function ProgramComparison() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Programs</h1>
-        <Link to="/programs/new"><Button><Plus className="h-4 w-4 mr-2" />New Program</Button></Link>
+        <div className="relative" ref={newMenuRef}>
+          <Button onClick={(e) => { e.stopPropagation(); setNewMenuOpen((v) => !v) }}>
+            <Plus className="h-4 w-4 mr-2" />New Program<ChevronDown className="h-4 w-4 ml-2" />
+          </Button>
+          {newMenuOpen && (
+            <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-md border bg-card shadow-lg py-1" onClick={(e) => e.stopPropagation()}>
+              <Link to="/programs/new" onClick={() => setNewMenuOpen(false)}>
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent">
+                  <Plus className="h-4 w-4" />New program
+                </button>
+              </Link>
+              <button
+                type="button"
+                onClick={() => { setNewMenuOpen(false); setSuggestOpen(true) }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+              >
+                <Sparkles className="h-4 w-4" />Generate next program
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       <div className="flex gap-3 flex-wrap">
         {athletes.length > 0 && (
@@ -165,6 +196,11 @@ export default function ProgramComparison() {
           ))}
         </div>
       )}
+      <SuggestProgramDialog
+        open={suggestOpen}
+        onOpenChange={setSuggestOpen}
+        onCreated={(draftId) => navigate(`/programs/${draftId}`)}
+      />
     </div>
   )
 }

@@ -9,7 +9,7 @@ import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
-import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, Copy, GripVertical } from 'lucide-react'
+import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, Copy, GripVertical, PlayCircle } from 'lucide-react'
 import ImportDialog from '../components/ImportDialog'
 import {
   type ToggleableColumn,
@@ -40,6 +40,9 @@ export default function ProgramDetail() {
   const [exportToast, setExportToast] = useState(false)
   const exportToastTimer = useRef<number | null>(null)
   const savedTimers = useRef<Record<string, number>>({})
+
+  const [dayDragSource, setDayDragSource] = useState<string | null>(null)
+  const [dayDragOver, setDayDragOver] = useState<string | null>(null)
 
   const grid = useProgramCalendar(program)
   const workoutByDate = useWorkoutByDate(program)
@@ -78,6 +81,19 @@ export default function ProgramDetail() {
     if (data) setProgram(data)
   }
 
+  const handleDayDrop = async (targetDate: string) => {
+    if (!dayDragSource || !id) return
+    const sourceDate = dayDragSource
+    setDayDragSource(null)
+    setDayDragOver(null)
+    const res = await fetch(`/api/programs/${id}/move-day`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceDate, targetDate }),
+    })
+    if (res.ok) await reloadProgram()
+  }
+
   const handleSetupSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!id) return
@@ -106,6 +122,19 @@ export default function ProgramDetail() {
     if (!confirm('Delete this program?')) return
     await fetch(`/api/programs/${id}`, { method: 'DELETE' })
     navigate('/programs')
+  }
+
+  const handleActivateDraft = async () => {
+    if (!program || !id) return
+    const res = await fetch(`/api/programs/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'active' }),
+    })
+    if (res.ok) {
+      const updated = await res.json()
+      setProgram((p) => p ? { ...p, ...updated } : p)
+    }
   }
 
   const handleChangeDuration = () => {
@@ -160,6 +189,12 @@ export default function ProgramDetail() {
           <Link to="/programs"><ArrowLeft className="h-5 w-5 text-muted-foreground" /></Link>
           <h1 className="text-3xl font-bold">{program.name}</h1>
           <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
+          {program.status === 'draft' && (
+            <Button size="sm" onClick={handleActivateDraft}>
+              <PlayCircle className="h-4 w-4 mr-1.5" />
+              Turn into active
+            </Button>
+          )}
         </div>
         <div className="flex gap-2">
           {program.start_date && (
@@ -252,10 +287,34 @@ export default function ProgramDetail() {
                       const workout = workoutByDate.get(cell.date)
                       const status = cellStatus[cell.date]
                       const exercises = workout?.exercises ?? []
+                      const isDragSource = dayDragSource === cell.date
+                      const isDragOver = dayDragOver === cell.date
                       return (
                         <td
                           key={cell.date}
-                          className="border-r border-b border-border align-top p-0"
+                          draggable={exercises.length > 0}
+                          onDragStart={exercises.length > 0 ? (e) => {
+                            e.dataTransfer.effectAllowed = 'move'
+                            setDayDragSource(cell.date)
+                          } : undefined}
+                          onDragOver={dayDragSource && !isDragSource ? (e) => {
+                            e.preventDefault()
+                            if (!isDragOver) setDayDragOver(cell.date)
+                          } : undefined}
+                          onDragLeave={(e) => {
+                            if (isDragOver && !e.currentTarget.contains(e.relatedTarget as Node | null))
+                              setDayDragOver(null)
+                          }}
+                          onDrop={dayDragSource && !isDragSource ? (e) => {
+                            e.preventDefault()
+                            handleDayDrop(cell.date)
+                          } : undefined}
+                          onDragEnd={() => { setDayDragSource(null); setDayDragOver(null) }}
+                          className={`border-r border-b border-border align-top p-0 transition-colors ${
+                            isDragSource ? 'opacity-40' :
+                            isDragOver ? (workout ? 'ring-2 ring-inset ring-amber-400 bg-amber-500/10' : 'ring-2 ring-inset ring-primary/50 bg-primary/5') :
+                            ''
+                          }`}
                         >
                           <button
                             type="button"
@@ -264,9 +323,14 @@ export default function ProgramDetail() {
                           >
                             <div className="flex items-center justify-between text-[10px] text-muted-foreground">
                               <span>{cell.label}</span>
-                              {status === 'saving' && <Loader2 className="h-3 w-3 animate-spin" />}
-                              {status === 'saved' && <Check className="h-3 w-3 text-green-600" />}
-                              {status === 'error' && <X className="h-3 w-3 text-destructive" />}
+                              <span className="flex items-center gap-0.5">
+                                {exercises.length > 0 && !dayDragSource && (
+                                  <GripVertical className="h-2.5 w-2.5 text-muted-foreground/30" />
+                                )}
+                                {status === 'saving' && <Loader2 className="h-3 w-3 animate-spin" />}
+                                {status === 'saved' && <Check className="h-3 w-3 text-green-600" />}
+                                {status === 'error' && <X className="h-3 w-3 text-destructive" />}
+                              </span>
                             </div>
                             {exercises.length === 0 ? (
                               <div className="text-[11px] text-muted-foreground/60 mt-1">+ Add</div>
@@ -881,6 +945,7 @@ function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, isSubSet, 
                     onBlur={() => commit(c)}
                     placeholder={c.placeholder}
                     style={textareaStyle}
+                    title={exercise.suggestion_note ?? undefined}
                     className="flex-1 min-w-0 bg-transparent px-1 py-1.5 text-sm outline-none focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary resize-none block leading-snug"
                   />
                 </div>

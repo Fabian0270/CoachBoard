@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   LineChart,
   Line,
@@ -12,9 +12,10 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
-import { ArrowLeft, TrendingUp, CheckCircle2 } from 'lucide-react'
+import { ArrowLeft, TrendingUp, CheckCircle2, Sparkles } from 'lucide-react'
 import type { ProgramReport } from 'coachboard-shared'
 import type { Program } from '../lib/programUtils'
+import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
 
 const LIFT_COLORS: Record<string, string> = {
   squat: '#6366f1',
@@ -35,12 +36,14 @@ function deviationLabel(delta: number): string {
 
 export default function ProgramReport() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const [report, setReport] = useState<ProgramReport | null>(null)
   const [program, setProgram] = useState<Program | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [updatingMax, setUpdatingMax] = useState<Set<string>>(new Set())
   const [updatedMax, setUpdatedMax] = useState<Set<string>>(new Set())
+  const [suggestOpen, setSuggestOpen] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -104,7 +107,28 @@ export default function ProgramReport() {
         <Badge variant={program.status === 'completed' ? 'secondary' : 'default'}>
           {program.status}
         </Badge>
+        {program.status === 'completed' && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto"
+            onClick={() => setSuggestOpen(true)}
+          >
+            <Sparkles className="h-4 w-4 mr-1.5" />
+            Generate next program
+          </Button>
+        )}
       </div>
+
+      {id && report && (
+        <SuggestProgramDialog
+          open={suggestOpen}
+          onOpenChange={setSuggestOpen}
+          programId={id}
+          athleteId={report.athleteId}
+          onCreated={(draftId) => navigate(`/programs/${draftId}`)}
+        />
+      )}
 
       {/* Stats row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

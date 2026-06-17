@@ -560,3 +560,41 @@ export async function copyWorkoutDay(
 
   return { copiedTo }
 }
+
+// ---------------------------------------------------------------------------
+// Move day — moves a workout to a different date, swapping if target is occupied.
+// ---------------------------------------------------------------------------
+
+export async function moveWorkoutDay(programId: string, sourceDate: string, targetDate: string): Promise<void> {
+  const db = getDb()
+
+  const sourceWorkout = await db
+    .selectFrom('workouts')
+    .select(['id'])
+    .where('program_id', '=', programId)
+    .where('scheduled_date', '=', sourceDate)
+    .executeTakeFirst()
+
+  if (!sourceWorkout) throw new Error('No workout on source date')
+
+  const targetWorkout = await db
+    .selectFrom('workouts')
+    .select(['id'])
+    .where('program_id', '=', programId)
+    .where('scheduled_date', '=', targetDate)
+    .executeTakeFirst()
+
+  await db.transaction().execute(async (trx) => {
+    await trx.updateTable('workouts')
+      .set({ scheduled_date: targetDate, name: targetDate })
+      .where('id', '=', sourceWorkout.id)
+      .execute()
+
+    if (targetWorkout) {
+      await trx.updateTable('workouts')
+        .set({ scheduled_date: sourceDate, name: sourceDate })
+        .where('id', '=', targetWorkout.id)
+        .execute()
+    }
+  })
+}

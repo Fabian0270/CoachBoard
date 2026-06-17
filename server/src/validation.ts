@@ -3,7 +3,7 @@ import type { Response } from 'express'
 
 const isoDate = z.iso.date('Expected YYYY-MM-DD')
 const enabledColumnEnum = z.enum(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe'])
-const statusEnum = z.enum(['active', 'completed', 'archived'])
+const statusEnum = z.enum(['active', 'completed', 'archived', 'draft'])
 
 // HTML forms submit '' for untouched optional fields — treat that as null/absent
 // so optional dates, emails etc. don't fail their format checks.
@@ -111,6 +111,11 @@ export const schemas = {
     targetDates: z.array(isoDate).min(1).max(52),
   }),
 
+  moveDay: z.object({
+    sourceDate: isoDate,
+    targetDate: isoDate,
+  }),
+
   reorderExercises: z.object({
     exerciseIds: z.array(z.string().uuid()).min(1).max(200),
   }),
@@ -124,6 +129,14 @@ export const schemas = {
       notes: optionalString(2000),
     }),
   },
+
+  suggestion: z.object({
+    athleteId: z.uuid(),
+    templateId: z.string().min(1).max(100),
+    weeks: z.number().int().min(1).max(52),
+    trainingDaysPerWeek: z.number().int().min(3).max(5),
+    startDate: isoDate,
+  }),
 
   progress: {
     create: z.object({

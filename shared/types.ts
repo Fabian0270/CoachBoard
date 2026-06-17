@@ -29,6 +29,7 @@ export interface Exercise {
   load_used: string | null
   rpe: string | null
   group_id: string | null
+  suggestion_note: string | null
 }
 
 export interface Workout {
@@ -157,6 +158,88 @@ export interface ProgramReport {
   exercisesTotal: number
   exercisesCompleted: number
   storedMaxes: AthleteMax[]
+}
+
+// ---------------------------------------------------------------------------
+// Suggestion engine types (Feature 3b)
+// ---------------------------------------------------------------------------
+
+export type SuggestionGoal = 'hypertrophy' | 'strength' | 'peaking'
+
+export interface WeekSlot {
+  week: number         // 1-based
+  sets: number
+  reps: number
+  targetRpe: number
+  weight: number       // kg, rounded to 2.5
+  explanation: string  // tooltip text shown in the calendar editor
+}
+
+export interface SuggestionTemplateInfo {
+  id: string
+  goal: SuggestionGoal
+  variant: string
+  label: string
+  typicalWeeks: [number, number]  // [min, max] — shown as a hint in the wizard
+}
+
+// Metadata for all six templates — shared so the client wizard can render
+// pickers without importing server-only generate functions.
+export const SUGGESTION_TEMPLATES: SuggestionTemplateInfo[] = [
+  {
+    id: 'hypertrophy_accumulation',
+    goal: 'hypertrophy',
+    variant: 'accumulation',
+    label: 'Accumulation',
+    typicalWeeks: [4, 6],
+  },
+  {
+    id: 'hypertrophy_repeated_effort',
+    goal: 'hypertrophy',
+    variant: 'repeated_effort',
+    label: 'Repeated Effort',
+    typicalWeeks: [4, 4],
+  },
+  {
+    id: 'strength_linear',
+    goal: 'strength',
+    variant: 'linear',
+    label: 'Linear Intensification',
+    typicalWeeks: [4, 6],
+  },
+  {
+    id: 'strength_wave',
+    goal: 'strength',
+    variant: 'wave',
+    label: 'Wave Loading',
+    typicalWeeks: [6, 9],
+  },
+  {
+    id: 'peaking_standard',
+    goal: 'peaking',
+    variant: 'standard',
+    label: 'Standard Peak',
+    typicalWeeks: [3, 4],
+  },
+  {
+    id: 'peaking_extended',
+    goal: 'peaking',
+    variant: 'extended',
+    label: 'Extended Peak',
+    typicalWeeks: [5, 6],
+  },
+]
+
+export interface SuggestProgramBody {
+  athleteId: string
+  templateId: string
+  weeks: number
+  trainingDaysPerWeek: number  // 3–5, chosen in the wizard
+  startDate: string            // ISO date — first day of new block
+}
+
+export interface SuggestProgramResult {
+  draftProgramId: string
 }
 
 // ---------------------------------------------------------------------------
