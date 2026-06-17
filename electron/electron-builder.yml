@@ -31,5 +31,6 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  include: build/installer.nsh
 
 npmRebuild: false

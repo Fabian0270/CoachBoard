@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session, dialog } from 'electron'
+import { app, BrowserWindow, Menu, session, dialog } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { createServer } from 'http'
@@ -66,11 +66,15 @@ async function createWindow(): Promise<void> {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
     },
   })
+
+  win.setMenu(null)
+  Menu.setApplicationMenu(null)
 
   if (isDev) {
     await win.loadURL('http://localhost:3000')
