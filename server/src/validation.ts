@@ -28,6 +28,8 @@ export const schemas = {
       sport: optionalString(100),
       date_of_birth: optionalIsoDate,
       notes: optionalString(2000),
+      // Set when creating a minimal owner for a historical back-catalogue import.
+      archived: z.boolean().optional(),
     }),
     update: z.object({
       name: z.string().min(1).max(200).optional(),

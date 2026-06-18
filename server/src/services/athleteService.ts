@@ -1,8 +1,12 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db.js'
 
-export async function findAllAthletes() {
-  return getDb().selectFrom('athletes').selectAll().orderBy('name').execute()
+export async function findAllAthletes(opts: { includeArchived?: boolean } = {}) {
+  let query = getDb().selectFrom('athletes').selectAll()
+  // Archived athletes (historical back-catalogue owners) are hidden from the
+  // active roster unless explicitly requested.
+  if (!opts.includeArchived) query = query.where('archived', '=', 0)
+  return query.orderBy('name').execute()
 }
 
 export async function findAthleteById(id: string) {
@@ -15,6 +19,7 @@ export async function createAthlete(data: {
   sport?: string | null
   date_of_birth?: string | null
   notes?: string | null
+  archived?: boolean
 }) {
   const now = new Date().toISOString()
   return getDb()
@@ -26,6 +31,7 @@ export async function createAthlete(data: {
       sport: data.sport ?? null,
       date_of_birth: data.date_of_birth ?? null,
       notes: data.notes ?? null,
+      archived: data.archived ? 1 : 0,
       created_at: now,
       updated_at: now,
     })

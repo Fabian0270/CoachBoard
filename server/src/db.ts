@@ -10,6 +10,7 @@ export interface AthleteTable {
   sport: string | null
   date_of_birth: string | null
   notes: string | null
+  archived: number   // 0/1 — archived athletes are hidden from the active roster
   created_at: string
   updated_at: string
 }
@@ -178,6 +179,7 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_workouts_program_id ON workouts(program_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_exercises_workout_id ON exercises(workout_id)`.execute(_db)
 
+  await addColumnIfMissing('athletes', 'archived', 'INTEGER NOT NULL DEFAULT 0')
   await addColumnIfMissing('programs', 'enabled_columns', 'TEXT')
   await addColumnIfMissing('programs', 'focus', 'TEXT')
   await addColumnIfMissing('exercises', 'rest_time', 'TEXT')

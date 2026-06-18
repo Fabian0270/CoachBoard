@@ -4,9 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X } from 'lucide-react'
+import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, FolderUp, Pencil, X } from 'lucide-react'
 import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
 import ImportExternalDialog from '../components/ImportExternalDialog'
+import BulkImportDialog from '../components/BulkImportDialog'
 
 interface Athlete { id: string; name: string }
 interface Program { id: string; name: string; status: string; athlete_id: string; start_date: string | null }
@@ -26,10 +27,11 @@ export default function ProgramComparison() {
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
   const [importExternalOpen, setImportExternalOpen] = useState(false)
+  const [bulkImportOpen, setBulkImportOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const newMenuRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
+  const loadData = () => {
     Promise.all([
       fetch('/api/athletes').then((r) => r.json()).catch(() => []),
       fetch('/api/programs').then((r) => r.json()).catch(() => []),
@@ -37,7 +39,9 @@ export default function ProgramComparison() {
       setAthletes(Array.isArray(fetchedAthletes) ? fetchedAthletes : [])
       setPrograms(Array.isArray(fetchedPrograms) ? fetchedPrograms : [])
     }).catch(() => {})
-  }, [])
+  }
+
+  useEffect(() => { loadData() }, [])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -118,6 +122,9 @@ export default function ProgramComparison() {
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => setImportExternalOpen(true)}>
             <FileUp className="h-4 w-4 mr-2" />Import program
+          </Button>
+          <Button variant="outline" onClick={() => setBulkImportOpen(true)}>
+            <FolderUp className="h-4 w-4 mr-2" />Import archive
           </Button>
           <div className="relative" ref={newMenuRef}>
             <Button onClick={(e) => { e.stopPropagation(); setNewMenuOpen((v) => !v) }}>
@@ -299,6 +306,11 @@ export default function ProgramComparison() {
         open={importExternalOpen}
         onOpenChange={setImportExternalOpen}
         onCreated={(programId) => navigate(`/programs/${programId}`)}
+      />
+      <BulkImportDialog
+        open={bulkImportOpen}
+        onOpenChange={setBulkImportOpen}
+        onImported={loadData}
       />
     </div>
   )
