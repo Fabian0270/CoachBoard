@@ -11,6 +11,7 @@ import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, Copy, GripVertical, PlayCircle } from 'lucide-react'
 import ImportDialog from '../components/ImportDialog'
+import type { SuggestionGoal } from 'coachboard-shared'
 import {
   type ToggleableColumn,
   type Exercise,
@@ -172,6 +173,17 @@ export default function ProgramDetail() {
   const openWorkout = openDate ? workoutByDate.get(openDate) ?? null : null
   const enabledColumns = program.enabled_columns ?? TOGGLEABLE_COLUMNS
 
+  const handleSetFocus = async (value: string) => {
+    if (!program) return
+    const next = value === '' ? null : (value as SuggestionGoal)
+    const res = await fetch(`/api/programs/${program.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ focus: next }),
+    })
+    if (res.ok) setProgram((p) => (p ? { ...p, focus: next } : p))
+  }
+
   const handleExport = () => {
     const a = document.createElement('a')
     a.href = `/api/programs/${program.id}/export`
@@ -189,6 +201,17 @@ export default function ProgramDetail() {
           <Link to="/programs"><ArrowLeft className="h-5 w-5 text-muted-foreground" /></Link>
           <h1 className="text-3xl font-bold">{program.name}</h1>
           <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
+          <select
+            value={program.focus ?? ''}
+            onChange={(e) => handleSetFocus(e.target.value)}
+            className="rounded border bg-background px-2 py-1 text-xs text-muted-foreground"
+            title="Training focus — used to tailor future program suggestions"
+          >
+            <option value="">No focus</option>
+            <option value="hypertrophy">Hypertrophy</option>
+            <option value="strength">Strength</option>
+            <option value="peaking">Peaking</option>
+          </select>
           {program.status === 'draft' && (
             <Button size="sm" onClick={handleActivateDraft}>
               <PlayCircle className="h-4 w-4 mr-1.5" />

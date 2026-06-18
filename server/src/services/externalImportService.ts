@@ -9,6 +9,7 @@ import type {
   ExternalImportCommitResult,
   ExternalImportPreview,
   ExternalImportWarning,
+  SuggestionGoal,
 } from 'coachboard-shared'
 
 // ---------------------------------------------------------------------------
@@ -205,8 +206,49 @@ function weekdayOffset(text: string): number | null {
 const emptyMapping = (): ExternalColumnMapping =>
   ({ exercise: null, sets: null, reps: null, load: null, rpe: null, rpeFromRir: false })
 
-type ParseResult = Omit<ExternalImportPreview, 'layout'>
+type ParseResult = Omit<ExternalImportPreview, 'layout' | 'suggestedFocus'>
 type ReadRow = (r: number) => string[]
+
+/** First number in a reps cell ("5", "3-5", "3–5") → the lower bound, or null. */
+function repsLowerBound(reps: string | null): number | null {
+  if (!reps) return null
+  const m = reps.match(/\d+/)
+  return m ? parseInt(m[0], 10) : null
+}
+
+const median = (xs: number[]): number => {
+  const s = [...xs].sort((a, b) => a - b)
+  const mid = Math.floor(s.length / 2)
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
+}
+
+/**
+ * Best-guess training focus from the parsed rows — pre-selects the focus
+ * dropdown in the import wizard (the coach always confirms). Uses the median
+ * rep target, with a high final-week RPE nudging a borderline block to peaking.
+ * Returns null when no numeric reps are present to judge from.
+ */
+export function guessFocus(exercises: ExternalExerciseRow[]): SuggestionGoal | null {
+  const reps = exercises
+    .map((e) => repsLowerBound(e.reps))
+    .filter((n): n is number => n !== null)
+  if (reps.length === 0) return null
+
+  const medReps = median(reps)
+
+  // Average RPE in the final week (when RPE was parsed) — a near-maximal finish
+  // on a low-rep block is the signature of a peak.
+  const maxWeek = Math.max(...exercises.map((e) => e.weekIndex))
+  const finalRpes = exercises
+    .filter((e) => e.weekIndex === maxWeek && e.rpe)
+    .map((e) => parseFloat(e.rpe!.replace(',', '.')))
+    .filter((n) => !isNaN(n))
+  const finalAvgRpe = finalRpes.length ? finalRpes.reduce((a, b) => a + b, 0) / finalRpes.length : null
+
+  if (medReps <= 3) return 'peaking'
+  if (medReps <= 6) return finalAvgRpe !== null && finalAvgRpe >= 9 ? 'peaking' : 'strength'
+  return 'hypertrophy'
+}
 
 function makeReadRow(ws: ExcelJS.Worksheet, maxCol: number): ReadRow {
   return (r) => {
@@ -251,6 +293,7 @@ export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportP
     return {
       layout: 'vertical', columnMapping: emptyMapping(), weeks: 0, days: 0,
       exerciseCount: 0, exercises: [], warnings: [], errors: ['No worksheet found in the uploaded file.'],
+      suggestedFocus: null,
     }
   }
 
@@ -258,19 +301,24 @@ export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportP
   const maxRow = ws.rowCount || 0
   const readRow = makeReadRow(ws, maxCol)
 
-  const banner = findWeekBannerRow(readRow, maxRow)
-  if (banner) {
-    const blockStarts = detectBlockGridStarts(readRow, banner)
-    if (blockStarts) {
-      return { layout: 'block-grid', ...parseBlockGrid(readRow, maxRow, banner, blockStarts) }
+  const dispatch = (): { layout: ExternalImportPreview['layout'] } & ParseResult => {
+    const banner = findWeekBannerRow(readRow, maxRow)
+    if (banner) {
+      const blockStarts = detectBlockGridStarts(readRow, banner)
+      if (blockStarts) {
+        return { layout: 'block-grid', ...parseBlockGrid(readRow, maxRow, banner, blockStarts) }
+      }
+      const weekGrid = detectWeekGrid(readRow, maxRow, banner)
+      if (weekGrid) {
+        return { layout: 'week-grid', ...parseWeekGrid(readRow, maxRow, banner, weekGrid.blockStarts, weekGrid.headerRow) }
+      }
+      return { layout: 'horizontal', ...parseHorizontal(readRow, maxRow, banner) }
     }
-    const weekGrid = detectWeekGrid(readRow, maxRow, banner)
-    if (weekGrid) {
-      return { layout: 'week-grid', ...parseWeekGrid(readRow, maxRow, banner, weekGrid.blockStarts, weekGrid.headerRow) }
-    }
-    return { layout: 'horizontal', ...parseHorizontal(readRow, maxRow, banner) }
+    return { layout: 'vertical', ...parseVertical(readRow, maxRow) }
   }
-  return { layout: 'vertical', ...parseVertical(readRow, maxRow) }
+
+  const result = dispatch()
+  return { ...result, suggestedFocus: guessFocus(result.exercises) }
 }
 
 // ---------------------------------------------------------------------------
@@ -837,8 +885,16 @@ function detectWeekGrid(
   for (let r = banner.row; r <= limit; r++) {
     const cells = readRow(r)
     const atBanner = tokenize(cells[banner.weekCols[0] - 1] ?? '')
-    const leadTokens = tokenize(cells[blockStarts[0] - 1] ?? '')
-    if (leadTokens.some((t) => ALIASES.exercise.includes(t))) return null
+    // A dedicated exercise-name column (e.g. "Discipline") at OR to the left of
+    // the lead column is the signature of the horizontal "shared name column"
+    // layout, which parseHorizontal already handles. A real week-grid has no
+    // separate name column — its lead column holds the movement names under a
+    // weekday header — so bail out and let the horizontal parser run instead.
+    let hasNameColumn = false
+    for (let c = 0; c < blockStarts[0]; c++) {
+      if (tokenize(cells[c] ?? '').some((t) => ALIASES.exercise.includes(t))) { hasNameColumn = true; break }
+    }
+    if (hasNameColumn) return null
     const block = cells.slice(blockStarts[0] - 1, blockStarts[0] - 1 + blockWidth).join(' ').toLowerCase()
     if (atBanner.some((t) => t === 'set' || t === 'sets') && /\brep/.test(block)) {
       return { blockStarts, headerRow: r }
@@ -998,7 +1054,7 @@ const sameName = (a: string, b: string): boolean =>
 
 export async function commitExternalProgram(
   exercises: ExternalExerciseRow[],
-  meta: { athleteId: string; name: string; status: string; startDate?: string | null; weeks: number },
+  meta: { athleteId: string; name: string; status: string; startDate?: string | null; weeks: number; focus?: string | null },
 ): Promise<ExternalImportCommitResult> {
   const athlete = await findAthleteById(meta.athleteId)
   if (!athlete) throw new Error(`Athlete not found: ${meta.athleteId}`)
@@ -1033,6 +1089,7 @@ export async function commitExternalProgram(
         end_date: addDays(startMonday, weeks * 7 - 1),
         status: meta.status,
         enabled_columns: null,
+        focus: meta.focus ?? null,
         created_at: now,
         updated_at: now,
       })

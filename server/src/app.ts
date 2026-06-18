@@ -5,6 +5,7 @@ import fs from 'fs'
 import athletesRouter from './routes/athletes.js'
 import programsRouter from './routes/programs.js'
 import progressRouter from './routes/progress.js'
+import styleRouter from './routes/style.js'
 
 export function createApp(staticDir?: string, logPath?: string) {
   const app = express()
@@ -22,6 +23,7 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api/athletes', athletesRouter)
   app.use('/api/programs', programsRouter)
   app.use('/api/progress', progressRouter)
+  app.use('/api/style-profile', styleRouter)
 
   // Unknown API routes must 404 as JSON, not fall through to the static catch-all
   app.use('/api', (_req, res) => {

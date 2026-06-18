@@ -4,6 +4,7 @@ import type { Response } from 'express'
 const isoDate = z.iso.date('Expected YYYY-MM-DD')
 const enabledColumnEnum = z.enum(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe'])
 const statusEnum = z.enum(['active', 'completed', 'archived', 'draft'])
+const focusEnum = z.enum(['hypertrophy', 'strength', 'peaking'])
 
 // HTML forms submit '' for untouched optional fields — treat that as null/absent
 // so optional dates, emails etc. don't fail their format checks.
@@ -12,6 +13,7 @@ const emptyToUndefined = (v: unknown) => (typeof v === 'string' && v.trim() === 
 
 const optionalString = (max: number) => z.preprocess(emptyToNull, z.string().max(max).nullable().optional())
 const optionalIsoDate = z.preprocess(emptyToNull, isoDate.nullable().optional())
+const optionalFocus = z.preprocess(emptyToNull, focusEnum.nullable().optional())
 const optionalEmail = z.preprocess(emptyToNull, z.email().max(200).nullable().optional())
 
 const dateRangeValid = (data: { start_date?: string | null; end_date?: string | null }) =>
@@ -26,6 +28,8 @@ export const schemas = {
       sport: optionalString(100),
       date_of_birth: optionalIsoDate,
       notes: optionalString(2000),
+      // Set when creating a minimal owner for a historical back-catalogue import.
+      archived: z.boolean().optional(),
     }),
     update: z.object({
       name: z.string().min(1).max(200).optional(),
@@ -45,6 +49,7 @@ export const schemas = {
       end_date: optionalIsoDate,
       status: statusEnum.optional(),
       enabled_columns: z.array(enabledColumnEnum).nullable().optional(),
+      focus: optionalFocus,
     }).refine(dateRangeValid, dateRangeIssue),
     update: z.object({
       name: z.string().min(1).max(200).optional(),
@@ -53,6 +58,7 @@ export const schemas = {
       end_date: optionalIsoDate,
       status: statusEnum.optional(),
       enabled_columns: z.array(enabledColumnEnum).nullable().optional(),
+      focus: optionalFocus,
     }).refine(dateRangeValid, dateRangeIssue),
     duration: z.object({
       start_date: isoDate,
@@ -136,6 +142,12 @@ export const schemas = {
     weeks: z.number().int().min(1).max(52),
     trainingDaysPerWeek: z.number().int().min(3).max(5),
     startDate: isoDate,
+    // Optional style nudges from the coach's profile (Feature 5c).
+    style: z.object({
+      startRpe: z.number().min(5).max(10).optional(),
+      peakRpe: z.number().min(5).max(10).optional(),
+      repBias: z.number().int().min(-2).max(2).optional(),
+    }).optional(),
   }),
 
   // Commit metadata for external program import — arrives as query-string params.
@@ -145,6 +157,7 @@ export const schemas = {
     name: z.string().min(1).max(200),
     status: z.enum(['active', 'completed', 'archived']),
     start_date: optionalIsoDate,
+    focus: optionalFocus,
   }).refine(
     (data) => data.status === 'archived' || !!data.start_date,
     { message: 'start_date is required unless the program is archived', path: ['start_date'] },

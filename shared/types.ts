@@ -9,6 +9,7 @@ export interface Athlete {
   sport: string | null
   date_of_birth: string | null
   notes: string | null
+  archived: number   // 0/1 — archived athletes (e.g. historical back-catalogue imports) are hidden from the active roster
   created_at: string
   updated_at: string
 }
@@ -57,6 +58,7 @@ export interface Program {
   created_at: string
   updated_at: string
   enabled_columns: ToggleableColumn[] | null
+  focus: SuggestionGoal | null
   workouts?: Workout[]
 }
 
@@ -169,6 +171,9 @@ export interface ExternalImportPreview {
   exercises: ExternalExerciseRow[]
   warnings: ExternalImportWarning[]
   errors: string[]       // fatal; non-empty means the file cannot be imported
+  // Best-guess training focus from rep ranges / RPE arc — pre-selects the focus
+  // dropdown in the wizard. null when there aren't enough numeric reps to guess.
+  suggestedFocus: SuggestionGoal | null
 }
 
 export interface ExternalImportCommitResult {
@@ -293,6 +298,121 @@ export interface SuggestProgramBody {
   weeks: number
   trainingDaysPerWeek: number  // 3–5, chosen in the wizard
   startDate: string            // ISO date — first day of new block
+  // Optional style nudges from the coach's profile (Feature 5c). Omitted when
+  // the coach resets to generic defaults or has too few programs to learn from.
+  style?: SuggestionStyleAdjust
+}
+
+export interface SuggestionStyleAdjust {
+  startRpe?: number   // replaces a ramping template's week-1 RPE
+  peakRpe?: number    // caps / targets the final-week RPE
+  repBias?: number    // ±reps shift applied where it doesn't fight the goal
+}
+
+// ---------------------------------------------------------------------------
+// Coach-style learning (Feature 5) — fingerprints + aggregated style profile
+// ---------------------------------------------------------------------------
+
+export type RepRangeBucket = '1-3' | '4-6' | '6-10' | '10+'
+export type RampDirection = 'rising' | 'flat' | 'wave'
+export type VolumeDirection = 'rising' | 'flat' | 'tapering'
+
+// Per-program signals — computed on demand from a program's workouts/exercises.
+export interface ProgramFingerprint {
+  programId: string
+  name: string
+  focus: SuggestionGoal | null
+  blockWeeks: number
+  daysPerWeek: number
+  repRangeBucket: RepRangeBucket
+  startRpe: number | null
+  peakRpe: number | null
+  volumeDirection: VolumeDirection
+  intensityRamp: RampDirection
+}
+
+// Rolling aggregate across the coach's completed/archived programs (optionally
+// scoped to one focus). `usable` is false below the minimum sample size.
+export interface CoachStyleProfile {
+  focus: SuggestionGoal | null      // the focus this profile was scoped to (null = all)
+  sampleSize: number
+  usable: boolean
+  preferredBlockWeeks: number | null
+  preferredDaysPerWeek: number | null
+  preferredRepRange: RepRangeBucket | null
+  typicalStartRpe: number | null
+  typicalPeakRpe: number | null
+  volumePattern: VolumeDirection | null
+  intensityPattern: RampDirection | null
+  sourcePrograms: Array<{ programId: string; name: string }>
+}
+
+export const STYLE_MIN_SAMPLE = 3
+
+// ---------------------------------------------------------------------------
+// Periodization pattern detection (Feature 5d) — when several of the coach's
+// fingerprints share a recognisable shape, group them into a named pattern that
+// pre-fills the suggestion wizard with the coach's own typical parameters.
+// ---------------------------------------------------------------------------
+
+export type PeriodizationPatternId =
+  | 'linear_progression'
+  | 'wave_loading'
+  | 'accumulation_intensification'
+  | 'repeated_effort'
+
+// Static metadata for each detectable pattern — shared so the client wizard can
+// label patterns and the server can map a pattern to the generic template it
+// pre-fills. `goal`/`templateId` reference the existing SUGGESTION_TEMPLATES.
+export interface PeriodizationPatternInfo {
+  id: PeriodizationPatternId
+  label: string
+  description: string   // plain-English summary of the detection rule
+  goal: SuggestionGoal
+  templateId: string
+}
+
+export const PERIODIZATION_PATTERNS: PeriodizationPatternInfo[] = [
+  {
+    id: 'linear_progression',
+    label: 'Linear Progression',
+    description: 'Rising intensity with flat volume in the 3–6 rep range',
+    goal: 'strength',
+    templateId: 'strength_linear',
+  },
+  {
+    id: 'wave_loading',
+    label: 'Wave Loading',
+    description: 'Intensity oscillates up and down across the weeks',
+    goal: 'strength',
+    templateId: 'strength_wave',
+  },
+  {
+    id: 'accumulation_intensification',
+    label: 'Accumulation → Intensification',
+    description: 'Volume tapers while intensity rises within the block',
+    goal: 'hypertrophy',
+    templateId: 'hypertrophy_accumulation',
+  },
+  {
+    id: 'repeated_effort',
+    label: 'Repeated Effort',
+    description: 'Flat intensity and volume, holding around RPE 8',
+    goal: 'hypertrophy',
+    templateId: 'hypertrophy_repeated_effort',
+  },
+]
+
+// A pattern the coach actually exhibits: the static metadata plus the typical
+// parameters derived from the matching programs, used to pre-fill the wizard.
+export interface DetectedPattern extends PeriodizationPatternInfo {
+  sampleSize: number                 // matching programs (≥ STYLE_MIN_SAMPLE)
+  preferredBlockWeeks: number
+  preferredDaysPerWeek: number
+  preferredRepRange: RepRangeBucket | null
+  typicalStartRpe: number | null
+  typicalPeakRpe: number | null
+  sourcePrograms: Array<{ programId: string; name: string }>
 }
 
 export interface SuggestProgramResult {

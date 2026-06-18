@@ -180,6 +180,42 @@ describe('peaking_extended', () => {
   })
 })
 
+describe('style adjustments (Feature 5c)', () => {
+  it('an empty style object is identical to no style for every template', () => {
+    for (const id of ALL_IDS) {
+      const t = findTemplate(id)!
+      expect(t.generate(6, E1RM, NO_ADJUST, {})).toEqual(t.generate(6, E1RM, NO_ADJUST))
+    }
+  })
+
+  it('repBias shifts every slot’s reps, clamped to a 1 minimum', () => {
+    for (const id of ALL_IDS) {
+      const t = findTemplate(id)!
+      const base = t.generate(6, E1RM, NO_ADJUST)
+      const lower = t.generate(6, E1RM, NO_ADJUST, { repBias: -2 })
+      base.forEach((s, i) => {
+        expect(lower[i].reps).toBe(Math.max(1, s.reps - 2))
+      })
+    }
+  })
+
+  it('peakRpe caps every slot’s target RPE', () => {
+    for (const id of ALL_IDS) {
+      const t = findTemplate(id)!
+      for (const s of t.generate(6, E1RM, NO_ADJUST, { peakRpe: 8 })) {
+        expect(s.targetRpe).toBeLessThanOrEqual(8)
+      }
+    }
+  })
+
+  it('startRpe sets the week-1 target for ramping templates', () => {
+    for (const id of ['hypertrophy_accumulation', 'strength_linear']) {
+      const slots = findTemplate(id)!.generate(6, E1RM, NO_ADJUST, { startRpe: 6 })
+      expect(slots[0].targetRpe).toBe(6)
+    }
+  })
+})
+
 // Helper mirroring the internal snapRpe — used only in the wave test above.
 function snapRpe(rpe: number): number {
   return Math.min(10, Math.max(5, Math.round(rpe * 2) / 2))

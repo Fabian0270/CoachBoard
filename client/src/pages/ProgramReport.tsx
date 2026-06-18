@@ -107,7 +107,10 @@ export default function ProgramReport() {
         <Badge variant={program.status === 'completed' ? 'secondary' : 'default'}>
           {program.status}
         </Badge>
-        {program.status === 'completed' && (
+        {program.focus && (
+          <Badge variant="outline" className="capitalize">{program.focus}</Badge>
+        )}
+        {(program.status === 'completed' || program.status === 'archived') && (
           <Button
             variant="outline"
             size="sm"
@@ -175,10 +178,21 @@ export default function ProgramReport() {
         <Card>
           <CardContent className="py-16 text-center text-muted-foreground">
             <TrendingUp className="h-12 w-12 mx-auto mb-3 opacity-30" />
-            <p className="font-medium">No results yet</p>
-            <p className="text-sm mt-1">
-              Import the filled Excel sheet to see e1RM trends and RPE analysis.
-            </p>
+            {program.status === 'active' ? (
+              <>
+                <p className="font-medium">No results yet</p>
+                <p className="text-sm mt-1">
+                  Import the filled Excel sheet to see e1RM trends and RPE analysis.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-medium">No analysis available</p>
+                <p className="text-sm mt-1">
+                  This program has no load or RPE data, so e1RM trends can’t be computed.
+                </p>
+              </>
+            )}
             <Button variant="outline" size="sm" className="mt-4" asChild>
               <Link to={`/programs/${id}`}>Back to program</Link>
             </Button>

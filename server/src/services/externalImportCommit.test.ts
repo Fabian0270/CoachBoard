@@ -107,6 +107,20 @@ describe('commitExternalProgram', () => {
     expect(report).toBeTruthy()
     expect(report!.e1rmTrends.length).toBeGreaterThan(0)
     expect(report!.e1rmTrends.some((t) => t.latestE1RM !== null)).toBe(true)
+    // Every imported row carries a load → the program reads as fully completed.
+    expect(report!.completionRate).toBe(1)
+    expect(report!.exercisesCompleted).toBe(report!.exercisesTotal)
+  })
+
+  it('persists the chosen training focus on commit', async () => {
+    const buf = await buildSheet(GRID)
+    const preview = await parseExternalFile(buf)
+    const { programId } = await commitExternalProgram(preview.exercises, {
+      athleteId, name: 'Focused Block', status: 'completed', startDate: '2026-06-15',
+      weeks: preview.weeks, focus: 'strength',
+    })
+    const program = await findProgramById(programId)
+    expect(program!.focus).toBe('strength')
   })
 
   it('commits an archived program with no start date, placing days in order', async () => {

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Users, Dumbbell, TrendingUp, Plus } from 'lucide-react'
+import MyStyleCard from '../components/MyStyleCard'
 
 interface Stats {
   athletes: number
@@ -64,6 +65,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+      <MyStyleCard />
       {stats.athletes === 0 && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
