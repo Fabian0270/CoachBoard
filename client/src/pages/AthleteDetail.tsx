@@ -25,6 +25,7 @@ interface Program {
   name: string
   status: string
   start_date: string | null
+  focus: string | null
 }
 
 export default function AthleteDetail() {
@@ -208,7 +209,10 @@ export default function AthleteDetail() {
                 <Card className="hover:shadow-md transition-shadow cursor-pointer">
                   <CardHeader className="py-4">
                     <CardTitle className="text-base">{program.name}</CardTitle>
-                    <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
+                    <div className="flex gap-1.5">
+                      <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
+                      {program.focus && <Badge variant="outline" className="capitalize">{program.focus}</Badge>}
+                    </div>
                   </CardHeader>
                 </Card>
               </Link>

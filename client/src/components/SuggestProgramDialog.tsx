@@ -5,7 +5,7 @@ import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { Loader2, ChevronLeft, Sparkles } from 'lucide-react'
 import { SUGGESTION_TEMPLATES } from 'coachboard-shared'
-import type { SuggestionGoal, SuggestionTemplateInfo } from 'coachboard-shared'
+import type { SuggestionGoal, SuggestionTemplateInfo, CoachStyleProfile, SuggestionStyleAdjust, RepRangeBucket } from 'coachboard-shared'
 
 interface SelectableAthlete { id: string; name: string }
 interface SelectableProgram { id: string; name: string; status: string; start_date: string | null }
@@ -37,6 +37,18 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+const clampDays = (n: number): 3 | 4 | 5 => (n <= 3 ? 3 : n >= 5 ? 5 : 4)
+
+// Representative rep for a learned bucket vs. a goal's natural rep target — used
+// to derive a gentle (±2) rep nudge toward how the coach usually programs.
+const REP_MIDPOINT: Record<RepRangeBucket, number> = { '1-3': 2, '4-6': 5, '6-10': 8, '10+': 11 }
+const GOAL_REP: Record<SuggestionGoal, number> = { hypertrophy: 8, strength: 4, peaking: 2 }
+function repBiasFor(goal: SuggestionGoal, bucket: RepRangeBucket | null): number {
+  if (!bucket) return 0
+  const raw = Math.round((REP_MIDPOINT[bucket] - GOAL_REP[goal]) / 3)
+  return Math.max(-2, Math.min(2, raw))
+}
+
 function firstStep(programId?: string, athleteId?: string): Step {
   if (programId) return 'goal'
   if (athleteId) return 'source'
@@ -64,6 +76,26 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
   const [startDate, setStartDate] = useState(todayIso)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [styleProfile, setStyleProfile] = useState<CoachStyleProfile | null>(null)
+  const [useStyle, setUseStyle] = useState(true)
+
+  // Once the coach picks a goal, pull their style profile scoped to that focus.
+  // When it's usable, default the day-count to their usual cadence.
+  useEffect(() => {
+    if (!open || !goal) return
+    let cancelled = false
+    setStyleProfile(null)
+    fetch(`/api/style-profile?focus=${goal}`)
+      .then((r) => r.json())
+      .then((data: CoachStyleProfile) => {
+        if (cancelled) return
+        setStyleProfile(data)
+        setUseStyle(data.usable)
+        if (data.usable && data.preferredDaysPerWeek) setTrainingDays(clampDays(data.preferredDaysPerWeek))
+      })
+      .catch(() => { if (!cancelled) setStyleProfile(null) })
+    return () => { cancelled = true }
+  }, [open, goal])
 
   useEffect(() => {
     if (!open || step !== 'athlete' || sourceAthletes !== null) return
@@ -85,7 +117,7 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
       .then((r) => r.json())
       .then((data) => {
         const all = Array.isArray(data) ? (data as SelectableProgram[]) : []
-        setSourcePrograms(all.filter((p) => p.status === 'completed'))
+        setSourcePrograms(all.filter((p) => p.status === 'completed' || p.status === 'archived'))
       })
       .catch(() => setSourcesError('Failed to load programs'))
       .finally(() => setSourcesLoading(false))
@@ -106,6 +138,8 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
     setStartDate(todayIso())
     setLoading(false)
     setError(null)
+    setStyleProfile(null)
+    setUseStyle(true)
   }
 
   function handleOpenChange(v: boolean) {
@@ -143,7 +177,32 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
 
   function pickDays(d: 3 | 4 | 5) {
     setTrainingDays(d)
+    if (useStyle && styleProfile?.usable && styleProfile.preferredBlockWeeks) {
+      setWeeks(styleProfile.preferredBlockWeeks)
+    }
     setStep('options')
+  }
+
+  // Flip between style-tuned and generic defaults, re-prefilling the block length
+  // so what the coach sees in the Weeks input always matches the active mode.
+  function toggleStyle() {
+    const next = !useStyle
+    setUseStyle(next)
+    if (next && styleProfile?.usable && styleProfile.preferredBlockWeeks) {
+      setWeeks(styleProfile.preferredBlockWeeks)
+    } else if (!next && template) {
+      setWeeks(template.typicalWeeks[0])
+    }
+  }
+
+  function buildStyleAdjust(): SuggestionStyleAdjust | undefined {
+    if (!useStyle || !goal || !styleProfile?.usable) return undefined
+    const s: SuggestionStyleAdjust = {}
+    if (styleProfile.typicalStartRpe != null) s.startRpe = styleProfile.typicalStartRpe
+    if (styleProfile.typicalPeakRpe != null) s.peakRpe = styleProfile.typicalPeakRpe
+    const bias = repBiasFor(goal, styleProfile.preferredRepRange)
+    if (bias !== 0) s.repBias = bias
+    return Object.keys(s).length > 0 ? s : undefined
   }
 
   async function handleGenerate() {
@@ -154,6 +213,7 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
     setLoading(true)
     setError(null)
     try {
+      const style = buildStyleAdjust()
       const res = await fetch(`/api/programs/${effectiveProgramId}/suggest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -163,6 +223,7 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
           weeks,
           trainingDaysPerWeek: trainingDays,
           startDate,
+          ...(style ? { style } : {}),
         }),
       })
       const data = await res.json()
@@ -220,11 +281,11 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
 
         {step === 'source' && (
           <div className="space-y-2">
-            <p className="text-sm text-muted-foreground mb-3">Which completed program should the new block be based on?</p>
+            <p className="text-sm text-muted-foreground mb-3">Which completed or archived program should the new block be based on?</p>
             {sourcesLoading && <p className="text-sm text-muted-foreground">Loading programs…</p>}
             {sourcesError && <p className="text-sm text-destructive">{sourcesError}</p>}
             {sourcePrograms !== null && sourcePrograms.length === 0 && (
-              <p className="text-sm text-muted-foreground">No completed programs found for this athlete.</p>
+              <p className="text-sm text-muted-foreground">No completed or archived programs found for this athlete.</p>
             )}
             {sourcePrograms?.map((p) => (
               <button
@@ -232,7 +293,12 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
                 onClick={() => pickSourceProgram(p)}
                 className="w-full text-left rounded-lg border p-3 hover:bg-accent transition-colors"
               >
-                <div className="font-medium">{p.name}</div>
+                <div className="font-medium flex items-center justify-between gap-2">
+                  <span>{p.name}</span>
+                  {p.status === 'archived' && (
+                    <span className="text-xs font-normal rounded bg-muted px-1.5 py-0.5 text-muted-foreground">archived</span>
+                  )}
+                </div>
                 {p.start_date && (
                   <div className="text-xs text-muted-foreground mt-0.5">Started: {p.start_date}</div>
                 )}
@@ -306,6 +372,34 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
               <span className="font-medium">{GOAL_LABELS[template.goal]} — {template.label}</span>
               <span className="text-muted-foreground"> · {trainingDays} days/week</span>
             </div>
+
+            {styleProfile?.usable && (
+              <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5 text-primary" />
+                    Based on your last {styleProfile.sampleSize} {GOAL_LABELS[template.goal].toLowerCase()} programs
+                  </span>
+                  <button type="button" onClick={toggleStyle} className="text-xs text-muted-foreground underline shrink-0">
+                    {useStyle ? 'Use generic defaults' : 'Apply my style'}
+                  </button>
+                </div>
+                {useStyle ? (
+                  <ul className="text-xs text-muted-foreground list-disc list-inside space-y-0.5">
+                    {styleProfile.preferredBlockWeeks && <li>Block length set to {styleProfile.preferredBlockWeeks} weeks</li>}
+                    {styleProfile.preferredDaysPerWeek && <li>Defaulted to {clampDays(styleProfile.preferredDaysPerWeek)} days/week</li>}
+                    {styleProfile.typicalStartRpe != null && styleProfile.typicalPeakRpe != null && (
+                      <li>RPE arc tuned to your usual {styleProfile.typicalStartRpe} → {styleProfile.typicalPeakRpe}</li>
+                    )}
+                    {goal && styleProfile.preferredRepRange && repBiasFor(goal, styleProfile.preferredRepRange) !== 0 && (
+                      <li>Reps nudged toward your {styleProfile.preferredRepRange} range</li>
+                    )}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Using the generic template defaults — your style profile is ignored.</p>
+                )}
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">

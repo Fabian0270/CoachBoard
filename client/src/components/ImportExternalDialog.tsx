@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
 import { Button } from './ui/button'
 import { Upload, Loader2, AlertTriangle, XCircle, Check } from 'lucide-react'
-import type { ExternalImportPreview, ExternalColumnMapping } from 'coachboard-shared'
+import type { ExternalImportPreview, ExternalColumnMapping, SuggestionGoal } from 'coachboard-shared'
 
 interface Athlete { id: string; name: string }
 
@@ -100,6 +100,7 @@ export default function ImportExternalDialog({ open, onOpenChange, onCreated }: 
   const [name, setName] = useState('')
   const [status, setStatus] = useState('active')
   const [startDate, setStartDate] = useState(todayIso())
+  const [focus, setFocus] = useState<SuggestionGoal | ''>('')
 
   useEffect(() => {
     if (!open) return
@@ -118,6 +119,7 @@ export default function ImportExternalDialog({ open, onOpenChange, onCreated }: 
     setName('')
     setStatus('active')
     setStartDate(todayIso())
+    setFocus('')
     if (fileRef.current) fileRef.current.value = ''
   }
 
@@ -149,7 +151,10 @@ export default function ImportExternalDialog({ open, onOpenChange, onCreated }: 
         setStep('pick')
         return
       }
-      setPreview(data as ExternalImportPreview)
+      const pv = data as ExternalImportPreview
+      setPreview(pv)
+      // Pre-select the focus dropdown with the parser's best guess; coach confirms.
+      setFocus(pv.suggestedFocus ?? '')
       setStep('preview')
     } catch {
       setError('Failed to reach server')
@@ -166,6 +171,7 @@ export default function ImportExternalDialog({ open, onOpenChange, onCreated }: 
       const params = new URLSearchParams({ athlete_id: athleteId, name, status })
       // Archived programs don't carry a start date — server places days in order.
       if (status !== 'archived' && startDate) params.set('start_date', startDate)
+      if (focus) params.set('focus', focus)
       const res = await fetch(`/api/programs/import-external?${params.toString()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },
@@ -317,6 +323,20 @@ export default function ImportExternalDialog({ open, onOpenChange, onCreated }: 
                     <input type="date" className={inputClass} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                   </div>
                 )}
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Training focus</label>
+                <select className={inputClass} value={focus} onChange={(e) => setFocus(e.target.value as SuggestionGoal | '')}>
+                  <option value="">Unclassified</option>
+                  <option value="hypertrophy">Hypertrophy</option>
+                  <option value="strength">Strength</option>
+                  <option value="peaking">Peaking</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  {preview?.suggestedFocus
+                    ? 'Pre-filled from the program’s rep ranges — helps tailor future suggestions.'
+                    : 'Labels this program so suggestions can learn your style.'}
+                </p>
               </div>
             </div>
 

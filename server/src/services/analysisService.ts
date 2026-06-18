@@ -18,25 +18,17 @@ function mondayOf(date: Date): Date {
   return d
 }
 
-// Parse prescribed RPE from free-text intensity field.
-// Accepts: "RPE 8", "@ 8", "@8", "rpe8.5", "@ 8.5" etc.
-function parseRpeFromIntensity(intensity: string | null): number | null {
-  if (!intensity) return null
-  const match = intensity.match(/(?:rpe\s*|@\s*)(\d+(?:[.,]\d+)?)/i)
-  if (!match) return null
-  const val = parseFloat(match[1].replace(',', '.'))
-  if (isNaN(val) || val < 5 || val > 10) return null
-  if (!Number.isInteger(val * 2)) return null
-  return val
-}
-
-export async function getProgramReport(programId: string): Promise<ProgramReport | null> {
-  const data = await findProgramForExport(programId)
-  if (!data) return null
-  const { program, workouts, exercises } = data
-
-  // Map workout id → { weekIndex, dayOfWeek } from scheduled_date + program start
-  const workoutWeekMap = new Map<string, { weekIndex: number; dayOfWeek: number }>()
+/**
+ * Map each workout id → { weekIndex, dayOfWeek } from its scheduled_date relative
+ * to the program's start Monday (falling back to the earliest workout date when
+ * the program has no start_date). Shared by the report and the style fingerprinter
+ * so both derive week/day positions identically.
+ */
+export function buildWorkoutWeekMap(
+  program: { start_date: string | null },
+  workouts: Array<{ id: string; scheduled_date: string | null }>,
+): Map<string, { weekIndex: number; dayOfWeek: number }> {
+  const map = new Map<string, { weekIndex: number; dayOfWeek: number }>()
 
   let startMonday: Date | null = null
   if (program.start_date) {
@@ -58,11 +50,34 @@ export async function getProgramReport(programId: string): Promise<ProgramReport
     const [wy, wm, wd] = w.scheduled_date.split('-').map(Number)
     const d = new Date(Date.UTC(wy, wm - 1, wd))
     const diffDays = Math.round((d.getTime() - startMonday.getTime()) / 86400000)
-    workoutWeekMap.set(w.id, {
+    map.set(w.id, {
       weekIndex: Math.max(0, Math.floor(diffDays / 7)),
       dayOfWeek: ((diffDays % 7) + 7) % 7,
     })
   }
+
+  return map
+}
+
+// Parse prescribed RPE from free-text intensity field.
+// Accepts: "RPE 8", "@ 8", "@8", "rpe8.5", "@ 8.5" etc.
+function parseRpeFromIntensity(intensity: string | null): number | null {
+  if (!intensity) return null
+  const match = intensity.match(/(?:rpe\s*|@\s*)(\d+(?:[.,]\d+)?)/i)
+  if (!match) return null
+  const val = parseFloat(match[1].replace(',', '.'))
+  if (isNaN(val) || val < 5 || val > 10) return null
+  if (!Number.isInteger(val * 2)) return null
+  return val
+}
+
+export async function getProgramReport(programId: string): Promise<ProgramReport | null> {
+  const data = await findProgramForExport(programId)
+  if (!data) return null
+  const { program, workouts, exercises } = data
+
+  // Map workout id → { weekIndex, dayOfWeek } from scheduled_date + program start
+  const workoutWeekMap = buildWorkoutWeekMap(program, workouts)
 
   // Completion stats
   const exercisesTotal = exercises.length

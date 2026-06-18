@@ -57,6 +57,7 @@ export interface Program {
   created_at: string
   updated_at: string
   enabled_columns: ToggleableColumn[] | null
+  focus: SuggestionGoal | null
   workouts?: Workout[]
 }
 
@@ -169,6 +170,9 @@ export interface ExternalImportPreview {
   exercises: ExternalExerciseRow[]
   warnings: ExternalImportWarning[]
   errors: string[]       // fatal; non-empty means the file cannot be imported
+  // Best-guess training focus from rep ranges / RPE arc — pre-selects the focus
+  // dropdown in the wizard. null when there aren't enough numeric reps to guess.
+  suggestedFocus: SuggestionGoal | null
 }
 
 export interface ExternalImportCommitResult {
@@ -293,7 +297,56 @@ export interface SuggestProgramBody {
   weeks: number
   trainingDaysPerWeek: number  // 3–5, chosen in the wizard
   startDate: string            // ISO date — first day of new block
+  // Optional style nudges from the coach's profile (Feature 5c). Omitted when
+  // the coach resets to generic defaults or has too few programs to learn from.
+  style?: SuggestionStyleAdjust
 }
+
+export interface SuggestionStyleAdjust {
+  startRpe?: number   // replaces a ramping template's week-1 RPE
+  peakRpe?: number    // caps / targets the final-week RPE
+  repBias?: number    // ±reps shift applied where it doesn't fight the goal
+}
+
+// ---------------------------------------------------------------------------
+// Coach-style learning (Feature 5) — fingerprints + aggregated style profile
+// ---------------------------------------------------------------------------
+
+export type RepRangeBucket = '1-3' | '4-6' | '6-10' | '10+'
+export type RampDirection = 'rising' | 'flat' | 'wave'
+export type VolumeDirection = 'rising' | 'flat' | 'tapering'
+
+// Per-program signals — computed on demand from a program's workouts/exercises.
+export interface ProgramFingerprint {
+  programId: string
+  name: string
+  focus: SuggestionGoal | null
+  blockWeeks: number
+  daysPerWeek: number
+  repRangeBucket: RepRangeBucket
+  startRpe: number | null
+  peakRpe: number | null
+  volumeDirection: VolumeDirection
+  intensityRamp: RampDirection
+}
+
+// Rolling aggregate across the coach's completed/archived programs (optionally
+// scoped to one focus). `usable` is false below the minimum sample size.
+export interface CoachStyleProfile {
+  focus: SuggestionGoal | null      // the focus this profile was scoped to (null = all)
+  sampleSize: number
+  usable: boolean
+  preferredBlockWeeks: number | null
+  preferredDaysPerWeek: number | null
+  preferredRepRange: RepRangeBucket | null
+  typicalStartRpe: number | null
+  typicalPeakRpe: number | null
+  volumePattern: VolumeDirection | null
+  intensityPattern: RampDirection | null
+  sourcePrograms: Array<{ programId: string; name: string }>
+}
+
+export const STYLE_MIN_SAMPLE = 3
 
 export interface SuggestProgramResult {
   draftProgramId: string

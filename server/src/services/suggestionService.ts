@@ -3,6 +3,7 @@ import { getDb } from '../db.js'
 import { getProgramReport } from './analysisService.js'
 import { findProgramById } from './programService.js'
 import { findTemplate } from '../lib/suggestionTemplates.js'
+import { SUGGESTION_TEMPLATES } from 'coachboard-shared'
 import type { SuggestProgramBody, SuggestProgramResult, WeekSlot } from 'coachboard-shared'
 
 const MAIN_LIFT_KEYWORDS = ['squat', 'bench', 'deadlift'] as const
@@ -125,7 +126,11 @@ export async function generateDraftProgram(
 ): Promise<SuggestProgramResult> {
   const source = await findProgramById(sourceProgramId)
   if (!source) throw new Error(`Program not found: ${sourceProgramId}`)
-  if (source.status !== 'completed') throw new Error('Source program is not completed')
+  // A finished program (completed OR an imported archived back-catalogue program)
+  // supplies the e1RM, RPE-deviation adjustment and accessories for the new block.
+  if (source.status !== 'completed' && source.status !== 'archived') {
+    throw new Error('Source program must be completed or archived')
+  }
 
   const report = await getProgramReport(sourceProgramId)
   if (!report) throw new Error(`Could not compute report for program ${sourceProgramId}`)
@@ -150,8 +155,21 @@ export async function generateDraftProgram(
 
   const slotsByLift = new Map<LiftKey, WeekSlot[]>()
   for (const [liftKey, e1rm] of e1rmMap) {
-    slotsByLift.set(liftKey, template.generate(body.weeks, e1rm, rpeAdjustment))
+    slotsByLift.set(liftKey, template.generate(body.weeks, e1rm, rpeAdjustment, body.style))
   }
+
+  // Tag the draft with the template's goal so it, too, feeds the style profile.
+  const draftFocus = SUGGESTION_TEMPLATES.find((t) => t.id === body.templateId)?.goal ?? null
+
+  // Suffix appended to each main-lift note when style nudges were applied, so the
+  // engine stays auditable (the coach sees exactly what their profile changed).
+  const styleNote = body.style
+    ? ' · ' + [
+        body.style.startRpe !== undefined ? `start RPE ${body.style.startRpe}` : null,
+        body.style.peakRpe !== undefined ? `peak RPE ${body.style.peakRpe}` : null,
+        body.style.repBias ? `${body.style.repBias > 0 ? '+' : ''}${body.style.repBias} reps` : null,
+      ].filter(Boolean).join(', ') + ' from your style'
+    : ''
 
   const accByLift = accessoriesByLift(source.workouts ?? [])
 
@@ -174,6 +192,7 @@ export async function generateDraftProgram(
       end_date: endIso,
       status: 'draft',
       enabled_columns: source.enabled_columns ? JSON.stringify(source.enabled_columns) : null,
+      focus: draftFocus,
       created_at: now,
       updated_at: now,
     })
@@ -221,7 +240,7 @@ export async function generateDraftProgram(
             load_used: null,
             rpe: null,
             group_id: null,
-            suggestion_note: slot.explanation,
+            suggestion_note: slot.explanation + styleNote,
           })
           .execute()
       }

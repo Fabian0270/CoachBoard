@@ -126,6 +126,7 @@ export async function createProgram(data: {
   end_date?: string | null
   status?: string
   enabled_columns?: unknown
+  focus?: string | null
 }) {
   const now = new Date().toISOString()
   const row = await getDb()
@@ -139,6 +140,7 @@ export async function createProgram(data: {
       end_date: data.end_date ?? null,
       status: data.status ?? 'active',
       enabled_columns: serializeEnabledColumns(data.enabled_columns),
+      focus: data.focus ?? null,
       created_at: now,
       updated_at: now,
     })
@@ -156,6 +158,7 @@ export async function updateProgram(
     end_date?: string | null
     status?: string
     enabled_columns?: unknown
+    focus?: string | null
   },
 ) {
   const row = await getDb()
@@ -169,6 +172,7 @@ export async function updateProgram(
       ...(data.enabled_columns !== undefined
         ? { enabled_columns: serializeEnabledColumns(data.enabled_columns) }
         : {}),
+      ...(data.focus !== undefined ? { focus: data.focus ?? null } : {}),
       updated_at: new Date().toISOString(),
     })
     .where('id', '=', id)

@@ -25,6 +25,7 @@ export interface ProgramTable {
   created_at: string
   updated_at: string
   enabled_columns: string | null
+  focus: string | null
 }
 
 export interface WorkoutTable {
@@ -178,6 +179,7 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_exercises_workout_id ON exercises(workout_id)`.execute(_db)
 
   await addColumnIfMissing('programs', 'enabled_columns', 'TEXT')
+  await addColumnIfMissing('programs', 'focus', 'TEXT')
   await addColumnIfMissing('exercises', 'rest_time', 'TEXT')
   await addColumnIfMissing('exercises', 'intensity', 'TEXT')
   await addColumnIfMissing('exercises', 'load_used', 'TEXT')

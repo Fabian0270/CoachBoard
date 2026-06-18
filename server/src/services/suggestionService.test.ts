@@ -214,7 +214,7 @@ describe('generateDraftProgram', () => {
     ).rejects.toThrow('not found')
   })
 
-  it('throws when source program is not completed', async () => {
+  it('throws when source program is neither completed nor archived', async () => {
     const active = await createProgram({ athlete_id: athleteId, name: 'Active', status: 'active' })
     await expect(
       generateDraftProgram(active.id, {
@@ -224,7 +224,30 @@ describe('generateDraftProgram', () => {
         trainingDaysPerWeek: 3,
         startDate: '2026-03-16',
       }),
-    ).rejects.toThrow('not completed')
+    ).rejects.toThrow('completed or archived')
+  })
+
+  it('accepts an archived back-catalogue program as the source', async () => {
+    // Reuse the seeded block's structure, but as an archived historical program.
+    const archived = await createProgram({
+      athlete_id: athleteId, name: 'Old Block', start_date: '2025-09-01', status: 'active',
+    })
+    const w = await createWorkout({ program_id: archived.id, name: '2025-09-26', scheduled_date: '2025-09-26' })
+    await createExercise({
+      workout_id: w.id, name: 'Squat', sets: '4', reps: '5', weight: 150,
+      intensity: 'RPE 8', load_used: '150', rpe: '8', order_index: 0,
+    })
+    await updateProgram(archived.id, { status: 'archived' })
+
+    const result = await generateDraftProgram(archived.id, {
+      athleteId,
+      templateId: 'strength_linear',
+      weeks: 4,
+      trainingDaysPerWeek: 3,
+      startDate: '2026-04-06',
+    })
+    const draft = await getDb().selectFrom('programs').selectAll().where('id', '=', result.draftProgramId).executeTakeFirstOrThrow()
+    expect(draft.status).toBe('draft')
   })
 
   it('throws when templateId is unknown', async () => {

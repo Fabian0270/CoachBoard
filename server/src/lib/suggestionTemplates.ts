@@ -1,11 +1,19 @@
 import { targetWeight } from 'coachboard-shared/rpe'
-import type { WeekSlot } from 'coachboard-shared'
+import type { WeekSlot, SuggestionStyleAdjust } from 'coachboard-shared'
 
 // Server-only type — includes the generate function that the client never needs.
 export interface SuggestionTemplate {
   id: string
-  generate: (weeks: number, e1RM: number, rpeAdjustment: number) => WeekSlot[]
+  generate: (weeks: number, e1RM: number, rpeAdjustment: number, style?: SuggestionStyleAdjust) => WeekSlot[]
 }
+
+// Style nudges (Feature 5c) applied uniformly so each template stays readable and
+// the no-style path is unchanged: repBias shifts reps (min 1); peakRpe caps any
+// week's target so the block never exceeds the coach's usual top-end effort.
+const adjReps = (reps: number, style?: SuggestionStyleAdjust): number =>
+  Math.max(1, reps + (style?.repBias ?? 0))
+const capPeak = (rpe: number, style?: SuggestionStyleAdjust): number =>
+  style?.peakRpe !== undefined ? Math.min(rpe, style.peakRpe) : rpe
 
 // Round RPE to nearest 0.5, clamped to chart bounds.
 function snapRpe(rpe: number): number {
@@ -64,13 +72,13 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'hypertrophy_accumulation',
-    generate(weeks, e1RM, rpeAdjustment) {
+    generate(weeks, e1RM, rpeAdjustment, style) {
       const adjusted = e1RM * (1 - rpeAdjustment)
       return Array.from({ length: weeks }, (_, i) => {
         const sets = Math.round(lerp(3, 5, i, weeks))
         const reps = Math.round(lerp(10, 6, i, weeks))
-        const rpe  = lerp(7.0, 8.5, i, weeks)
-        return makeSlot(i + 1, sets, reps, rpe, adjusted, 'hypertrophy accumulation')
+        const rpe  = lerp(style?.startRpe ?? 7.0, style?.peakRpe ?? 8.5, i, weeks)
+        return makeSlot(i + 1, sets, adjReps(reps, style), rpe, adjusted, 'hypertrophy accumulation')
       })
     },
   },
@@ -83,16 +91,17 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'hypertrophy_repeated_effort',
-    generate(weeks, e1RM, rpeAdjustment) {
+    generate(weeks, e1RM, rpeAdjustment, style) {
       const adjusted = e1RM * (1 - rpeAdjustment)
+      const workRpe = style?.startRpe ?? 8.0
       return Array.from({ length: weeks }, (_, i) => {
         const week = i + 1
         const isDeload = week === weeks
         return makeSlot(
           week,
           isDeload ? 2 : 4,
-          isDeload ? 8 : 10,
-          isDeload ? 6.5 : 8.0,
+          adjReps(isDeload ? 8 : 10, style),
+          isDeload ? 6.5 : capPeak(workRpe, style),
           adjusted,
           isDeload ? 'repeated effort deload' : 'repeated effort',
         )
@@ -108,12 +117,12 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'strength_linear',
-    generate(weeks, e1RM, rpeAdjustment) {
+    generate(weeks, e1RM, rpeAdjustment, style) {
       const adjusted = e1RM * (1 - rpeAdjustment)
       return Array.from({ length: weeks }, (_, i) => {
         const reps = Math.round(lerp(5, 3, i, weeks))
-        const rpe  = lerp(7.5, 9.0, i, weeks)
-        return makeSlot(i + 1, 4, reps, rpe, adjusted, 'linear intensification')
+        const rpe  = lerp(style?.startRpe ?? 7.5, style?.peakRpe ?? 9.0, i, weeks)
+        return makeSlot(i + 1, 4, adjReps(reps, style), rpe, adjusted, 'linear intensification')
       })
     },
   },
@@ -126,18 +135,18 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'strength_wave',
-    generate(weeks, e1RM, rpeAdjustment) {
+    generate(weeks, e1RM, rpeAdjustment, style) {
       const adjusted = e1RM * (1 - rpeAdjustment)
       const REPS_PATTERN = [5, 4, 3]
       const RPE_BASE     = [7, 8, 9]
       return Array.from({ length: weeks }, (_, i) => {
         const waveNum = Math.min(1, Math.floor(i / 3))  // caps at wave 2
         const step    = i % 3
-        const rpe     = RPE_BASE[step] + waveNum * 0.5
+        const rpe     = capPeak(RPE_BASE[step] + waveNum * 0.5, style)
         return makeSlot(
           i + 1,
           4,
-          REPS_PATTERN[step],
+          adjReps(REPS_PATTERN[step], style),
           rpe,
           adjusted,
           `wave ${waveNum + 1} step ${step + 1}`,
@@ -154,7 +163,7 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'peaking_standard',
-    generate(weeks, e1RM, rpeAdjustment) {
+    generate(weeks, e1RM, rpeAdjustment, style) {
       const adjusted = e1RM * (1 - rpeAdjustment)
       const arc = [
         { sets: 3, reps: 3, rpe: 8.0 },
@@ -163,7 +172,7 @@ const TEMPLATES: SuggestionTemplate[] = [
         { sets: 2, reps: 1, rpe: 10.0 },
       ]
       return fitArc(arc, weeks).map((e, i) =>
-        makeSlot(i + 1, e.sets, e.reps, e.rpe, adjusted, 'standard peak'),
+        makeSlot(i + 1, e.sets, adjReps(e.reps, style), capPeak(e.rpe, style), adjusted, 'standard peak'),
       )
     },
   },
@@ -176,7 +185,7 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'peaking_extended',
-    generate(weeks, e1RM, rpeAdjustment) {
+    generate(weeks, e1RM, rpeAdjustment, style) {
       const adjusted = e1RM * (1 - rpeAdjustment)
       const arc = [
         { sets: 4, reps: 4, rpe: 7.5 },
@@ -187,7 +196,7 @@ const TEMPLATES: SuggestionTemplate[] = [
         { sets: 2, reps: 1, rpe: 10.0 },
       ]
       return fitArc(arc, weeks).map((e, i) =>
-        makeSlot(i + 1, e.sets, e.reps, e.rpe, adjusted, 'extended peak'),
+        makeSlot(i + 1, e.sets, adjReps(e.reps, style), capPeak(e.rpe, style), adjusted, 'extended peak'),
       )
     },
   },

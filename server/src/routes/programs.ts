@@ -254,7 +254,7 @@ router.post('/:id/suggest', async (req: Request, res: Response): Promise<void> =
     res.status(201).json(result)
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Suggestion failed'
-    const status = msg.includes('not found') || msg.includes('not completed') || msg.includes('Unknown template') ? 400 : 500
+    const status = msg.includes('not found') || msg.includes('completed or archived') || msg.includes('Unknown template') ? 400 : 500
     res.status(status).json({ error: msg })
   }
 })
@@ -518,6 +518,7 @@ router.post(
         status: meta.status,
         startDate: meta.start_date ?? undefined,
         weeks: preview.weeks,
+        focus: meta.focus ?? null,
       })
       res.status(201).json(result)
     } catch (err) {
