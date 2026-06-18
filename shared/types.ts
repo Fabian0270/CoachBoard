@@ -348,6 +348,72 @@ export interface CoachStyleProfile {
 
 export const STYLE_MIN_SAMPLE = 3
 
+// ---------------------------------------------------------------------------
+// Periodization pattern detection (Feature 5d) — when several of the coach's
+// fingerprints share a recognisable shape, group them into a named pattern that
+// pre-fills the suggestion wizard with the coach's own typical parameters.
+// ---------------------------------------------------------------------------
+
+export type PeriodizationPatternId =
+  | 'linear_progression'
+  | 'wave_loading'
+  | 'accumulation_intensification'
+  | 'repeated_effort'
+
+// Static metadata for each detectable pattern — shared so the client wizard can
+// label patterns and the server can map a pattern to the generic template it
+// pre-fills. `goal`/`templateId` reference the existing SUGGESTION_TEMPLATES.
+export interface PeriodizationPatternInfo {
+  id: PeriodizationPatternId
+  label: string
+  description: string   // plain-English summary of the detection rule
+  goal: SuggestionGoal
+  templateId: string
+}
+
+export const PERIODIZATION_PATTERNS: PeriodizationPatternInfo[] = [
+  {
+    id: 'linear_progression',
+    label: 'Linear Progression',
+    description: 'Rising intensity with flat volume in the 3–6 rep range',
+    goal: 'strength',
+    templateId: 'strength_linear',
+  },
+  {
+    id: 'wave_loading',
+    label: 'Wave Loading',
+    description: 'Intensity oscillates up and down across the weeks',
+    goal: 'strength',
+    templateId: 'strength_wave',
+  },
+  {
+    id: 'accumulation_intensification',
+    label: 'Accumulation → Intensification',
+    description: 'Volume tapers while intensity rises within the block',
+    goal: 'hypertrophy',
+    templateId: 'hypertrophy_accumulation',
+  },
+  {
+    id: 'repeated_effort',
+    label: 'Repeated Effort',
+    description: 'Flat intensity and volume, holding around RPE 8',
+    goal: 'hypertrophy',
+    templateId: 'hypertrophy_repeated_effort',
+  },
+]
+
+// A pattern the coach actually exhibits: the static metadata plus the typical
+// parameters derived from the matching programs, used to pre-fill the wizard.
+export interface DetectedPattern extends PeriodizationPatternInfo {
+  sampleSize: number                 // matching programs (≥ STYLE_MIN_SAMPLE)
+  preferredBlockWeeks: number
+  preferredDaysPerWeek: number
+  preferredRepRange: RepRangeBucket | null
+  typicalStartRpe: number | null
+  typicalPeakRpe: number | null
+  sourcePrograms: Array<{ programId: string; name: string }>
+}
+
 export interface SuggestProgramResult {
   draftProgramId: string
 }

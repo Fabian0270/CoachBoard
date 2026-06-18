@@ -2,9 +2,12 @@ import { getDb } from '../db.js'
 import { findProgramForExport } from './programService.js'
 import { buildWorkoutWeekMap } from './analysisService.js'
 import { STYLE_MIN_SAMPLE } from 'coachboard-shared'
+import { PERIODIZATION_PATTERNS } from 'coachboard-shared'
 import type {
   ProgramFingerprint,
   CoachStyleProfile,
+  DetectedPattern,
+  PeriodizationPatternId,
   SuggestionGoal,
   RepRangeBucket,
   RampDirection,
@@ -172,6 +175,30 @@ export function computeFingerprint(data: ExportData): ProgramFingerprint {
   }
 }
 
+/** Round to the nearest 0.5 — RPE values are only ever programmed in half-points. */
+const snapHalf = (n: number) => Math.round(n * 2) / 2
+
+/**
+ * Load the fingerprints of the coach's completed/archived programs, optionally
+ * scoped to a single training focus. Shared by the style profile and pattern
+ * detection so both see exactly the same program set.
+ */
+async function loadFingerprints(focus?: SuggestionGoal): Promise<ProgramFingerprint[]> {
+  let query = getDb()
+    .selectFrom('programs')
+    .select(['id'])
+    .where('status', 'in', ['completed', 'archived'])
+  if (focus) query = query.where('focus', '=', focus)
+  const rows = await query.execute()
+
+  const fingerprints: ProgramFingerprint[] = []
+  for (const { id } of rows) {
+    const data = await findProgramForExport(id)
+    if (data) fingerprints.push(computeFingerprint(data))
+  }
+  return fingerprints
+}
+
 /**
  * Aggregate the coach's completed/archived program fingerprints into one style
  * profile, optionally scoped to a single training focus. Below STYLE_MIN_SAMPLE
@@ -181,18 +208,7 @@ export function computeFingerprint(data: ExportData): ProgramFingerprint {
 export async function computeStyleProfile(
   opts: { focus?: SuggestionGoal } = {},
 ): Promise<CoachStyleProfile> {
-  let query = getDb()
-    .selectFrom('programs')
-    .select(['id'])
-    .where('status', 'in', ['completed', 'archived'])
-  if (opts.focus) query = query.where('focus', '=', opts.focus)
-  const rows = await query.execute()
-
-  const fingerprints: ProgramFingerprint[] = []
-  for (const { id } of rows) {
-    const data = await findProgramForExport(id)
-    if (data) fingerprints.push(computeFingerprint(data))
-  }
+  const fingerprints = await loadFingerprints(opts.focus)
 
   const sampleSize = fingerprints.length
   const usable = sampleSize >= STYLE_MIN_SAMPLE
@@ -216,7 +232,6 @@ export async function computeStyleProfile(
 
   const startRpes = fingerprints.map((f) => f.startRpe).filter((n): n is number => n !== null)
   const peakRpes = fingerprints.map((f) => f.peakRpe).filter((n): n is number => n !== null)
-  const snapHalf = (n: number) => Math.round(n * 2) / 2
 
   return {
     focus: opts.focus ?? null,
@@ -231,4 +246,73 @@ export async function computeStyleProfile(
     intensityPattern: mode(fingerprints.map((f) => f.intensityRamp)),
     sourcePrograms,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Periodization pattern detection (Feature 5d)
+// ---------------------------------------------------------------------------
+
+/** RPE within half a point of 8 — the hallmark of a repeated-effort block. */
+const aroundRpe8 = (rpe: number | null): boolean => rpe !== null && rpe >= 7.5 && rpe <= 8.5
+
+/**
+ * Classify a single fingerprint into at most one named pattern. Order matters:
+ * the more specific intensity/volume shapes are tested first so a program can't
+ * fall into two buckets at once.
+ */
+function classifyPattern(fp: ProgramFingerprint): PeriodizationPatternId | null {
+  // Rep range "3–6" spans the 1-3 and 4-6 buckets.
+  const repsLow = fp.repRangeBucket === '1-3' || fp.repRangeBucket === '4-6'
+
+  if (fp.intensityRamp === 'wave') return 'wave_loading'
+  if (fp.intensityRamp === 'rising' && fp.volumeDirection === 'tapering') return 'accumulation_intensification'
+  if (fp.intensityRamp === 'rising' && fp.volumeDirection === 'flat' && repsLow) return 'linear_progression'
+  if (
+    fp.intensityRamp === 'flat' &&
+    fp.volumeDirection === 'flat' &&
+    aroundRpe8(fp.startRpe) &&
+    aroundRpe8(fp.peakRpe)
+  ) {
+    return 'repeated_effort'
+  }
+  return null
+}
+
+/**
+ * Group the coach's completed/archived programs by the periodization pattern
+ * each one exhibits and return the patterns matched by ≥ STYLE_MIN_SAMPLE
+ * programs, each carrying the coach's own typical parameters for that pattern.
+ * Detection spans all focuses — a pattern carries its own goal/template.
+ */
+export async function detectPatterns(): Promise<DetectedPattern[]> {
+  const fingerprints = await loadFingerprints()
+
+  const byPattern = new Map<PeriodizationPatternId, ProgramFingerprint[]>()
+  for (const fp of fingerprints) {
+    const id = classifyPattern(fp)
+    if (!id) continue
+    if (!byPattern.has(id)) byPattern.set(id, [])
+    byPattern.get(id)!.push(fp)
+  }
+
+  const result: DetectedPattern[] = []
+  for (const info of PERIODIZATION_PATTERNS) {
+    const fps = byPattern.get(info.id)
+    if (!fps || fps.length < STYLE_MIN_SAMPLE) continue
+
+    const startRpes = fps.map((f) => f.startRpe).filter((n): n is number => n !== null)
+    const peakRpes = fps.map((f) => f.peakRpe).filter((n): n is number => n !== null)
+
+    result.push({
+      ...info,
+      sampleSize: fps.length,
+      preferredBlockWeeks: Math.round(median(fps.map((f) => f.blockWeeks))),
+      preferredDaysPerWeek: Math.round(median(fps.map((f) => f.daysPerWeek))),
+      preferredRepRange: mode(fps.map((f) => f.repRangeBucket)),
+      typicalStartRpe: startRpes.length ? snapHalf(median(startRpes)) : null,
+      typicalPeakRpe: peakRpes.length ? snapHalf(median(peakRpes)) : null,
+      sourcePrograms: fps.map((f) => ({ programId: f.programId, name: f.name })),
+    })
+  }
+  return result
 }

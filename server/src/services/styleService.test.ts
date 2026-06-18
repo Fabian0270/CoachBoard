@@ -4,7 +4,7 @@ import { initializeDatabase } from '../db.js'
 import { createAthlete } from './athleteService.js'
 import { findProgramForExport } from './programService.js'
 import { parseExternalFile, commitExternalProgram } from './externalImportService.js'
-import { computeFingerprint, computeStyleProfile } from './styleService.js'
+import { computeFingerprint, computeStyleProfile, detectPatterns } from './styleService.js'
 import type { SuggestionGoal } from 'coachboard-shared'
 
 type Cell = string | number | null
@@ -23,12 +23,23 @@ async function buildSheet(rows: Cell[][]): Promise<Buffer> {
 const HEADER = ['Exercise', 'Sets', 'Reps', 'Load', 'RPE']
 
 // A 4-week, 1-day strength block: 4 sets, reps 5→3, RPE 7.5→9, load rising.
+// Rising intensity + flat volume + 3–6 reps → "Linear Progression" pattern.
 const STRENGTH_GRID: Cell[][] = [
   HEADER,
   ['Week 1'], ['Day 1'], ['Squat', 4, 5, 100, 7.5],
   ['Week 2'], ['Day 1'], ['Squat', 4, 5, 105, 8],
   ['Week 3'], ['Day 1'], ['Squat', 4, 4, 110, 8.5],
   ['Week 4'], ['Day 1'], ['Squat', 4, 3, 115, 9],
+]
+
+// A 4-week, 1-day block with flat load, flat sets and RPE 8 throughout →
+// "Repeated Effort" pattern.
+const REPEATED_EFFORT_GRID: Cell[][] = [
+  HEADER,
+  ['Week 1'], ['Day 1'], ['Squat', 4, 8, 100, 8],
+  ['Week 2'], ['Day 1'], ['Squat', 4, 8, 100, 8],
+  ['Week 3'], ['Day 1'], ['Squat', 4, 8, 100, 8],
+  ['Week 4'], ['Day 1'], ['Squat', 4, 8, 100, 8],
 ]
 
 let athleteId: string
@@ -92,5 +103,38 @@ describe('computeStyleProfile', () => {
   it('scopes by focus — peaking is unaffected by strength imports', async () => {
     const profile = await computeStyleProfile({ focus: 'peaking' })
     expect(profile.sampleSize).toBe(0)
+  })
+})
+
+describe('detectPatterns', () => {
+  it('names a pattern shared by ≥3 similar programs, with pre-fill parameters', async () => {
+    // The three strength programs committed above all share the linear shape.
+    const patterns = await detectPatterns()
+    const linear = patterns.find((p) => p.id === 'linear_progression')
+    expect(linear).toBeDefined()
+    expect(linear!.sampleSize).toBeGreaterThanOrEqual(3)
+    expect(linear!.templateId).toBe('strength_linear')
+    expect(linear!.goal).toBe('strength')
+    expect(linear!.preferredBlockWeeks).toBe(4)
+    expect(linear!.preferredDaysPerWeek).toBe(1)
+    expect(linear!.typicalStartRpe).toBe(7.5)
+    expect(linear!.typicalPeakRpe).toBe(9)
+    expect(linear!.sourcePrograms.length).toBe(linear!.sampleSize)
+  })
+
+  it('does not surface a pattern below the minimum sample size', async () => {
+    // Only two repeated-effort programs → not yet a detected pattern.
+    await commit(REPEATED_EFFORT_GRID, 'hypertrophy')
+    await commit(REPEATED_EFFORT_GRID, 'hypertrophy')
+    let patterns = await detectPatterns()
+    expect(patterns.find((p) => p.id === 'repeated_effort')).toBeUndefined()
+
+    // A third one crosses the threshold.
+    await commit(REPEATED_EFFORT_GRID, 'hypertrophy')
+    patterns = await detectPatterns()
+    const repeated = patterns.find((p) => p.id === 'repeated_effort')
+    expect(repeated).toBeDefined()
+    expect(repeated!.sampleSize).toBe(3)
+    expect(repeated!.templateId).toBe('hypertrophy_repeated_effort')
   })
 })
