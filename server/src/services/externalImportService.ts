@@ -885,8 +885,16 @@ function detectWeekGrid(
   for (let r = banner.row; r <= limit; r++) {
     const cells = readRow(r)
     const atBanner = tokenize(cells[banner.weekCols[0] - 1] ?? '')
-    const leadTokens = tokenize(cells[blockStarts[0] - 1] ?? '')
-    if (leadTokens.some((t) => ALIASES.exercise.includes(t))) return null
+    // A dedicated exercise-name column (e.g. "Discipline") at OR to the left of
+    // the lead column is the signature of the horizontal "shared name column"
+    // layout, which parseHorizontal already handles. A real week-grid has no
+    // separate name column — its lead column holds the movement names under a
+    // weekday header — so bail out and let the horizontal parser run instead.
+    let hasNameColumn = false
+    for (let c = 0; c < blockStarts[0]; c++) {
+      if (tokenize(cells[c] ?? '').some((t) => ALIASES.exercise.includes(t))) { hasNameColumn = true; break }
+    }
+    if (hasNameColumn) return null
     const block = cells.slice(blockStarts[0] - 1, blockStarts[0] - 1 + blockWidth).join(' ').toLowerCase()
     if (atBanner.some((t) => t === 'set' || t === 'sets') && /\brep/.test(block)) {
       return { blockStarts, headerRow: r }
