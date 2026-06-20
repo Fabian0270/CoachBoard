@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import type { PaymentAlert } from 'coachboard-shared'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { Users, Dumbbell, TrendingUp, Plus } from 'lucide-react'
+import { Badge } from '../components/ui/badge'
+import { Users, Dumbbell, TrendingUp, Plus, AlertTriangle } from 'lucide-react'
 import MyStyleCard from '../components/MyStyleCard'
+import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
 
 interface Stats {
   athletes: number
@@ -13,6 +16,7 @@ interface Stats {
 
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats>({ athletes: 0, programs: 0, progressRecords: 0 })
+  const [paymentAlerts, setPaymentAlerts] = useState<PaymentAlert[]>([])
 
   useEffect(() => {
     Promise.all([
@@ -26,6 +30,11 @@ export default function Dashboard() {
         progressRecords: Array.isArray(progress) ? progress.length : 0,
       })
     }).catch(() => {})
+
+    fetch('/api/payments/alerts')
+      .then((r) => r.json())
+      .then((data) => setPaymentAlerts(Array.isArray(data) ? data : []))
+      .catch(() => {})
   }, [])
 
   return (
@@ -36,6 +45,33 @@ export default function Dashboard() {
           <Button><Plus className="h-4 w-4 mr-2" />Add Athlete</Button>
         </Link>
       </div>
+      {paymentAlerts.length > 0 && (
+        <Card className="border-destructive/40">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              Payment reminders ({paymentAlerts.length})
+            </CardTitle>
+            <Link to="/payments" className="text-xs text-muted-foreground underline">View all</Link>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            {paymentAlerts.map((a) => {
+              const meta = PAYMENT_STATUS_META[a.status]
+              return (
+                <div key={a.payment.id} className="flex items-center gap-2 flex-wrap text-sm">
+                  <Link to={`/athletes/${a.athleteId}`} className="font-medium hover:underline">{a.athleteName}</Link>
+                  <Badge variant={meta.variant}>{meta.label}</Badge>
+                  <span className="text-muted-foreground">
+                    {formatAmount(a.payment.amount, a.payment.currency)} · due {a.payment.due_date}
+                    {a.status === 'expiring_soon' && a.payment.period_end && <> · ends {a.payment.period_end}</>}
+                  </span>
+                </div>
+              )
+            })}
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">

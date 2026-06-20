@@ -39,7 +39,7 @@ beforeAll(async () => {
   // Week 4 (last week) — 3-day split: Mon squat, Wed bench, Fri deadlift
   const days = [
     { date: '2026-01-27', lift: 'Squat',      loadUsed: '145', rpe: '8', accessories: ['Leg Press', 'Leg Curl'] },
-    { date: '2026-01-29', lift: 'Bench Press', loadUsed: '95',  rpe: '8', accessories: ['Tricep Pushdown'] },
+    { date: '2026-01-29', lift: 'Bench Press', loadUsed: '95',  rpe: '8', accessories: ['Comp Bench', 'Tricep Pushdown'] },
     { date: '2026-01-31', lift: 'Deadlift',   loadUsed: '180', rpe: '8', accessories: ['RDL'] },
   ]
 
@@ -57,13 +57,16 @@ beforeAll(async () => {
       rpe: day.rpe,
       order_index: 0,
     })
-    // Accessories (no results)
+    // Accessories — seeded with a stale weight + RPE so we can assert they are
+    // stripped (not carried verbatim) in the generated draft.
     for (let i = 0; i < day.accessories.length; i++) {
       await createExercise({
         workout_id: workout.id,
         name: day.accessories[i],
         sets: '3',
         reps: '10',
+        weight: 50,
+        intensity: 'RPE 7',
         order_index: i + 1,
       })
     }
@@ -134,7 +137,7 @@ describe('generateDraftProgram', () => {
     mainLifts.forEach((e) => expect(e.suggestion_note).not.toBeNull())
   })
 
-  it('accessory exercises have load_used null and suggestion_note null', async () => {
+  it('carried accessories keep their sets×reps scaffold but strip stale load + RPE', async () => {
     const result = await generateDraftProgram(completedProgramId, {
       athleteId,
       templateId: 'strength_linear',
@@ -153,10 +156,39 @@ describe('generateDraftProgram', () => {
     const accessories = exercises.filter(
       (e) => !['Squat', 'Bench Press', 'Deadlift'].includes(e.name),
     )
+    expect(accessories.length).toBeGreaterThan(0)
     accessories.forEach((e) => {
+      // Scaffold preserved...
+      expect(e.sets).toBe('3')
+      expect(e.reps).toBe('10')
+      // ...stale numbers stripped.
+      expect(e.weight).toBeNull()
+      expect(e.intensity).toBeNull()
       expect(e.load_used).toBeNull()
       expect(e.suggestion_note).toBeNull()
     })
+  })
+
+  it('folds a competition/variation lift into the main lift instead of duplicating it', async () => {
+    const result = await generateDraftProgram(completedProgramId, {
+      athleteId,
+      templateId: 'strength_linear',
+      weeks: 4,
+      trainingDaysPerWeek: 3,
+      startDate: '2026-02-27',
+    })
+
+    const exercises = await getDb()
+      .selectFrom('exercises')
+      .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+      .select(['exercises.name'])
+      .where('workouts.program_id', '=', result.draftProgramId)
+      .execute()
+
+    // "Comp Bench" was seeded as a second bench movement on the bench day; it must
+    // fold into the generated "Bench Press", not appear as its own line.
+    expect(exercises.some((e) => e.name === 'Comp Bench')).toBe(false)
+    expect(exercises.some((e) => e.name === 'Bench Press')).toBe(true)
   })
 
   it('main lift intensity field uses RPE format', async () => {
@@ -307,6 +339,7 @@ describe('generateDraftProgram', () => {
       weeks: 6,
       trainingDaysPerWeek: 4,
       startDate: '2026-03-30',
+      layout: 'split',
     })
 
     const workouts = await getDb()
@@ -316,5 +349,184 @@ describe('generateDraftProgram', () => {
       .execute()
 
     expect(workouts).toHaveLength(6 * 4)
+  })
+
+  // A source whose last week is a single full-body day: Squat + Bench + Deadlift
+  // together, each followed by its own accessory.
+  async function seedSbdProgram(name: string): Promise<string> {
+    const sbd = await createProgram({ athlete_id: athleteId, name, start_date: '2025-06-02', status: 'active' })
+    const w = await createWorkout({ program_id: sbd.id, name: '2025-06-02', scheduled_date: '2025-06-02' }) // Monday
+    await createExercise({ workout_id: w.id, name: 'Squat', sets: '4', reps: '5', weight: 150, intensity: 'RPE 8', load_used: '150', rpe: '8', order_index: 0 })
+    await createExercise({ workout_id: w.id, name: 'Leg Curl', sets: '3', reps: '10', weight: 40, intensity: 'RPE 7', order_index: 1 })
+    await createExercise({ workout_id: w.id, name: 'Bench Press', sets: '4', reps: '5', weight: 100, intensity: 'RPE 8', load_used: '100', rpe: '8', order_index: 2 })
+    await createExercise({ workout_id: w.id, name: 'Tricep Pushdown', sets: '3', reps: '12', weight: 30, intensity: 'RPE 7', order_index: 3 })
+    await createExercise({ workout_id: w.id, name: 'Deadlift', sets: '4', reps: '5', weight: 200, intensity: 'RPE 8', load_used: '200', rpe: '8', order_index: 4 })
+    await createExercise({ workout_id: w.id, name: 'RDL', sets: '3', reps: '8', weight: 120, intensity: 'RPE 7', order_index: 5 })
+    await updateProgram(sbd.id, { status: 'completed' })
+    return sbd.id
+  }
+
+  it('mirrors a full-body SBD source day, grouping all three lifts with their accessories', async () => {
+    const sbdId = await seedSbdProgram('SBD Block')
+
+    const result = await generateDraftProgram(sbdId, {
+      athleteId,
+      templateId: 'strength_linear',
+      weeks: 4,
+      trainingDaysPerWeek: 3,
+      startDate: '2026-05-04', // Monday
+      // no layout → defaults to 'source' (mirror)
+    })
+
+    const workouts = await getDb()
+      .selectFrom('workouts')
+      .selectAll()
+      .where('program_id', '=', result.draftProgramId)
+      .orderBy('scheduled_date')
+      .execute()
+
+    // One full-body day per week → 4 workouts (frequency preserved), not a 3-day split.
+    expect(workouts).toHaveLength(4)
+
+    const rows = await getDb()
+      .selectFrom('exercises')
+      .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+      .select(['exercises.workout_id', 'exercises.name', 'exercises.order_index'])
+      .where('workouts.program_id', '=', result.draftProgramId)
+      .execute()
+
+    // The single day carries all three lifts, each immediately followed by its own
+    // accessory — proving both the SBD grouping and correct accessory attribution.
+    const ordered = rows
+      .filter((r) => r.workout_id === workouts[0].id)
+      .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+      .map((r) => r.name)
+    expect(ordered).toEqual(['Squat', 'Leg Curl', 'Bench Press', 'Tricep Pushdown', 'Deadlift', 'RDL'])
+  })
+
+  // A completed source whose squat day has a main lift but NO accessories — the
+  // gap that smart-accessory enrichment is allowed to fill.
+  async function seedNoAccessoryProgram(name: string): Promise<string> {
+    const p = await createProgram({ athlete_id: athleteId, name, start_date: '2025-07-07', status: 'active' })
+    const w = await createWorkout({ program_id: p.id, name: '2025-07-07', scheduled_date: '2025-07-07' }) // Monday
+    await createExercise({ workout_id: w.id, name: 'Squat', sets: '4', reps: '5', weight: 150, intensity: 'RPE 8', load_used: '150', rpe: '8', order_index: 0 })
+    await updateProgram(p.id, { status: 'completed' })
+    return p.id
+  }
+
+  it('does NOT add suggested accessories by default (enrichAccessories off)', async () => {
+    const id = await seedNoAccessoryProgram('No-Accessory Block (default)')
+
+    const result = await generateDraftProgram(id, {
+      athleteId,
+      templateId: 'strength_linear',
+      weeks: 2,
+      trainingDaysPerWeek: 3,
+      startDate: '2026-06-01', // Monday
+    })
+
+    const rows = await getDb()
+      .selectFrom('exercises')
+      .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+      .select(['exercises.name', 'exercises.suggestion_note'])
+      .where('workouts.program_id', '=', result.draftProgramId)
+      .execute()
+
+    // Only the generated Squat main lift — no engine-suggested accessories.
+    expect(rows.every((r) => r.name === 'Squat')).toBe(true)
+  })
+
+  it('fills empty main-lift days with tagged suggestions when enrichAccessories is on', async () => {
+    const id = await seedNoAccessoryProgram('No-Accessory Block (enriched)')
+
+    const result = await generateDraftProgram(id, {
+      athleteId,
+      templateId: 'strength_linear',
+      weeks: 2,
+      trainingDaysPerWeek: 3,
+      startDate: '2026-06-15', // Monday
+      enrichAccessories: true,
+    })
+
+    const rows = await getDb()
+      .selectFrom('exercises')
+      .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+      .selectAll('exercises')
+      .where('workouts.program_id', '=', result.draftProgramId)
+      .execute()
+
+    const suggested = rows.filter((r) => r.name !== 'Squat')
+    // 3 suggestions per squat day × 2 weeks = 6.
+    expect(suggested).toHaveLength(6)
+    suggested.forEach((r) => {
+      expect(r.suggestion_note).toContain('Engine-suggested')
+      expect(r.weight).toBeNull()       // no prescribed load on a suggestion
+      expect(r.intensity).toBeNull()
+      expect(r.sets).toBe('3')
+      expect(r.reps).toMatch(/^\d+-\d+$/) // rep range from the knowledge base
+    })
+  })
+
+  it('never overrides accessories the coach already has, even with enrichAccessories on', async () => {
+    // completedProgramId's squat day already carries Leg Press + Leg Curl.
+    const result = await generateDraftProgram(completedProgramId, {
+      athleteId,
+      templateId: 'strength_linear',
+      weeks: 2,
+      trainingDaysPerWeek: 3,
+      startDate: '2026-06-22', // Monday
+      enrichAccessories: true,
+    })
+
+    const rows = await getDb()
+      .selectFrom('exercises')
+      .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+      .selectAll('exercises')
+      .where('workouts.program_id', '=', result.draftProgramId)
+      .execute()
+
+    // The coach's carried-over accessories are present and untagged.
+    const legPress = rows.filter((r) => r.name === 'Leg Press')
+    expect(legPress.length).toBeGreaterThan(0)
+    legPress.forEach((r) => expect(r.suggestion_note).toBeNull())
+    // And no engine suggestion was injected onto a day that already had accessories.
+    expect(rows.some((r) => (r.suggestion_note ?? '').includes('Engine-suggested'))).toBe(false)
+  })
+
+  it('splits an SBD source into one lift per day when layout = "split"', async () => {
+    const sbdId = await seedSbdProgram('SBD Block (split override)')
+
+    const result = await generateDraftProgram(sbdId, {
+      athleteId,
+      templateId: 'strength_linear',
+      weeks: 4,
+      trainingDaysPerWeek: 3,
+      startDate: '2026-05-18', // Monday
+      layout: 'split',
+    })
+
+    const workouts = await getDb()
+      .selectFrom('workouts')
+      .selectAll()
+      .where('program_id', '=', result.draftProgramId)
+      .execute()
+
+    // 4 weeks × 3 separate days.
+    expect(workouts).toHaveLength(12)
+
+    const rows = await getDb()
+      .selectFrom('exercises')
+      .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+      .select(['exercises.workout_id', 'exercises.name'])
+      .where('workouts.program_id', '=', result.draftProgramId)
+      .execute()
+
+    // Each workout holds exactly one main lift.
+    workouts.forEach((wo) => {
+      const mains = rows.filter(
+        (r) => r.workout_id === wo.id && ['Squat', 'Bench Press', 'Deadlift'].includes(r.name),
+      )
+      expect(mains).toHaveLength(1)
+    })
   })
 })

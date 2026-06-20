@@ -6,6 +6,8 @@
   "exports": {
     ".": "./types.ts",
     "./rpe": "./rpe.ts",
-    "./exportLayout": "./exportLayout.ts"
+    "./exportLayout": "./exportLayout.ts",
+    "./knowledge": "./knowledge.ts",
+    "./payments": "./payments.ts"
   }
 }

@@ -78,6 +78,21 @@ export interface AthleteMaxTable {
   notes: string | null
 }
 
+export interface PaymentTable {
+  id: string
+  athlete_id: string
+  amount: number
+  currency: string
+  period_start: string | null
+  period_end: string | null
+  due_date: string
+  paid: number
+  paid_at: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface DB {
   athletes: AthleteTable
   programs: ProgramTable
@@ -85,6 +100,7 @@ export interface DB {
   exercises: ExerciseTable
   progress_records: ProgressRecordTable
   athlete_maxes: AthleteMaxTable
+  payments: PaymentTable
 }
 
 let _db: Kysely<DB> | null = null
@@ -218,4 +234,24 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   `.execute(_db)
 
   await sql`CREATE INDEX IF NOT EXISTS idx_athlete_maxes_athlete_id ON athlete_maxes(athlete_id)`.execute(_db)
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY,
+      athlete_id TEXT NOT NULL,
+      amount REAL NOT NULL,
+      currency TEXT NOT NULL,
+      period_start TEXT,
+      period_end TEXT,
+      due_date TEXT NOT NULL,
+      paid INTEGER NOT NULL DEFAULT 0,
+      paid_at TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+    )
+  `.execute(_db)
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_payments_athlete_id ON payments(athlete_id)`.execute(_db)
 }

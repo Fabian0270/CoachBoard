@@ -8,6 +8,7 @@ import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import AthleteMaxes from '../components/AthleteMaxes'
+import PaymentsSection from '../components/PaymentsSection'
 import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles } from 'lucide-react'
 import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
 
@@ -129,6 +130,7 @@ export default function AthleteDetail() {
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="programs">Programs ({programs.length})</TabsTrigger>
           <TabsTrigger value="maxes">Maxes &amp; RPE</TabsTrigger>
+          <TabsTrigger value="payments">Payments</TabsTrigger>
         </TabsList>
         <TabsContent value="info">
           <Card>
@@ -221,6 +223,9 @@ export default function AthleteDetail() {
         </TabsContent>
         <TabsContent value="maxes">
           {id && <AthleteMaxes athleteId={id} />}
+        </TabsContent>
+        <TabsContent value="payments">
+          {id && <PaymentsSection athleteId={id} />}
         </TabsContent>
       </Tabs>
       {id && (

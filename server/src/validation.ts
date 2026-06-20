@@ -142,6 +142,8 @@ export const schemas = {
     weeks: z.number().int().min(1).max(52),
     trainingDaysPerWeek: z.number().int().min(3).max(5),
     startDate: isoDate,
+    layout: z.enum(['source', 'split']).optional(),
+    enrichAccessories: z.boolean().optional(),
     // Optional style nudges from the coach's profile (Feature 5c).
     style: z.object({
       startRpe: z.number().min(5).max(10).optional(),
@@ -176,6 +178,36 @@ export const schemas = {
       ),
       notes: optionalString(2000),
     }),
+  },
+
+  payment: {
+    create: z.object({
+      athlete_id: z.uuid(),
+      amount: z.number().positive().finite(),
+      currency: z.string().min(1).max(10),
+      period_start: optionalIsoDate,
+      period_end: optionalIsoDate,
+      due_date: isoDate,
+      paid: z.boolean().optional(),
+      paid_at: optionalIsoDate,
+      notes: optionalString(2000),
+    }).refine(
+      (d) => !d.period_start || !d.period_end || d.period_start <= d.period_end,
+      { message: 'period_end must be on or after period_start', path: ['period_end'] },
+    ),
+    update: z.object({
+      amount: z.number().positive().finite().optional(),
+      currency: z.string().min(1).max(10).optional(),
+      period_start: optionalIsoDate,
+      period_end: optionalIsoDate,
+      due_date: isoDate.optional(),
+      paid: z.boolean().optional(),
+      paid_at: optionalIsoDate,
+      notes: optionalString(2000),
+    }).refine(
+      (d) => !d.period_start || !d.period_end || d.period_start <= d.period_end,
+      { message: 'period_end must be on or after period_start', path: ['period_end'] },
+    ),
   },
 }
 
