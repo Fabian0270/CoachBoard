@@ -5,6 +5,7 @@ import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { Loader2, ChevronLeft, Sparkles } from 'lucide-react'
 import { SUGGESTION_TEMPLATES } from 'coachboard-shared'
+import { knowledgeDefaultsForGoal } from 'coachboard-shared/knowledge'
 import type { SuggestionGoal, SuggestionTemplateInfo, CoachStyleProfile, SuggestionStyleAdjust, RepRangeBucket, DetectedPattern } from 'coachboard-shared'
 
 interface SelectableAthlete { id: string; name: string }
@@ -72,6 +73,14 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
   const [goal, setGoal] = useState<SuggestionGoal | null>(null)
   const [template, setTemplate] = useState<SuggestionTemplateInfo | null>(null)
   const [trainingDays, setTrainingDays] = useState<3 | 4 | 5>(4)
+  // 'source' mirrors the source program's weekly structure (default); 'split' uses
+  // the generic 3/4/5 one-lift-per-day layout. `showSplitPicker` reveals the
+  // day-count buttons once the coach opts into a standard split.
+  const [layout, setLayout] = useState<'source' | 'split'>('source')
+  const [showSplitPicker, setShowSplitPicker] = useState(false)
+  // Opt-in: suggest weak-point accessories for main lifts that have none. Off by
+  // default so the draft only ever mirrors the coach's own accessories.
+  const [enrichAccessories, setEnrichAccessories] = useState(false)
   const [weeks, setWeeks] = useState(4)
   const [startDate, setStartDate] = useState(todayIso)
   const [loading, setLoading] = useState(false)
@@ -107,7 +116,14 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
         setStyleProfile(data)
         if (selectedPattern) return
         setUseStyle(data.usable)
-        if (data.usable && data.preferredDaysPerWeek) setTrainingDays(clampDays(data.preferredDaysPerWeek))
+        if (data.usable && data.preferredDaysPerWeek) {
+          setTrainingDays(clampDays(data.preferredDaysPerWeek))
+        } else if (!data.usable) {
+          // No learned style yet → fall back to the knowledge base's typical
+          // days-per-week for this goal. Silent default; the coach still sees
+          // and can change it.
+          setTrainingDays(clampDays(knowledgeDefaultsForGoal(goal).daysPerWeek))
+        }
       })
       .catch(() => { if (!cancelled) setStyleProfile(null) })
     return () => { cancelled = true }
@@ -150,6 +166,9 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
     setGoal(null)
     setTemplate(null)
     setTrainingDays(4)
+    setLayout('source')
+    setShowSplitPicker(false)
+    setEnrichAccessories(false)
     setWeeks(4)
     setStartDate(todayIso())
     setLoading(false)
@@ -219,15 +238,32 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
 
   function pickVariant(t: SuggestionTemplateInfo) {
     setTemplate(t)
-    setWeeks(t.typicalWeeks[0])
+    // Default block length to the knowledge base's typical for this goal (clamped
+    // into the variant's sane range), unless the style profile later overrides it.
+    const kd = goal ? knowledgeDefaultsForGoal(goal).weeks : t.typicalWeeks[0]
+    setWeeks(Math.min(t.typicalWeeks[1], Math.max(t.typicalWeeks[0], kd)))
+    setShowSplitPicker(false)
     setStep('days')
   }
 
-  function pickDays(d: 3 | 4 | 5) {
-    setTrainingDays(d)
+  // Default the block length to the coach's usual when their style is in play —
+  // shared by both the mirror and the standard-split paths.
+  function applyStyleWeeks() {
     if (useStyle && styleProfile?.usable && styleProfile.preferredBlockWeeks) {
       setWeeks(styleProfile.preferredBlockWeeks)
     }
+  }
+
+  function chooseMirror() {
+    setLayout('source')
+    applyStyleWeeks()
+    setStep('options')
+  }
+
+  function pickDays(d: 3 | 4 | 5) {
+    setLayout('split')
+    setTrainingDays(d)
+    applyStyleWeeks()
     setStep('options')
   }
 
@@ -275,6 +311,8 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
           weeks,
           trainingDaysPerWeek: trainingDays,
           startDate,
+          layout,
+          enrichAccessories,
           ...(style ? { style } : {}),
         }),
       })
@@ -427,20 +465,53 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
 
         {step === 'days' && (
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground mb-1">How many training days per week?</p>
-            <div className="flex gap-2">
-              {TRAINING_DAY_OPTIONS.map((d) => (
+            {!showSplitPicker ? (
+              <>
+                <p className="text-sm text-muted-foreground mb-1">How should the new block's weekly structure be set?</p>
                 <button
-                  key={d}
-                  onClick={() => pickDays(d)}
-                  className="flex-1 rounded-lg border py-4 text-center font-semibold text-lg hover:bg-accent transition-colors"
+                  onClick={chooseMirror}
+                  className="w-full text-left rounded-lg border border-primary/30 bg-primary/5 p-3 hover:bg-primary/10 transition-colors"
                 >
-                  {d}
-                  <div className="text-xs font-normal text-muted-foreground mt-0.5">days/week</div>
+                  <div className="font-medium">Match the source program's structure</div>
+                  <div className="text-sm text-muted-foreground mt-0.5">
+                    Keeps this athlete's training days and any full-body (SBD) days, with each lift's accessories.
+                  </div>
                 </button>
-              ))}
-            </div>
-            <BackButton onClick={goBack} />
+                <button
+                  onClick={() => setShowSplitPicker(true)}
+                  className="w-full text-left rounded-lg border p-3 hover:bg-accent transition-colors"
+                >
+                  <div className="font-medium">Use a standard split</div>
+                  <div className="text-sm text-muted-foreground mt-0.5">
+                    Lay the lifts out one per day across 3, 4 or 5 training days.
+                  </div>
+                </button>
+                <BackButton onClick={goBack} />
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground mb-1">How many training days per week?</p>
+                <div className="flex gap-2">
+                  {TRAINING_DAY_OPTIONS.map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => pickDays(d)}
+                      className="flex-1 rounded-lg border py-4 text-center font-semibold text-lg hover:bg-accent transition-colors"
+                    >
+                      {d}
+                      <div className="text-xs font-normal text-muted-foreground mt-0.5">days/week</div>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setShowSplitPicker(false)}
+                  className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors mt-1"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  Back to structure options
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -536,6 +607,22 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
                 />
               </div>
             </div>
+
+            <label className="flex items-start gap-2 rounded-lg border p-3 cursor-pointer hover:bg-accent/50 transition-colors">
+              <input
+                type="checkbox"
+                checked={enrichAccessories}
+                onChange={(e) => setEnrichAccessories(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium text-sm">Suggest accessories for empty lifts</span>
+                <span className="block text-xs text-muted-foreground mt-0.5">
+                  Only for main lifts with no accessories in the source program. Suggestions are
+                  tagged so you can edit or remove them; your own accessories are never changed.
+                </span>
+              </span>
+            </label>
 
             {error && <p className="text-sm text-destructive">{error}</p>}
 

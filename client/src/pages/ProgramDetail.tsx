@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useProgramData } from '../hooks/useProgramData'
 import { useProgramCalendar, useWorkoutByDate } from '../hooks/useProgramCalendar'
@@ -11,6 +12,7 @@ import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { ArrowLeft, Trash2, CalendarRange, Plus, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, Copy, GripVertical, PlayCircle } from 'lucide-react'
 import ImportDialog from '../components/ImportDialog'
+import { EXERCISE_NAMES } from 'coachboard-shared/exercises'
 import type { SuggestionGoal } from 'coachboard-shared'
 import {
   type ToggleableColumn,
@@ -556,6 +558,12 @@ function ExerciseEditor({ workout, enabledColumns, programId, sameDayDates, onAd
   // placeholder rows appear/disappear, which would cause twitching.
   const tableWrapperRef = useRef<HTMLDivElement>(null)
   const [dragLockedHeight, setDragLockedHeight] = useState<number | null>(null)
+  // The autocomplete menu portals into the dialog content (not document.body),
+  // so Radix keeps it interactive and it escapes the table's scroll clipping.
+  const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    setPortalContainer((tableWrapperRef.current?.closest('[role="dialog"]') as HTMLElement) ?? null)
+  }, [])
 
   const startGroupDrag = (exerciseId: string, groupId: string | null) => (e: React.DragEvent) => {
     e.dataTransfer.effectAllowed = 'move'
@@ -791,6 +799,7 @@ function ExerciseEditor({ workout, enabledColumns, programId, sameDayDates, onAd
                           onDragEnd={stopDrag}
                           onDragOverRow={dragging ? handleDragOverRow(ex, group) : undefined}
                           onDropRow={dragging ? executeDrop : undefined}
+                          portalContainer={portalContainer}
                         />
                       </Fragment>
                     )
@@ -896,15 +905,51 @@ interface ExerciseRowProps {
   onDragEnd?: () => void
   onDragOverRow?: (e: React.DragEvent) => void
   onDropRow?: () => void
+  portalContainer?: HTMLElement | null
 }
 
-function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, isSubSet, isInGroup, isDragging, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow }: ExerciseRowProps) {
+function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, isSubSet, isInGroup, isDragging, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
   const initDraft = () => {
     const d: Record<string, string> = {}
     for (const c of columns) d[c.key] = exerciseValue(exercise, c.key)
     return d
   }
   const [draft, setDraft] = useState<Record<string, string>>(initDraft)
+  // Exercise-name autocomplete (exercise directory).
+  const [nameFocused, setNameFocused] = useState(false)
+  const nameInputRef = useRef<HTMLTextAreaElement>(null)
+  // Anchor rect for the suggestion menu, which renders in a portal so it
+  // escapes the day dialog's scroll/overflow clipping.
+  const [menuRect, setMenuRect] = useState<{ left: number; top: number; width: number } | null>(null)
+  const nameQuery = (draft.name ?? '').trim().toLowerCase()
+  const nameMatches = nameFocused && nameQuery.length >= 1
+    ? EXERCISE_NAMES.filter(
+        (n) => n.toLowerCase().includes(nameQuery) && n.toLowerCase() !== nameQuery,
+      ).slice(0, 8)
+    : []
+
+  useEffect(() => {
+    if (nameMatches.length === 0 || !portalContainer) {
+      setMenuRect(null)
+      return
+    }
+    // Position the menu absolutely within the dialog content (the portal
+    // target), so it tracks the field as the table scrolls underneath.
+    const updateRect = () => {
+      const el = nameInputRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const c = portalContainer.getBoundingClientRect()
+      setMenuRect({ left: r.left - c.left, top: r.bottom - c.top, width: Math.max(r.width, 224) })
+    }
+    updateRect()
+    window.addEventListener('scroll', updateRect, true)
+    window.addEventListener('resize', updateRect)
+    return () => {
+      window.removeEventListener('scroll', updateRect, true)
+      window.removeEventListener('resize', updateRect)
+    }
+  }, [nameMatches.length, portalContainer])
 
   useEffect(() => {
     setDraft(initDraft())
@@ -961,16 +1006,45 @@ function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, isSubSet, 
                   >
                     <GripVertical className="h-3.5 w-3.5" />
                   </span>
-                  <textarea
-                    rows={1}
-                    value={draft[c.key] ?? ''}
-                    onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
-                    onBlur={() => commit(c)}
-                    placeholder={c.placeholder}
-                    style={textareaStyle}
-                    title={exercise.suggestion_note ?? undefined}
-                    className="flex-1 min-w-0 bg-transparent px-1 py-1.5 text-sm outline-none focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary resize-none block leading-snug"
-                  />
+                  <div className="relative flex-1 min-w-0">
+                    <textarea
+                      ref={nameInputRef}
+                      rows={1}
+                      value={draft[c.key] ?? ''}
+                      onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
+                      onFocus={() => setNameFocused(true)}
+                      onBlur={() => { commit(c); setNameFocused(false) }}
+                      placeholder={c.placeholder}
+                      style={textareaStyle}
+                      title={exercise.suggestion_note ?? undefined}
+                      className="w-full bg-transparent px-1 py-1.5 text-sm outline-none focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary resize-none block leading-snug"
+                    />
+                    {nameMatches.length > 0 && menuRect && portalContainer && createPortal(
+                      <ul
+                        style={{ position: 'absolute', left: menuRect.left, top: menuRect.top, width: menuRect.width }}
+                        className="z-[60] mt-0.5 max-h-56 overflow-auto rounded-md border bg-card shadow-lg py-1 text-sm"
+                      >
+                        {nameMatches.map((name) => (
+                          <li key={name}>
+                            <button
+                              type="button"
+                              // mousedown fires before the textarea blur, so the pick lands.
+                              onMouseDown={(e) => {
+                                e.preventDefault()
+                                setDraft((d) => ({ ...d, name }))
+                                if (name !== exercise.name) onSave({ name })
+                                setNameFocused(false)
+                              }}
+                              className="block w-full px-3 py-1.5 text-left hover:bg-accent"
+                            >
+                              {name}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>,
+                      portalContainer,
+                    )}
+                  </div>
                 </div>
               )}
             </td>,

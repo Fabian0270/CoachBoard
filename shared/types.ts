@@ -83,6 +83,67 @@ export interface AthleteMax {
 }
 
 // ---------------------------------------------------------------------------
+// Payment tracker types
+// ---------------------------------------------------------------------------
+// One record = one billing period (e.g. a month of coaching) for an athlete.
+// Each period is captured by a single date, `paid_through`: the date coverage
+// runs through and by which the next payment is due. Recurring fees are a
+// sequence of periods; "renew" clones the next one forward a month. Status
+// (paid/overdue/due soon/expiring) is derived, never stored — see payments.ts.
+
+// Derived payment state (computed by shared/payments.ts, never stored):
+//  - paid          : settled, paid_through still comfortably ahead
+//  - expiring_soon : paid but coverage runs out within the reminder window
+//  - overdue       : unpaid and paid_through has passed
+//  - due_soon      : unpaid and paid_through within the reminder window
+//  - upcoming      : unpaid, paid_through further out
+export type PaymentStatus = 'paid' | 'expiring_soon' | 'overdue' | 'due_soon' | 'upcoming'
+
+export interface Payment {
+  id: string
+  athlete_id: string
+  amount: number
+  currency: string         // per-record (configurable), e.g. 'SEK', 'USD'
+  start_date: string | null // ISO date — coverage window start (optional)
+  paid_through: string     // ISO date — coverage end / next payment due by this date
+  paid: number             // 0/1
+  paid_at: string | null   // ISO date when marked paid
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CreatePaymentBody {
+  athlete_id: string
+  amount: number
+  currency: string
+  start_date?: string | null
+  paid_through: string
+  paid?: boolean
+  paid_at?: string | null
+  notes?: string | null
+}
+
+export interface UpdatePaymentBody {
+  amount?: number
+  currency?: string
+  start_date?: string | null
+  paid_through?: string
+  paid?: boolean
+  paid_at?: string | null
+  notes?: string | null
+}
+
+// Per-athlete dashboard reminder: the athlete's current (latest) payment plus
+// its derived status, included only when it needs the coach's attention.
+export interface PaymentAlert {
+  athleteId: string
+  athleteName: string
+  payment: Payment
+  status: PaymentStatus
+}
+
+// ---------------------------------------------------------------------------
 // Excel import types
 // ---------------------------------------------------------------------------
 
@@ -296,11 +357,22 @@ export interface SuggestProgramBody {
   athleteId: string
   templateId: string
   weeks: number
-  trainingDaysPerWeek: number  // 3–5, chosen in the wizard
+  trainingDaysPerWeek: number  // 3–5, used only when layout === 'split'
   startDate: string            // ISO date — first day of new block
+  // Day structure for the new block. 'source' (default) mirrors the source
+  // program's last-week layout — preserving full-body (SBD) days, training
+  // frequency and per-lift accessories. 'split' uses the generic one-lift-per-day
+  // 3/4/5 split keyed by trainingDaysPerWeek.
+  layout?: 'source' | 'split'
   // Optional style nudges from the coach's profile (Feature 5c). Omitted when
   // the coach resets to generic defaults or has too few programs to learn from.
   style?: SuggestionStyleAdjust
+  // Opt-in (default false): when a main lift's day carries NO accessories, fill
+  // the gap with weak-point-relevant suggestions from the powerlifting knowledge
+  // base (shared/knowledge.ts), tagged via suggestion_note. Never replaces
+  // accessories carried over from the source program — see the knowledge.ts
+  // "support, never override" contract.
+  enrichAccessories?: boolean
 }
 
 export interface SuggestionStyleAdjust {

@@ -1,11 +1,16 @@
 {
   "name": "coachboard-shared",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./types.ts",
     "./rpe": "./rpe.ts",
-    "./exportLayout": "./exportLayout.ts"
+    "./exportLayout": "./exportLayout.ts",
+    "./knowledge": "./knowledge.ts",
+    "./exercises": "./exercises.ts",
+    "./payments": "./payments.ts",
+    "./scoring": "./scoring.ts",
+    "./warmup": "./warmup.ts"
   }
 }

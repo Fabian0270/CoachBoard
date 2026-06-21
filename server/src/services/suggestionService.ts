@@ -1,9 +1,10 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db.js'
-import { getProgramReport } from './analysisService.js'
+import { getProgramReport, buildWorkoutWeekMap } from './analysisService.js'
 import { findProgramById } from './programService.js'
 import { findTemplate } from '../lib/suggestionTemplates.js'
 import { SUGGESTION_TEMPLATES } from 'coachboard-shared'
+import { ACCESSORY_POOLS } from 'coachboard-shared/knowledge'
 import type { SuggestProgramBody, SuggestProgramResult, WeekSlot } from 'coachboard-shared'
 
 const MAIN_LIFT_KEYWORDS = ['squat', 'bench', 'deadlift'] as const
@@ -49,7 +50,24 @@ function addDays(isoDate: string, days: number): string {
   return toIso(date)
 }
 
+// A carried-over accessory keeps only its movement scaffold. The stale `weight`
+// and `intensity`/RPE from the previous block are deliberately dropped — they have
+// no e1RM to recompute against and would contradict the freshly generated arc.
 type AccessoryRow = {
+  name: string
+  sets: string | null
+  reps: string | null
+  duration: number | null
+  distance: number | null
+  notes: string | null
+  rest_time: string | null
+  // Set only on knowledge-base gap-fill suggestions (Feature: smart accessories).
+  // Carried-over accessories leave this undefined → stored as null, so the coach
+  // can tell their own choices apart from engine suggestions.
+  suggestionNote?: string | null
+}
+
+type SourceExercise = {
   name: string
   sets: string | null
   reps: string | null
@@ -60,25 +78,92 @@ type AccessoryRow = {
   rest_time: string | null
   intensity: string | null
 }
+type SourceWorkout = { id: string; scheduled_date: string | null; exercises: SourceExercise[] }
+
+// One main lift plus the accessories trained alongside it on a given day.
+type LiftSegment = { liftKey: LiftKey; accessories: AccessoryRow[] }
+// A training day in the new block: its offset from the block's Monday and the
+// ordered lifts it contains (more than one ⇒ a full-body / SBD day).
+type DayLayout = { dayOffset: number; lifts: LiftSegment[] }
+
+const toAccessoryRow = (ex: SourceExercise): AccessoryRow => ({
+  name: ex.name,
+  sets: ex.sets,
+  reps: ex.reps,
+  duration: ex.duration,
+  distance: ex.distance,
+  notes: ex.notes,
+  rest_time: ex.rest_time,
+})
+
+/**
+ * Mirror the source program's last-week layout: one DayLayout per training day,
+ * each carrying the lifts trained that day (preserving full-body/SBD days) with
+ * accessories attached to their nearest preceding main lift. A repeated keyword
+ * on the same day (e.g. "Comp Bench" after "Bench Press") folds into the existing
+ * segment rather than spawning a second, contradictory prescription.
+ * Returns null when there are no dated workouts or no main lifts to anchor on.
+ */
+function deriveSourceLayout(source: { start_date: string | null; workouts: SourceWorkout[] }): DayLayout[] | null {
+  const workouts = source.workouts ?? []
+  const weekMap = buildWorkoutWeekMap({ start_date: source.start_date }, workouts)
+  const located = workouts
+    .map((w) => ({ w, loc: weekMap.get(w.id) }))
+    .filter((x): x is { w: SourceWorkout; loc: { weekIndex: number; dayOfWeek: number } } => !!x.loc)
+  if (located.length === 0) return null
+
+  const lastWeek = Math.max(...located.map((x) => x.loc.weekIndex))
+  const lastWeekDays = located
+    .filter((x) => x.loc.weekIndex === lastWeek)
+    .sort((a, b) => a.loc.dayOfWeek - b.loc.dayOfWeek)
+
+  const days: DayLayout[] = []
+  for (const { w, loc } of lastWeekDays) {
+    const lifts: LiftSegment[] = []
+    let current: LiftSegment | null = null
+    const pending: AccessoryRow[] = []  // accessories seen before the day's first lift
+
+    for (const ex of w.exercises) {
+      const key = liftKeyFor(ex.name)
+      if (key) {
+        let seg = lifts.find((l) => l.liftKey === key)
+        if (!seg) {
+          seg = { liftKey: key, accessories: pending.splice(0) }
+          lifts.push(seg)
+        }
+        current = seg
+        continue
+      }
+      const row = toAccessoryRow(ex)
+      if (current) current.accessories.push(row)
+      else pending.push(row)
+    }
+
+    if (lifts.length === 0) continue  // accessory-only day: no e1RM slot to anchor it
+    days.push({ dayOffset: loc.dayOfWeek, lifts })
+  }
+
+  return days.length ? days : null
+}
+
+/**
+ * Generic one-lift-per-day split keyed by training-day count — the classic
+ * Mon/Wed/Fri-style layout. Accessories come from each lift's day in the source's
+ * last week (last occurrence wins, see `accessoriesByLift`).
+ */
+function genericLayout(source: { workouts: SourceWorkout[] }, daysPerWeek: number): DayLayout[] {
+  const accByLift = accessoriesByLift(source.workouts ?? [])
+  const offsets = DAY_OFFSETS[daysPerWeek] ?? DAY_OFFSETS[3]
+  const order = LIFT_ORDER[daysPerWeek] ?? LIFT_ORDER[3]
+  return offsets.map((dayOffset, i) => {
+    const liftKey = order[i]
+    return { dayOffset, lifts: liftKey ? [{ liftKey, accessories: accByLift.get(liftKey) ?? [] }] : [] }
+  })
+}
 
 // For each main lift, collect the accessories from its day in the source program's
 // last week. Later bench / squat days overwrite earlier ones — last occurrence wins.
-function accessoriesByLift(
-  workouts: Array<{
-    scheduled_date: string | null
-    exercises: Array<{
-      name: string
-      sets: string | null
-      reps: string | null
-      weight: number | null
-      duration: number | null
-      distance: number | null
-      notes: string | null
-      rest_time: string | null
-      intensity: string | null
-    }>
-  }>,
-): Map<LiftKey, AccessoryRow[]> {
+function accessoriesByLift(workouts: SourceWorkout[]): Map<LiftKey, AccessoryRow[]> {
   const withDates = workouts.filter((w) => w.scheduled_date).sort((a, b) =>
     a.scheduled_date! < b.scheduled_date! ? -1 : 1,
   )
@@ -97,27 +182,60 @@ function accessoriesByLift(
 
     for (const ex of workout.exercises) {
       const key = liftKeyFor(ex.name)
-      if (key && !mainLift) {
-        mainLift = key
-      } else {
-        accessories.push({
-          name: ex.name,
-          sets: ex.sets,
-          reps: ex.reps,
-          weight: ex.weight,
-          duration: ex.duration,
-          distance: ex.distance,
-          notes: ex.notes,
-          rest_time: ex.rest_time,
-          intensity: ex.intensity,
-        })
+      if (key) {
+        // A main lift or a variation of one (e.g. "Comp Bench"). The first match
+        // is the day's main lift; any further keyword matches fold into it rather
+        // than becoming a second, contradictory prescription.
+        if (!mainLift) mainLift = key
+        continue
       }
+      accessories.push(toAccessoryRow(ex))
     }
 
     if (mainLift) result.set(mainLift, accessories)
   }
 
   return result
+}
+
+// Number of weak-point accessories suggested for a main lift with an empty day.
+const GAP_FILL_ACCESSORY_COUNT = 3
+
+/**
+ * Knowledge-base accessory suggestions for a main lift, used ONLY to fill a gap
+ * (a main lift whose day carries no accessories). Per the shared/knowledge.ts
+ * "support, never override" contract these are tier-3: they never replace a
+ * coach's carried-over accessories. Each is tagged via suggestionNote so the
+ * coach can see and edit it. Picks are deterministic (first N of the pool).
+ */
+function suggestedAccessories(liftKey: LiftKey): AccessoryRow[] {
+  const pool = ACCESSORY_POOLS[liftKey] ?? []
+  return pool.slice(0, GAP_FILL_ACCESSORY_COUNT).map((a) => ({
+    name: a.name,
+    sets: '3',
+    reps: `${a.repRange[0]}-${a.repRange[1]}`,
+    duration: null,
+    distance: null,
+    notes: null,
+    rest_time: null,
+    suggestionNote: `Engine-suggested accessory (${a.addresses}) — edit or remove`,
+  }))
+}
+
+/**
+ * Opt-in gap fill: for any main lift whose day has no accessories, attach
+ * weak-point suggestions from the knowledge base. Lifts that already carry
+ * accessories (the coach's own, mirrored from the source) are left untouched.
+ */
+function enrichLayout(layout: DayLayout[]): DayLayout[] {
+  return layout.map((day) => ({
+    ...day,
+    lifts: day.lifts.map((seg) =>
+      seg.accessories.length === 0
+        ? { ...seg, accessories: suggestedAccessories(seg.liftKey) }
+        : seg,
+    ),
+  }))
 }
 
 export async function generateDraftProgram(
@@ -171,10 +289,18 @@ export async function generateDraftProgram(
       ].filter(Boolean).join(', ') + ' from your style'
     : ''
 
-  const accByLift = accessoriesByLift(source.workouts ?? [])
+  // Mirror the source program's weekly structure by default (preserving full-body
+  // SBD days); fall back to the generic split when the coach overrides or the
+  // source has no derivable layout.
+  const baseLayout =
+    body.layout === 'split'
+      ? genericLayout(source, body.trainingDaysPerWeek)
+      : deriveSourceLayout(source) ?? genericLayout(source, body.trainingDaysPerWeek)
 
-  const dayOffsets = DAY_OFFSETS[body.trainingDaysPerWeek] ?? DAY_OFFSETS[3]
-  const liftOrder = LIFT_ORDER[body.trainingDaysPerWeek] ?? LIFT_ORDER[3]
+  // Opt-in: fill main lifts that have no accessories with knowledge-base
+  // suggestions. Default off → behaviour unchanged. Never touches carried-over
+  // accessories (see shared/knowledge.ts contract).
+  const layout = body.enrichAccessories ? enrichLayout(baseLayout) : baseLayout
 
   const db = getDb()
   const now = new Date().toISOString()
@@ -200,11 +326,8 @@ export async function generateDraftProgram(
     .executeTakeFirstOrThrow()
 
   for (let week = 1; week <= body.weeks; week++) {
-    for (let dayIdx = 0; dayIdx < body.trainingDaysPerWeek; dayIdx++) {
-      const workoutDate = addDays(startIso, (week - 1) * 7 + dayOffsets[dayIdx])
-      const liftKey = liftOrder[dayIdx]
-      const slot = liftKey ? (slotsByLift.get(liftKey)?.[week - 1] ?? null) : null
-      const accessories = (liftKey ? accByLift.get(liftKey) : undefined) ?? []
+    for (const day of layout) {
+      const workoutDate = addDays(startIso, (week - 1) * 7 + day.dayOffset)
 
       const workout = await db
         .insertInto('workouts')
@@ -221,52 +344,56 @@ export async function generateDraftProgram(
 
       let orderIndex = 0
 
-      if (slot && liftKey) {
-        await db
-          .insertInto('exercises')
-          .values({
-            id: uuidv4(),
-            workout_id: workout.id,
-            name: LIFT_DISPLAY[liftKey],
-            sets: String(slot.sets),
-            reps: String(slot.reps),
-            weight: slot.weight,
-            duration: null,
-            distance: null,
-            notes: null,
-            order_index: orderIndex++,
-            rest_time: null,
-            intensity: `RPE ${slot.targetRpe}`,
-            load_used: null,
-            rpe: null,
-            group_id: null,
-            suggestion_note: slot.explanation + styleNote,
-          })
-          .execute()
-      }
+      for (const seg of day.lifts) {
+        const slot = slotsByLift.get(seg.liftKey)?.[week - 1] ?? null
 
-      for (const acc of accessories) {
-        await db
-          .insertInto('exercises')
-          .values({
-            id: uuidv4(),
-            workout_id: workout.id,
-            name: acc.name,
-            sets: acc.sets,
-            reps: acc.reps,
-            weight: acc.weight,
-            duration: acc.duration,
-            distance: acc.distance,
-            notes: acc.notes,
-            order_index: orderIndex++,
-            rest_time: acc.rest_time,
-            intensity: acc.intensity,
-            load_used: null,
-            rpe: null,
-            group_id: null,
-            suggestion_note: null,
-          })
-          .execute()
+        if (slot) {
+          await db
+            .insertInto('exercises')
+            .values({
+              id: uuidv4(),
+              workout_id: workout.id,
+              name: LIFT_DISPLAY[seg.liftKey],
+              sets: String(slot.sets),
+              reps: String(slot.reps),
+              weight: slot.weight,
+              duration: null,
+              distance: null,
+              notes: null,
+              order_index: orderIndex++,
+              rest_time: null,
+              intensity: `RPE ${slot.targetRpe}`,
+              load_used: null,
+              rpe: null,
+              group_id: null,
+              suggestion_note: slot.explanation + styleNote,
+            })
+            .execute()
+        }
+
+        for (const acc of seg.accessories) {
+          await db
+            .insertInto('exercises')
+            .values({
+              id: uuidv4(),
+              workout_id: workout.id,
+              name: acc.name,
+              sets: acc.sets,
+              reps: acc.reps,
+              weight: null,
+              duration: acc.duration,
+              distance: acc.distance,
+              notes: acc.notes,
+              order_index: orderIndex++,
+              rest_time: acc.rest_time,
+              intensity: null,
+              load_used: null,
+              rpe: null,
+              group_id: null,
+              suggestion_note: acc.suggestionNote ?? null,
+            })
+            .execute()
+        }
       }
     }
   }

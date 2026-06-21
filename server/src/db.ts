@@ -78,6 +78,20 @@ export interface AthleteMaxTable {
   notes: string | null
 }
 
+export interface PaymentTable {
+  id: string
+  athlete_id: string
+  amount: number
+  currency: string
+  start_date: string | null
+  paid_through: string
+  paid: number
+  paid_at: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface DB {
   athletes: AthleteTable
   programs: ProgramTable
@@ -85,6 +99,7 @@ export interface DB {
   exercises: ExerciseTable
   progress_records: ProgressRecordTable
   athlete_maxes: AthleteMaxTable
+  payments: PaymentTable
 }
 
 let _db: Kysely<DB> | null = null
@@ -218,4 +233,53 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   `.execute(_db)
 
   await sql`CREATE INDEX IF NOT EXISTS idx_athlete_maxes_athlete_id ON athlete_maxes(athlete_id)`.execute(_db)
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY,
+      athlete_id TEXT NOT NULL,
+      amount REAL NOT NULL,
+      currency TEXT NOT NULL,
+      start_date TEXT,
+      paid_through TEXT NOT NULL,
+      paid INTEGER NOT NULL DEFAULT 0,
+      paid_at TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+    )
+  `.execute(_db)
+
+  // Migrate a pre-1.8.0 dev payments table (period_start/period_end/due_date,
+  // with due_date NOT NULL) to the start_date + paid_through model:
+  //  1. add the new columns,
+  //  2. backfill them from the old date columns,
+  //  3. drop the legacy columns — crucially removing the old NOT NULL due_date,
+  //     which would otherwise reject inserts that no longer set it.
+  await addColumnIfMissing('payments', 'paid_through', 'TEXT')
+  await addColumnIfMissing('payments', 'start_date', 'TEXT')
+  const paymentCols = (
+    await sql<{ name: string }>`PRAGMA table_info(payments)`.execute(_db)
+  ).rows.map((r) => r.name)
+
+  const endSources = ['period_end', 'due_date'].filter((c) => paymentCols.includes(c))
+  if (endSources.length > 0) {
+    const coalesce = ['paid_through', ...endSources, 'substr(created_at, 1, 10)'].join(', ')
+    await sql
+      .raw(`UPDATE payments SET paid_through = COALESCE(${coalesce}) WHERE paid_through IS NULL`)
+      .execute(_db)
+  }
+  if (paymentCols.includes('period_start')) {
+    await sql
+      .raw('UPDATE payments SET start_date = COALESCE(start_date, period_start) WHERE start_date IS NULL')
+      .execute(_db)
+  }
+  for (const col of ['period_start', 'period_end', 'due_date']) {
+    if (paymentCols.includes(col)) {
+      await sql.raw(`ALTER TABLE payments DROP COLUMN ${col}`).execute(_db)
+    }
+  }
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_payments_athlete_id ON payments(athlete_id)`.execute(_db)
 }
