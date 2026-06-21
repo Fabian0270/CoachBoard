@@ -41,6 +41,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SuggestionGoal, RepRangeBucket } from './types.js'
+import { EXTRA_ACCESSORY_POOLS } from './exercises.js'
 
 // ---------------------------------------------------------------------------
 // 1. Periodization models
@@ -228,9 +229,12 @@ export interface ProgramArchetype {
   level: ExperienceLevel[]
   /** Weekly frequency per main lift, when characteristic of the program. */
   liftFrequency?: Partial<Record<'squat' | 'bench' | 'deadlift' | 'ohp', number>>
-  /** Loading method the program is built around. */
-  loading: 'percentage' | 'rpe' | 'both' | 'autoregulated'
+  /** Loading method the program is built around. 'fixed' = absolute load, add weight per session. */
+  loading: 'percentage' | 'rpe' | 'both' | 'autoregulated' | 'fixed'
   keyFeatures: string[]
+  /** Attribution when an entry is distilled from an external source. */
+  source?: string
+  sourceUrl?: string
 }
 
 export const PROGRAM_ARCHETYPES: ProgramArchetype[] = [
@@ -293,15 +297,17 @@ export const PROGRAM_ARCHETYPES: ProgramArchetype[] = [
   },
   {
     name: 'Madcow 5×5',
-    periodization: 'linear',
+    periodization: 'wave',
     primaryGoal: 'strength',
-    weeks: [12, 12],
+    weeks: [8, 12],
     daysPerWeek: 3,
     level: ['intermediate'],
+    liftFrequency: { squat: 3, bench: 2, deadlift: 1, ohp: 1 },
     loading: 'percentage',
     keyFeatures: [
-      'Weekly linear progression with ramping 5×5 sets to a top set',
-      'Heavy / light / medium weekly structure',
+      'Ramping 5×5 sets to a top set; only the top set is the working weight',
+      'Heavy / light / medium weekly structure (Texas-method style wave)',
+      'All weights increase ~2.5% each week across the cycle',
     ],
   },
   {
@@ -464,7 +470,7 @@ export interface Accessory {
   repRange: [number, number]
 }
 
-export const ACCESSORY_POOLS: Record<MainLift, Accessory[]> = {
+const BASE_ACCESSORY_POOLS: Record<MainLift, Accessory[]> = {
   squat: [
     { name: 'Front Squat', addresses: 'quad strength, upright torso', repRange: [3, 6] },
     { name: 'Pause Squat', addresses: 'out-of-the-hole strength, position', repRange: [3, 5] },
@@ -496,6 +502,25 @@ export const ACCESSORY_POOLS: Record<MainLift, Accessory[]> = {
     { name: 'Hanging Leg Raise', addresses: 'trunk/bracing', repRange: [8, 15] },
   ],
 }
+
+// Enriched pools: base pools first, then extra accessories appended and
+// de-duplicated by name. Keeping the base entries first means the engine's
+// deterministic "first N" accessory picks are unchanged.
+function mergeAccessories(
+  base: Record<MainLift, Accessory[]>,
+  extra: Record<MainLift, Accessory[]>,
+): Record<MainLift, Accessory[]> {
+  const out = {} as Record<MainLift, Accessory[]>
+  for (const lift of Object.keys(base) as MainLift[]) {
+    const seen = new Set(base[lift].map((a) => a.name.toLowerCase()))
+    const added = (extra[lift] ?? []).filter((a) => !seen.has(a.name.toLowerCase()))
+    out[lift] = [...base[lift], ...added]
+  }
+  return out
+}
+
+export const ACCESSORY_POOLS: Record<MainLift, Accessory[]> =
+  mergeAccessories(BASE_ACCESSORY_POOLS, EXTRA_ACCESSORY_POOLS)
 
 // ---------------------------------------------------------------------------
 // 5. Programming heuristics
@@ -671,3 +696,45 @@ export const HYPERTROPHY_REP_ZONES: RepZone[] = [
     bestFor: 'Isolation/pump work and joint-friendly volume; train close to failure.',
   },
 ]
+
+// ---------------------------------------------------------------------------
+// 9. Knowledge-derived defaults per goal
+// ---------------------------------------------------------------------------
+// Aggregates the archetype library and the set/rep schemes into sensible
+// starting defaults for a goal. The suggestion
+// wizard uses these silently as background defaults — strictly below the coach's
+// own input and learned style profile (see the precedence contract above).
+
+export interface GoalDefaults {
+  weeks: number
+  daysPerWeek: number
+  repRange: [number, number]
+}
+
+function midpoint(v: number | [number, number]): number {
+  return Array.isArray(v) ? (v[0] + v[1]) / 2 : v
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+/**
+ * Background defaults for a training goal, derived from the program archetypes
+ * (median block length / days-per-week across programs whose primaryGoal matches)
+ * and the goal's set/rep scheme. Returns hardcoded fallbacks if nothing matches.
+ */
+export function knowledgeDefaultsForGoal(goal: SuggestionGoal): GoalDefaults {
+  const matching = PROGRAM_ARCHETYPES.filter((a) => a.primaryGoal === goal)
+  const weeks = median(matching.map((a) => midpoint(a.weeks)))
+  const days = median(matching.map((a) => midpoint(a.daysPerWeek)))
+  const scheme = SET_REP_SCHEMES.find((s) => s.goal === goal)
+  return {
+    weeks: weeks != null ? Math.round(weeks) : 4,
+    daysPerWeek: days != null ? Math.round(days) : 4,
+    repRange: scheme ? scheme.repRange : [3, 8],
+  }
+}

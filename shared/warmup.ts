@@ -1,10 +1,9 @@
 // Warm-up ladder for working up to a target 1RM.
 //
-// Reproduces StrengthLog's "How to warm up for a 1RM attempt" protocol exactly:
-// seven warm-up sets ramping 40% → 95% with descending reps and rising rest,
-// then the max single at 100%. Weights are a percentage of the target 1RM,
-// rounded to the nearest plate increment (2.5 kg by default) and floored at the
-// empty bar. Source: strengthlog.com/how-to-warm-up-for-a-1rm-attempt-calculator/
+// A standard 1RM-attempt warm-up: seven warm-up sets ramping 40% → 95% with
+// descending reps and rising rest, then the max single at 100%. Weights are a
+// percentage of the target 1RM, rounded to the nearest plate increment (2.5 kg
+// by default) and floored at the empty bar.
 
 export interface WarmupStep {
   /** Percentage of the target 1RM (e.g. 40 means 40%). */
@@ -16,7 +15,7 @@ export interface WarmupStep {
   isMax: boolean
 }
 
-/** The fixed StrengthLog 1RM-attempt protocol, as data. */
+/** The fixed 1RM-attempt warm-up protocol, as data. */
 export const WARMUP_SCHEME: readonly WarmupStep[] = [
   { pct: 40, reps: 8, restMinutes: 1, isMax: false },
   { pct: 50, reps: 5, restMinutes: 2, isMax: false },
@@ -64,7 +63,7 @@ export function warmupPlan(oneRM: number, opts: WarmupOptions = {}): WarmupSet[]
   })
 }
 
-// ── 1RM estimation (StrengthLog uses Epley) ─────────────────────────────────
+// ── 1RM estimation (Epley) ──────────────────────────────────────────────────
 // 1RM = weight × (1 + reps / 30)
 
 /** Epley estimated 1RM from a weight × reps set. Returns null for bad input. */

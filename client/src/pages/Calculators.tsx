@@ -172,7 +172,7 @@ function WarmupCalculator() {
         </Card>
       )}
       <p className="text-xs text-muted-foreground">
-        Protocol from StrengthLog's 1RM-attempt warm-up: seven ramping sets into the top single.
+        Standard 1RM-attempt warm-up: seven ramping sets into the top single.
       </p>
     </div>
   )

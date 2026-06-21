@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { warmupPlan, epley1RM, platesPerSide, WARMUP_SCHEME } from 'coachboard-shared/warmup'
 
 describe('warmupPlan', () => {
-  it('produces the StrengthLog 7-set protocol plus the max attempt', () => {
+  it('produces the 7-set protocol plus the max attempt', () => {
     const sets = warmupPlan(200)
     expect(sets).toHaveLength(8)
     expect(sets.map((s) => s.pct)).toEqual([40, 50, 60, 70, 80, 90, 95, 100])

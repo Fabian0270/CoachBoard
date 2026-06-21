@@ -5,6 +5,7 @@ import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { Loader2, ChevronLeft, Sparkles } from 'lucide-react'
 import { SUGGESTION_TEMPLATES } from 'coachboard-shared'
+import { knowledgeDefaultsForGoal } from 'coachboard-shared/knowledge'
 import type { SuggestionGoal, SuggestionTemplateInfo, CoachStyleProfile, SuggestionStyleAdjust, RepRangeBucket, DetectedPattern } from 'coachboard-shared'
 
 interface SelectableAthlete { id: string; name: string }
@@ -115,7 +116,14 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
         setStyleProfile(data)
         if (selectedPattern) return
         setUseStyle(data.usable)
-        if (data.usable && data.preferredDaysPerWeek) setTrainingDays(clampDays(data.preferredDaysPerWeek))
+        if (data.usable && data.preferredDaysPerWeek) {
+          setTrainingDays(clampDays(data.preferredDaysPerWeek))
+        } else if (!data.usable) {
+          // No learned style yet → fall back to the knowledge base's typical
+          // days-per-week for this goal. Silent default; the coach still sees
+          // and can change it.
+          setTrainingDays(clampDays(knowledgeDefaultsForGoal(goal).daysPerWeek))
+        }
       })
       .catch(() => { if (!cancelled) setStyleProfile(null) })
     return () => { cancelled = true }
@@ -230,7 +238,10 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
 
   function pickVariant(t: SuggestionTemplateInfo) {
     setTemplate(t)
-    setWeeks(t.typicalWeeks[0])
+    // Default block length to the knowledge base's typical for this goal (clamped
+    // into the variant's sane range), unless the style profile later overrides it.
+    const kd = goal ? knowledgeDefaultsForGoal(goal).weeks : t.typicalWeeks[0]
+    setWeeks(Math.min(t.typicalWeeks[1], Math.max(t.typicalWeeks[0], kd)))
     setShowSplitPicker(false)
     setStep('days')
   }

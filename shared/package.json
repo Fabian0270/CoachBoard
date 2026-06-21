@@ -8,6 +8,7 @@
     "./rpe": "./rpe.ts",
     "./exportLayout": "./exportLayout.ts",
     "./knowledge": "./knowledge.ts",
+    "./exercises": "./exercises.ts",
     "./payments": "./payments.ts",
     "./scoring": "./scoring.ts",
     "./warmup": "./warmup.ts"
