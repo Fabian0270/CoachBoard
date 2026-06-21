@@ -9,7 +9,7 @@ import NewProgram from './pages/NewProgram'
 import ProgramDetail from './pages/ProgramDetail'
 import ProgramReport from './pages/ProgramReport'
 import ProgramComparison from './pages/ProgramComparison'
-import ProgressTracking from './pages/ProgressTracking'
+import Calculators from './pages/Calculators'
 import Payments from './pages/Payments'
 
 export default function App() {
@@ -26,7 +26,7 @@ export default function App() {
             <Route path="/programs/new" element={<NewProgram />} />
             <Route path="/programs/:id" element={<ProgramDetail />} />
             <Route path="/programs/:id/report" element={<ProgramReport />} />
-            <Route path="/progress" element={<ProgressTracking />} />
+            <Route path="/calculators" element={<Calculators />} />
             <Route path="/payments" element={<Payments />} />
           </Routes>
         </Layout>

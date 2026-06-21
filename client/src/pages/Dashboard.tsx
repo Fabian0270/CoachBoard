@@ -4,30 +4,27 @@ import type { PaymentAlert } from 'coachboard-shared'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
-import { Users, Dumbbell, TrendingUp, Plus, AlertTriangle } from 'lucide-react'
+import { Users, Dumbbell, Plus, AlertTriangle } from 'lucide-react'
 import MyStyleCard from '../components/MyStyleCard'
 import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
 
 interface Stats {
   athletes: number
   programs: number
-  progressRecords: number
 }
 
 export default function Dashboard() {
-  const [stats, setStats] = useState<Stats>({ athletes: 0, programs: 0, progressRecords: 0 })
+  const [stats, setStats] = useState<Stats>({ athletes: 0, programs: 0 })
   const [paymentAlerts, setPaymentAlerts] = useState<PaymentAlert[]>([])
 
   useEffect(() => {
     Promise.all([
       fetch('/api/athletes').then((r) => r.json()).catch(() => []),
       fetch('/api/programs').then((r) => r.json()).catch(() => []),
-      fetch('/api/progress').then((r) => r.json()).catch(() => []),
-    ]).then(([athletes, programs, progress]) => {
+    ]).then(([athletes, programs]) => {
       setStats({
         athletes: Array.isArray(athletes) ? athletes.length : 0,
         programs: Array.isArray(programs) ? programs.length : 0,
-        progressRecords: Array.isArray(progress) ? progress.length : 0,
       })
     }).catch(() => {})
 
@@ -72,7 +69,7 @@ export default function Dashboard() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Total Athletes</CardTitle>
@@ -89,15 +86,6 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.programs}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Progress Records</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.progressRecords}</div>
           </CardContent>
         </Card>
       </div>

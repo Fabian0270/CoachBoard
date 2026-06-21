@@ -1,12 +1,12 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, Dumbbell, TrendingUp, Wallet } from 'lucide-react'
+import { LayoutDashboard, Users, Dumbbell, Calculator, Wallet } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/athletes', label: 'Athletes', icon: Users },
   { to: '/programs', label: 'Programs', icon: Dumbbell },
-  { to: '/progress', label: 'Progress', icon: TrendingUp },
+  { to: '/calculators', label: 'Calculators', icon: Calculator },
   { to: '/payments', label: 'Payments', icon: Wallet },
 ]
 
