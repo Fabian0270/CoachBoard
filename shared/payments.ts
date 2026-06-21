@@ -15,21 +15,21 @@ function daysUntil(fromIso: string, toIso: string): number {
 }
 
 /**
- * Derive a payment's status relative to `todayIso` (YYYY-MM-DD).
- * Unpaid periods report overdue / due_soon / upcoming off the due date; paid
- * periods report expiring_soon when their coverage window is ending (so the
- * coach knows to collect the next one), otherwise paid.
+ * Derive a payment's status relative to `todayIso` (YYYY-MM-DD), driven by the
+ * single `paid_through` date. Paid periods report expiring_soon as coverage runs
+ * out (so the coach knows to collect the next one); unpaid periods report
+ * overdue / due_soon / upcoming.
  */
 export function paymentStatus(payment: Payment, todayIso: string): PaymentStatus {
+  // Defensive: a row migrated from the old multi-date model may have no
+  // paid_through. Don't crash — treat it as settled / not-yet-due.
+  if (!payment.paid_through) return payment.paid ? 'paid' : 'upcoming'
+  const days = daysUntil(todayIso, payment.paid_through)
   if (payment.paid) {
-    if (payment.period_end && daysUntil(todayIso, payment.period_end) <= PAYMENT_REMINDER_DAYS) {
-      return 'expiring_soon'
-    }
-    return 'paid'
+    return days <= PAYMENT_REMINDER_DAYS ? 'expiring_soon' : 'paid'
   }
-  const due = daysUntil(todayIso, payment.due_date)
-  if (due < 0) return 'overdue'
-  if (due <= PAYMENT_REMINDER_DAYS) return 'due_soon'
+  if (days < 0) return 'overdue'
+  if (days <= PAYMENT_REMINDER_DAYS) return 'due_soon'
   return 'upcoming'
 }
 

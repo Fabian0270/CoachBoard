@@ -9,14 +9,17 @@ import { Textarea } from './ui/textarea'
 import { Badge } from './ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 import { Plus, Trash2, RefreshCw, Check, Undo2 } from 'lucide-react'
-import { PAYMENT_STATUS_META, CURRENCY_OPTIONS, formatAmount, todayIso } from '../lib/paymentDisplay'
+import { PAYMENT_STATUS_META, CURRENCY_OPTIONS, formatAmount, todayIso, addDays } from '../lib/paymentDisplay'
 
 const emptyForm = () => ({
   amount: '',
   currency: 'SEK',
-  due_date: todayIso(),
-  period_start: '',
-  period_end: '',
+  // 'date' = pick the paid-through date directly; 'weeks' = pay N weeks forward
+  // from a start date and let us compute the paid-through date.
+  dateMode: 'date' as 'date' | 'weeks',
+  paid_through: todayIso(),
+  startDate: todayIso(),
+  weeks: '',
   paid: false,
   notes: '',
 })
@@ -38,12 +41,23 @@ export default function PaymentsSection({ athleteId }: { athleteId: string }) {
     return () => { cancelled = true }
   }, [athleteId])
 
-  // Keep the list ordered by due date, newest first (matches the API).
+  // Keep the list ordered by coverage date, newest first (matches the API).
   const sortInto = (list: Payment[]) =>
-    [...list].sort((a, b) => b.due_date.localeCompare(a.due_date))
+    [...list].sort((a, b) => b.paid_through.localeCompare(a.paid_through))
+
+  // Resolve the paid-through date from whichever mode the coach used.
+  // Weeks mode counts forward from the chosen start date.
+  const resolvedPaidThrough =
+    form.dateMode === 'weeks'
+      ? (form.weeks && form.startDate ? addDays(form.startDate, Number(form.weeks) * 7) : '')
+      : form.paid_through
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!resolvedPaidThrough) {
+      alert('Set a paid-through date, or enter how many weeks are paid forward.')
+      return
+    }
     setSaving(true)
     try {
       const res = await fetch('/api/payments', {
@@ -53,9 +67,8 @@ export default function PaymentsSection({ athleteId }: { athleteId: string }) {
           athlete_id: athleteId,
           amount: Number(form.amount),
           currency: form.currency,
-          due_date: form.due_date,
-          period_start: form.period_start || null,
-          period_end: form.period_end || null,
+          start_date: form.startDate || null,
+          paid_through: resolvedPaidThrough,
           paid: form.paid,
           notes: form.notes || null,
         }),
@@ -96,7 +109,7 @@ export default function PaymentsSection({ athleteId }: { athleteId: string }) {
   }
 
   const handleDelete = async (p: Payment) => {
-    if (!confirm(`Delete the ${formatAmount(p.amount, p.currency)} payment due ${p.due_date}?`)) return
+    if (!confirm(`Delete the ${formatAmount(p.amount, p.currency)} payment (through ${p.paid_through})?`)) return
     const res = await fetch(`/api/payments/${p.id}`, { method: 'DELETE' })
     if (res.ok || res.status === 404) {
       setPayments((list) => list.filter((x) => x.id !== p.id))
@@ -128,25 +141,49 @@ export default function PaymentsSection({ athleteId }: { athleteId: string }) {
               </Select>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="pay-due">Due date</Label>
-              <Input
-                id="pay-due" type="date" value={form.due_date}
-                onChange={(e) => setForm({ ...form, due_date: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="pay-start">Period start</Label>
-              <Input
-                id="pay-start" type="date" value={form.period_start}
-                onChange={(e) => setForm({ ...form, period_start: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="pay-end">Period end</Label>
-              <Input
-                id="pay-end" type="date" value={form.period_end}
-                onChange={(e) => setForm({ ...form, period_end: e.target.value })}
-              />
+              <Label>Coverage</Label>
+              <div className="flex flex-wrap gap-2 items-end">
+                <div className="space-y-1">
+                  <span className="block text-xs text-muted-foreground">Start date</span>
+                  <Input
+                    id="pay-start" type="date" value={form.startDate}
+                    onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex gap-1">
+                    <Button
+                      type="button" size="sm"
+                      variant={form.dateMode === 'date' ? 'default' : 'outline'}
+                      onClick={() => setForm({ ...form, dateMode: 'date' })}
+                    >
+                      Pick end date
+                    </Button>
+                    <Button
+                      type="button" size="sm"
+                      variant={form.dateMode === 'weeks' ? 'default' : 'outline'}
+                      onClick={() => setForm({ ...form, dateMode: 'weeks' })}
+                    >
+                      By weeks
+                    </Button>
+                  </div>
+                  {form.dateMode === 'date' ? (
+                    <Input
+                      id="pay-through" type="date" value={form.paid_through}
+                      onChange={(e) => setForm({ ...form, paid_through: e.target.value })}
+                    />
+                  ) : (
+                    <Input
+                      id="pay-weeks" type="number" min="1" step="1" className="w-28" placeholder="weeks"
+                      value={form.weeks}
+                      onChange={(e) => setForm({ ...form, weeks: e.target.value })}
+                    />
+                  )}
+                </div>
+              </div>
+              {resolvedPaidThrough && (
+                <p className="text-xs text-muted-foreground">→ paid through {resolvedPaidThrough}</p>
+              )}
             </div>
             <label className="flex items-center gap-2 text-sm h-9">
               <input
@@ -190,8 +227,9 @@ export default function PaymentsSection({ athleteId }: { athleteId: string }) {
                       <Badge variant={meta.variant}>{meta.label}</Badge>
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      Due {p.due_date}
-                      {p.period_start && p.period_end && <> · covers {p.period_start} → {p.period_end}</>}
+                      {p.start_date
+                        ? <>Covers {p.start_date} → {p.paid_through}</>
+                        : <>{p.paid === 1 ? 'Paid through' : 'Due by'} {p.paid_through}</>}
                       {p.paid === 1 && p.paid_at && <> · paid {p.paid_at}</>}
                       {p.notes && <> · {p.notes}</>}
                     </div>

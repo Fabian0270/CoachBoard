@@ -62,8 +62,8 @@ export default function Dashboard() {
                   <Link to={`/athletes/${a.athleteId}`} className="font-medium hover:underline">{a.athleteName}</Link>
                   <Badge variant={meta.variant}>{meta.label}</Badge>
                   <span className="text-muted-foreground">
-                    {formatAmount(a.payment.amount, a.payment.currency)} · due {a.payment.due_date}
-                    {a.status === 'expiring_soon' && a.payment.period_end && <> · ends {a.payment.period_end}</>}
+                    {formatAmount(a.payment.amount, a.payment.currency)} ·{' '}
+                    {a.status === 'expiring_soon' ? 'paid through' : 'due by'} {a.payment.paid_through}
                   </span>
                 </div>
               )

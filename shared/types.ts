@@ -86,28 +86,28 @@ export interface AthleteMax {
 // Payment tracker types
 // ---------------------------------------------------------------------------
 // One record = one billing period (e.g. a month of coaching) for an athlete.
-// Recurring fees are modelled as a sequence of periods; "renew" clones the next
-// period forward. Status (paid/overdue/due soon/expiring) is derived, never
-// stored — see shared/payments.ts.
+// Each period is captured by a single date, `paid_through`: the date coverage
+// runs through and by which the next payment is due. Recurring fees are a
+// sequence of periods; "renew" clones the next one forward a month. Status
+// (paid/overdue/due soon/expiring) is derived, never stored — see payments.ts.
 
 // Derived payment state (computed by shared/payments.ts, never stored):
-//  - paid          : settled, coverage still comfortably ahead
-//  - expiring_soon : paid but the coverage window ends within the reminder window
-//  - overdue       : unpaid and the due date has passed
-//  - due_soon      : unpaid and due within the reminder window
-//  - upcoming      : unpaid, due further out
+//  - paid          : settled, paid_through still comfortably ahead
+//  - expiring_soon : paid but coverage runs out within the reminder window
+//  - overdue       : unpaid and paid_through has passed
+//  - due_soon      : unpaid and paid_through within the reminder window
+//  - upcoming      : unpaid, paid_through further out
 export type PaymentStatus = 'paid' | 'expiring_soon' | 'overdue' | 'due_soon' | 'upcoming'
 
 export interface Payment {
   id: string
   athlete_id: string
   amount: number
-  currency: string              // per-record (configurable), e.g. 'SEK', 'USD'
-  period_start: string | null   // ISO date — coverage window start
-  period_end: string | null     // ISO date — coverage window end (expiry)
-  due_date: string              // ISO date — when this period's payment is due
-  paid: number                  // 0/1
-  paid_at: string | null        // ISO date when marked paid
+  currency: string         // per-record (configurable), e.g. 'SEK', 'USD'
+  start_date: string | null // ISO date — coverage window start (optional)
+  paid_through: string     // ISO date — coverage end / next payment due by this date
+  paid: number             // 0/1
+  paid_at: string | null   // ISO date when marked paid
   notes: string | null
   created_at: string
   updated_at: string
@@ -117,9 +117,8 @@ export interface CreatePaymentBody {
   athlete_id: string
   amount: number
   currency: string
-  period_start?: string | null
-  period_end?: string | null
-  due_date: string
+  start_date?: string | null
+  paid_through: string
   paid?: boolean
   paid_at?: string | null
   notes?: string | null
@@ -128,9 +127,8 @@ export interface CreatePaymentBody {
 export interface UpdatePaymentBody {
   amount?: number
   currency?: string
-  period_start?: string | null
-  period_end?: string | null
-  due_date?: string
+  start_date?: string | null
+  paid_through?: string
   paid?: boolean
   paid_at?: string | null
   notes?: string | null

@@ -26,3 +26,12 @@ export function formatAmount(amount: number, currency: string): string {
 }
 
 export const todayIso = (): string => new Date().toISOString().slice(0, 10)
+
+// Add `days` to a YYYY-MM-DD date, returning YYYY-MM-DD. Used to turn
+// "paid N weeks forward" into a concrete paid-through date.
+export function addDays(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + days)
+  return dt.toISOString().slice(0, 10)
+}

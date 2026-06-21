@@ -26,7 +26,7 @@ export async function findPayments(filters: { athlete_id?: string }): Promise<Pa
   let query = getDb().selectFrom('payments').selectAll()
   if (filters.athlete_id) query = query.where('athlete_id', '=', filters.athlete_id)
   // Most recent period first.
-  return query.orderBy('due_date', 'desc').execute()
+  return query.orderBy('paid_through', 'desc').execute()
 }
 
 export async function findPaymentById(id: string): Promise<Payment | undefined> {
@@ -43,9 +43,8 @@ export async function createPayment(data: CreatePaymentBody): Promise<Payment> {
       athlete_id: data.athlete_id,
       amount: data.amount,
       currency: data.currency,
-      period_start: data.period_start ?? null,
-      period_end: data.period_end ?? null,
-      due_date: data.due_date,
+      start_date: data.start_date ?? null,
+      paid_through: data.paid_through,
       paid: paid ? 1 : 0,
       // Default paid_at to today when marked paid on creation without an explicit date.
       paid_at: paid ? (data.paid_at ?? todayIso()) : (data.paid_at ?? null),
@@ -64,9 +63,8 @@ export async function updatePayment(id: string, data: UpdatePaymentBody): Promis
   const values: Record<string, unknown> = { updated_at: new Date().toISOString() }
   if (data.amount !== undefined) values.amount = data.amount
   if (data.currency !== undefined) values.currency = data.currency
-  if (data.period_start !== undefined) values.period_start = data.period_start
-  if (data.period_end !== undefined) values.period_end = data.period_end
-  if (data.due_date !== undefined) values.due_date = data.due_date
+  if (data.start_date !== undefined) values.start_date = data.start_date
+  if (data.paid_through !== undefined) values.paid_through = data.paid_through
   if (data.notes !== undefined) values.notes = data.notes
   if (data.paid !== undefined) {
     values.paid = data.paid ? 1 : 0
@@ -101,9 +99,8 @@ export async function renewPayment(id: string): Promise<Payment | undefined> {
     athlete_id: prev.athlete_id,
     amount: prev.amount,
     currency: prev.currency,
-    period_start: prev.period_start ? addMonths(prev.period_start, 1) : null,
-    period_end: prev.period_end ? addMonths(prev.period_end, 1) : null,
-    due_date: addMonths(prev.due_date, 1),
+    start_date: prev.start_date ? addMonths(prev.start_date, 1) : null,
+    paid_through: addMonths(prev.paid_through, 1),
     paid: false,
   })
 }
@@ -122,9 +119,8 @@ export async function getPaymentAlerts(today = todayIso()): Promise<PaymentAlert
       'payments.athlete_id as athlete_id',
       'payments.amount as amount',
       'payments.currency as currency',
-      'payments.period_start as period_start',
-      'payments.period_end as period_end',
-      'payments.due_date as due_date',
+      'payments.start_date as start_date',
+      'payments.paid_through as paid_through',
       'payments.paid as paid',
       'payments.paid_at as paid_at',
       'payments.notes as notes',
@@ -138,7 +134,7 @@ export async function getPaymentAlerts(today = todayIso()): Promise<PaymentAlert
   const latest = new Map<string, (typeof rows)[number]>()
   for (const row of rows) {
     const current = latest.get(row.athlete_id)
-    if (!current || row.due_date > current.due_date) latest.set(row.athlete_id, row)
+    if (!current || row.paid_through > current.paid_through) latest.set(row.athlete_id, row)
   }
 
   const order: Record<string, number> = { overdue: 0, due_soon: 1, expiring_soon: 2 }
@@ -152,6 +148,6 @@ export async function getPaymentAlerts(today = todayIso()): Promise<PaymentAlert
   }
   return alerts.sort(
     (a, b) =>
-      (order[a.status] - order[b.status]) || a.payment.due_date.localeCompare(b.payment.due_date),
+      (order[a.status] - order[b.status]) || a.payment.paid_through.localeCompare(b.payment.paid_through),
   )
 }
