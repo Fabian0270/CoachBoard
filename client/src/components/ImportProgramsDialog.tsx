@@ -137,6 +137,9 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
   const [athleteId, setAthleteId] = useState('')
   const [status, setStatus] = useState('active')
   const [startDate, setStartDate] = useState(todayIso())
+  // opt-in: also save this file's layout into the reusable style library
+  const [saveStyle, setSaveStyle] = useState(false)
+  const [styleName, setStyleName] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -157,6 +160,8 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
     setAthleteId('')
     setStatus('active')
     setStartDate(todayIso())
+    setSaveStyle(false)
+    setStyleName('')
     if (folderRef.current) folderRef.current.value = ''
     if (filesRef.current) filesRef.current.value = ''
   }
@@ -256,6 +261,10 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
       const params = new URLSearchParams({ athlete_id: athleteId, name: entry.programName.trim(), status })
       if (status !== 'archived' && startDate) params.set('start_date', startDate)
       if (entry.focus) params.set('focus', entry.focus)
+      if (saveStyle && entry.preview?.layoutTemplate) {
+        params.set('save_style', '1')
+        if (styleName.trim()) params.set('style_name', styleName.trim())
+      }
       const buf = await entry.file.arrayBuffer()
       const res = await fetch(`/api/programs/import-external?${params.toString()}`, {
         method: 'POST',
@@ -512,6 +521,31 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
                         : 'Labels this program so suggestions can learn your style.'}
                     </p>
                   </div>
+
+                  {singlePreview!.layoutTemplate && (
+                    <div className="space-y-2 rounded-md border p-3">
+                      <label className="flex items-center gap-2 text-sm font-medium">
+                        <input
+                          type="checkbox"
+                          checked={saveStyle}
+                          onChange={(e) => setSaveStyle(e.target.checked)}
+                        />
+                        Save this program’s style for future programs
+                      </label>
+                      <p className="text-xs text-muted-foreground">
+                        Adds this sheet’s layout (colors, columns, day labels) to your style library so
+                        you can apply it when creating new programs.
+                      </p>
+                      {saveStyle && (
+                        <input
+                          className={inputClass}
+                          placeholder={`Style name (defaults to “${single.programName.trim() || 'Program'}”)`}
+                          value={styleName}
+                          onChange={(e) => setStyleName(e.target.value)}
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {error && <p className="text-sm text-destructive">{error}</p>}

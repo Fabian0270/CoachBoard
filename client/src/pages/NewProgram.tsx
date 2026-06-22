@@ -9,11 +9,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { ArrowLeft } from 'lucide-react'
 
 interface Athlete { id: string; name: string }
+interface ExportStyle { id: string; name: string }
+
+// Sentinel for the "no saved style" Select option (Radix Select disallows "").
+const NO_STYLE = '__none__'
 
 export default function NewProgram() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [athletes, setAthletes] = useState<Athlete[]>([])
+  const [styles, setStyles] = useState<ExportStyle[]>([])
+  const [styleSourceId, setStyleSourceId] = useState<string>(NO_STYLE)
   const [form, setForm] = useState({
     athlete_id: searchParams.get('athlete_id') ?? '',
     name: '',
@@ -29,6 +35,10 @@ export default function NewProgram() {
       .then((r) => r.json())
       .then((data) => setAthletes(Array.isArray(data) ? data : []))
       .catch(() => {})
+    fetch('/api/export-styles')
+      .then((r) => r.json())
+      .then((data) => setStyles(Array.isArray(data) ? data : []))
+      .catch(() => {})
   }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -38,7 +48,10 @@ export default function NewProgram() {
       const res = await fetch('/api/programs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          export_style_id: styleSourceId === NO_STYLE ? undefined : styleSourceId,
+        }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
@@ -81,6 +94,21 @@ export default function NewProgram() {
               <Label htmlFor="description">Description</Label>
               <Textarea id="description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             </div>
+            {styles.length > 0 && (
+              <div className="space-y-1">
+                <Label>Excel style</Label>
+                <Select value={styleSourceId} onValueChange={setStyleSourceId}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_STYLE}>CoachBoard default</SelectItem>
+                    {styles.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Export this program in a saved coach layout instead of the default style.
+                </p>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label htmlFor="start">Start Date</Label>

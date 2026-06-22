@@ -96,6 +96,29 @@ describe('generateDraftProgram', () => {
     expect(draft.name).toContain('[Draft]')
   })
 
+  it('carries the source program export_layout onto the draft', async () => {
+    const template = {
+      version: 1, orientation: 'vertical',
+      columns: [{ key: 'name', label: 'Exercise' }],
+      dayLabels: { style: 'dayN', language: 'en' }, rpeNotation: 'plain', colors: {}, fonts: {},
+    }
+    await getDb().updateTable('programs')
+      .set({ export_layout: JSON.stringify(template) })
+      .where('id', '=', completedProgramId)
+      .execute()
+
+    const result = await generateDraftProgram(completedProgramId, {
+      athleteId, templateId: 'strength_linear', weeks: 4, trainingDaysPerWeek: 3, startDate: '2026-03-30',
+    })
+
+    const draft = await getDb()
+      .selectFrom('programs').select(['export_layout'])
+      .where('id', '=', result.draftProgramId)
+      .executeTakeFirstOrThrow()
+    expect(draft.export_layout).not.toBeNull()
+    expect(JSON.parse(draft.export_layout!).orientation).toBe('vertical')
+  })
+
   it('creates correct number of workouts (weeks × days)', async () => {
     const result = await generateDraftProgram(completedProgramId, {
       athleteId,

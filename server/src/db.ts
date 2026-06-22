@@ -27,6 +27,17 @@ export interface ProgramTable {
   updated_at: string
   enabled_columns: string | null
   focus: string | null
+  export_layout: string | null         // JSON ExportLayoutTemplate, or null = generic export
+  export_template_xlsx: string | null  // base64 of the original imported .xlsx, for high-fidelity re-fill export
+}
+
+// Opt-in reusable saved styles (the import step's "save this style" toggle).
+export interface ExportStyleTable {
+  id: string
+  name: string
+  descriptor: string            // JSON ExportLayoutTemplate
+  template_xlsx: string | null  // base64 of the original .xlsx for re-fill export
+  created_at: string
 }
 
 export interface WorkoutTable {
@@ -100,6 +111,7 @@ export interface DB {
   progress_records: ProgressRecordTable
   athlete_maxes: AthleteMaxTable
   payments: PaymentTable
+  export_styles: ExportStyleTable
 }
 
 let _db: Kysely<DB> | null = null
@@ -197,6 +209,8 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await addColumnIfMissing('athletes', 'archived', 'INTEGER NOT NULL DEFAULT 0')
   await addColumnIfMissing('programs', 'enabled_columns', 'TEXT')
   await addColumnIfMissing('programs', 'focus', 'TEXT')
+  await addColumnIfMissing('programs', 'export_layout', 'TEXT')
+  await addColumnIfMissing('programs', 'export_template_xlsx', 'TEXT')
   await addColumnIfMissing('exercises', 'rest_time', 'TEXT')
   await addColumnIfMissing('exercises', 'intensity', 'TEXT')
   await addColumnIfMissing('exercises', 'load_used', 'TEXT')
@@ -282,4 +296,14 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   }
 
   await sql`CREATE INDEX IF NOT EXISTS idx_payments_athlete_id ON payments(athlete_id)`.execute(_db)
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS export_styles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      descriptor TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `.execute(_db)
+  await addColumnIfMissing('export_styles', 'template_xlsx', 'TEXT')
 }

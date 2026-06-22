@@ -55,6 +55,26 @@ async function commitGrid(grid: Cell[][], status = 'active', startDate = '2026-0
 }
 
 describe('commitExternalProgram', () => {
+  it('persists the captured export layout when one is provided', async () => {
+    const buf = await buildSheet(GRID)
+    const preview = await parseExternalFile(buf)
+    const { programId } = await commitExternalProgram(preview.exercises, {
+      athleteId, name: 'Styled Block', status: 'active', startDate: '2026-06-15',
+      weeks: preview.weeks, exportLayout: preview.layoutTemplate, templateXlsx: 'T0JJR0lOQUw=',
+    })
+    const program = await findProgramById(programId)
+    expect(program!.export_layout).not.toBeNull()
+    expect(program!.export_layout!.orientation).toBe('vertical')
+    expect(program!.export_layout!.columns.map((c) => c.key)).toContain('name')
+    expect(program!.export_template_xlsx).toBe('T0JJR0lOQUw=')
+  })
+
+  it('leaves export_layout null when none is provided', async () => {
+    const { programId } = await commitGrid(GRID)
+    const program = await findProgramById(programId)
+    expect(program!.export_layout).toBeNull()
+  })
+
   it('creates a program with one workout per (week,day) block in date order', async () => {
     const { programId } = await commitGrid(GRID)
     const program = await findProgramById(programId)

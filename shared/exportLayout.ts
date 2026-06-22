@@ -69,3 +69,92 @@ export function buildExportColumnKeys(enabledColumns: string[]): ExportColumnKey
 export function weekColumnStart(weekIndex: number, exportColumnCount: number): number {
   return FIXED_COLUMN_COUNT + 1 + weekIndex * (exportColumnCount + 1)
 }
+
+// ---------------------------------------------------------------------------
+// Export layout template — the captured "fingerprint" of a coach's own Excel
+// layout, so programs derived from an import re-export in the coach's style
+// rather than CoachBoard's generic look. Captured at import time (from the
+// uploaded file's structure + cell styling) and replayed by the exporter.
+//
+// NOTE: kept dependency-free on purpose (no import from ./types.js) so types.ts
+// can import this without a cycle. `ExportOrientation` mirrors the importer's
+// `ExternalLayout` union by value.
+// ---------------------------------------------------------------------------
+
+export type ExportOrientation = 'horizontal' | 'vertical' | 'block-grid' | 'week-grid'
+
+/** How a coach labels the day sections of their sheet. */
+export type DayLabelStyle =
+  | 'weekday'  // Monday, Tuesday … (or Swedish: Måndag, Tisdag …)
+  | 'dayN'     // Day 1, Day 2 … / DAY 1 …
+  | 'split'    // Upper, Lower, Push … (free-text section names)
+
+/** How RPE is written in the load/effort cells. */
+export type RpeNotation = 'plain' | 'at'   // "8"  vs  "@8"
+
+export interface ExportLayoutColumn {
+  key: ExportColumnKey
+  label: string   // the coach's own header wording (e.g. "Movement" vs "Discipline")
+}
+
+/** ARGB fill strings (ExcelJS form, e.g. "FFB39DDB"); null = use the default. */
+export interface ExportLayoutColors {
+  weekBanner?: string | null
+  dayHeader?: string | null
+  columnHeader?: string | null   // header cells for name/sets/reps/… (non-tracking)
+  trackingHeader?: string | null // header cells for load_used/rpe/load_cap (tracking)
+  body?: string | null
+}
+
+export interface ExportLayoutFonts {
+  headerBold?: boolean
+  headerItalic?: boolean
+  nameBold?: boolean   // bold the exercise-name cell on its first row
+}
+
+export interface ExportLayoutTemplate {
+  version: 1
+  orientation: ExportOrientation
+  columns: ExportLayoutColumn[]
+  dayLabels: {
+    style: DayLabelStyle
+    language: 'en' | 'sv'
+    // Explicit per-day-index labels captured from the source, when present
+    // (e.g. ['Tisdag', 'Torsdag', …]). Index 0 = Monday. Falls back to
+    // `style` + `language` defaults for any index without a captured label.
+    custom?: (string | null)[]
+  }
+  rpeNotation: RpeNotation
+  colors: ExportLayoutColors
+  fonts: ExportLayoutFonts
+}
+
+/** Weekday names by language, index 0 = Monday. Used to render `dayLabels`. */
+export const WEEKDAY_NAMES: Record<'en' | 'sv', string[]> = {
+  en: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+  sv: ['Måndag', 'Tisdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lördag', 'Söndag'],
+}
+
+/** Resolve the label for a given 0-based day index from a template's dayLabels. */
+export function dayLabelFor(
+  dayLabels: ExportLayoutTemplate['dayLabels'],
+  dayIndex: number,
+): string {
+  const custom = dayLabels.custom?.[dayIndex]
+  if (custom) return custom
+  if (dayLabels.style === 'dayN') return `Day ${dayIndex + 1}`
+  // 'weekday' (and 'split' with no captured custom label) fall back to weekday names
+  return WEEKDAY_NAMES[dayLabels.language][dayIndex] ?? `Day ${dayIndex + 1}`
+}
+
+/** Parse a stored export_layout JSON string into a template, or null if absent/invalid. */
+export function parseExportLayout(raw: string | null | undefined): ExportLayoutTemplate | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as ExportLayoutTemplate
+    if (parsed && parsed.version === 1 && parsed.orientation && Array.isArray(parsed.columns)) {
+      return parsed
+    }
+  } catch { /* fall through */ }
+  return null
+}
