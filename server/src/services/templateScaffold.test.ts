@@ -88,4 +88,50 @@ describe('renderScaffold', () => {
     const template = await buildTemplate()
     expect(await renderScaffold(template, program, [], [])).toBeNull()
   })
+
+  it('inserts rows when a day has more movements than the template (no overflow drop)', async () => {
+    const template = await buildTemplate() // day 1 has 2 movement rows
+    const workouts = [{ id: 'd1', scheduled_date: '2026-01-05' }]
+    const names = ['A', 'B', 'C', 'D', 'E'] // five movements into a 2-row template
+    const exercises = names.map((n, i) => ({
+      name: n, sets: '3', reps: '5', weight: 100, intensity: null, load_used: null, rpe: '8', order_index: i, workout_id: 'd1',
+    }))
+    const ws = await load((await renderScaffold(template, program, workouts, exercises))!)
+    const seen = new Set<string>()
+    ws.eachRow((row) => row.eachCell((c) => { if (typeof c.value === 'string') seen.add(c.value) }))
+    names.forEach((n) => expect(seen.has(n)).toBe(true))
+  })
+})
+
+// A vertical (weeks-stacked) template with chrome + a hyperlink. Header row 3;
+// week 1 rows 4-7, week 2 rows 8-11 (rowStride 4).
+async function buildVertical(): Promise<string> {
+  const wb = new ExcelJS.Workbook()
+  const ws = wb.addWorksheet('V')
+  ws.getCell('A1').value = 'My Program'
+  ws.getCell('B1').value = { text: 'Form', hyperlink: FORM_URL }
+  ;['Exercise', 'Sets', 'Reps', 'Load', 'RPE'].forEach((h, i) => { ws.getCell(3, 1 + i).value = h })
+  ws.getCell(4, 1).value = 'Week 1'; ws.getCell(5, 1).value = 'Day 1'
+  ;['Squat', 3, 5, 180, '@8'].forEach((v, i) => { ws.getCell(6, 1 + i).value = v })
+  ws.getCell(8, 1).value = 'Week 2'; ws.getCell(9, 1).value = 'Day 1'
+  ;['Squat', 3, 5, 185, '@8'].forEach((v, i) => { ws.getCell(10, 1 + i).value = v })
+  return Buffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer).toString('base64')
+}
+
+describe('renderScaffold — vertical (row-axis)', () => {
+  it('rebuilds a vertical template: own movement, chrome + link, one week, no remnants', async () => {
+    const out = await renderScaffold(await buildVertical(), program,
+      [{ id: 'd1', scheduled_date: '2026-01-05' }],
+      [{ name: 'Front Squat', sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rpe: '7', order_index: 0, workout_id: 'd1' }])
+    expect(out).not.toBeNull()
+    const ws = await load(out!)
+    expect((ws.getCell('B1').value as { hyperlink?: string }).hyperlink).toBe(FORM_URL)
+    const banners: string[] = []; let sawSquat = false; let sawFront = false
+    ws.eachRow((row) => row.eachCell((c) => {
+      if (typeof c.value === 'string') { if (/^Week \d+$/.test(c.value)) banners.push(c.value); if (c.value === 'Squat') sawSquat = true; if (c.value === 'Front Squat') sawFront = true }
+    }))
+    expect(banners).toEqual(['Week 1'])
+    expect(sawSquat).toBe(false)
+    expect(sawFront).toBe(true)
+  })
 })
