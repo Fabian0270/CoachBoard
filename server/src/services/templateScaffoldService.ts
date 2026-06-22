@@ -520,7 +520,23 @@ export async function renderScaffold(
     return hasSet && hasRep
   }
   const clearableRows: number[] = []
-  for (let r = firstMovementRow; r <= lastRow; r++) if (!isStructuralRow(r)) clearableRows.push(r)
+  // Day-section label rows (weekday or "Day n" in the block's lead column) — used
+  // to normalise the label across every week (templates are sometimes inconsistent,
+  // e.g. week 1 says "Tisdag" but weeks 2-3 say "Day 1").
+  const dayLabelRows: number[] = []
+  const isDayLabel = (v: ExcelJS.CellValue): boolean => {
+    if (typeof v !== 'string') return false
+    const t = v.trim()
+    return DAY_N.test(t) || (WEEKDAY.test(t) && t.length <= 10 && !/\d/.test(t))
+  }
+  for (let r = firstMovementRow; r <= lastRow; r++) {
+    if (!isStructuralRow(r)) clearableRows.push(r)
+  }
+  // Day labels can sit on the first day's header row (above the first movement),
+  // so scan the whole region from its top.
+  for (let r = regionTop; r <= lastRow; r++) {
+    if (isStructuralRow(r) && isDayLabel(ws.getCell(r, blockStart0).value)) dayLabelRows.push(r)
+  }
   // Shared movement-name column (when present) is cleared once across all weeks.
   if (geom.sharedNameCol !== null) {
     for (const r of clearableRows) ws.getCell(r, geom.sharedNameCol).value = null
@@ -563,6 +579,12 @@ export async function renderScaffold(
         }
       }
     }
+  }
+
+  // Normalise day-section labels to the first week's wording across every week.
+  for (const r of dayLabelRows) {
+    const canonical = ws.getCell(r, blockStart0).value
+    for (let w = 1; w < newWeeks; w++) ws.getCell(r, blockStart0 + w * stride).value = canonical
   }
 
   return Buffer.from((await ws.workbook.xlsx.writeBuffer()) as ArrayBuffer)

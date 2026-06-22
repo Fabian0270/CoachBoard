@@ -127,11 +127,13 @@ async function buildWeekdaySheet(): Promise<string> {
   ws.getCell(1, lead(0) + 1).value = 'Week 1'; ws.getCell(1, lead(1) + 1).value = 'Week 2'
   const head = ['Set', 'Reps', 'RPE', 'Load']
   // Day 1 = Tisdag shares the header row; Day 2 = Torsdag is a bare label row.
+  // Week 1 uses weekday labels; week 2 is inconsistent ("Day 1"/"Day 2") — the
+  // export should normalise it back to the week-1 wording.
   ;[0, 1].forEach((w) => {
-    ws.getCell(2, lead(w)).value = 'Tisdag'
+    ws.getCell(2, lead(w)).value = w === 0 ? 'Tisdag' : 'Day 1'
     head.forEach((h, i) => { ws.getCell(2, lead(w) + 1 + i).value = h })
     ws.getCell(3, lead(w)).value = 'Squat'; ;[3, 5, '@6', 180].forEach((v, i) => { ws.getCell(3, lead(w) + 1 + i).value = v })
-    ws.getCell(5, lead(w)).value = 'Torsdag'
+    ws.getCell(5, lead(w)).value = w === 0 ? 'Torsdag' : 'Day 2'
     ws.getCell(6, lead(w)).value = 'Bench'; ;[3, 8, '@7', 110].forEach((v, i) => { ws.getCell(6, lead(w) + 1 + i).value = v })
   })
   return Buffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer).toString('base64')
@@ -139,12 +141,14 @@ async function buildWeekdaySheet(): Promise<string> {
 
 describe('renderScaffold — weekday day-section labels', () => {
   it('keeps weekday section labels (Tisdag/Torsdag) instead of wiping them', async () => {
+    const mv = (wid: string, name: string) =>
+      ({ name, sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rpe: '7', order_index: 0, workout_id: wid })
     const out = await renderScaffold(await buildWeekdaySheet(), program,
-      [{ id: 'd1', scheduled_date: '2026-01-06' }, { id: 'd2', scheduled_date: '2026-01-08' }],
-      [
-        { name: 'Front Squat', sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rpe: '7', order_index: 0, workout_id: 'd1' },
-        { name: 'Incline Bench', sets: '3', reps: '10', weight: 60, intensity: null, load_used: null, rpe: '8', order_index: 0, workout_id: 'd2' },
-      ])
+      [ // two weeks, two days each (Tue + Thu)
+        { id: 'a1', scheduled_date: '2026-01-06' }, { id: 'a2', scheduled_date: '2026-01-08' },
+        { id: 'b1', scheduled_date: '2026-01-13' }, { id: 'b2', scheduled_date: '2026-01-15' },
+      ],
+      [mv('a1', 'Front Squat'), mv('a2', 'Incline Bench'), mv('b1', 'Front Squat'), mv('b2', 'Incline Bench')])
     const ws = await load(out!)
     const labels = new Set<string>()
     ws.eachRow((row) => row.eachCell((c) => { if (typeof c.value === 'string') labels.add(c.value) }))
@@ -153,6 +157,12 @@ describe('renderScaffold — weekday day-section labels', () => {
     expect(labels.has('Front Squat')).toBe(true)
     expect(labels.has('Incline Bench')).toBe(true)
     expect(labels.has('Squat')).toBe(false)    // source movement gone
+    // Week 2's inconsistent "Day 1"/"Day 2" labels are normalised away.
+    expect(labels.has('Day 1')).toBe(false)
+    expect(labels.has('Day 2')).toBe(false)
+    // Both week blocks carry the week-1 weekday wording.
+    expect(ws.getCell(2, 9).value).toBe('Tisdag')   // week 2 lead col, header row
+    expect(ws.getCell(5, 9).value).toBe('Torsdag')  // week 2 lead col, day-2 row
   })
 })
 
