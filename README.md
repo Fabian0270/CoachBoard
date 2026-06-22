@@ -1,6 +1,20 @@
 # CoachBoard
 
-A desktop application for coaches to manage athletes, training programs, and progress tracking. Built with Electron, React, and SQLite — runs fully offline with no cloud dependency.
+A desktop application for strength coaches to manage athletes, build and analyze training programs, and exchange programs with Excel. Built with Electron, React, and SQLite — runs fully offline with no cloud dependency or account required.
+
+---
+
+## Features
+
+- **Athlete management** — track athletes, their training maxes, and progress over time.
+- **Program builder** — create multi-week programs with workouts, exercises, and per-set prescriptions; copy/move training days, reorder exercises, and adjust program duration.
+- **Draft generation** — generate a starting draft program from an athlete's data and a built-in strength-training knowledge base (the coach always edits the final result).
+- **Program analysis & reports** — per-program reports with volume/intensity breakdowns and side-by-side program comparison.
+- **Excel import** — import existing programs from spreadsheets, including a tolerant parser for externally-formatted files.
+- **Excel export & style templates** — export programs to polished `.xlsx`, and capture a coach's spreadsheet layout as a reusable export style so new programs match their house format.
+- **Calculators** — RPE cheat sheet, 1RM estimates, and warm-up set suggestions.
+- **Payments** — track athlete payments and balances.
+- **Dark mode** — Light / Dark / System theme toggle.
 
 ---
 
@@ -11,7 +25,7 @@ A desktop application for coaches to manage athletes, training programs, and pro
 3. Run the installer and follow the prompts
 4. Launch **CoachBoard** from the Start Menu or Desktop shortcut
 
-The app stores all data locally in your user profile (`%APPDATA%\CoachBoard`). No account or internet connection required.
+The app stores all data locally in your user profile (`%APPDATA%`). No account or internet connection required.
 
 ---
 
@@ -20,11 +34,13 @@ The app stores all data locally in your user profile (`%APPDATA%\CoachBoard`). N
 | Layer | Technology |
 |---|---|
 | Desktop shell | Electron |
-| Frontend | React 18, Vite, Tailwind CSS |
+| Frontend | React 18, Vite, Tailwind CSS, React Router |
 | Backend | Express (embedded, localhost only) |
 | Database | SQLite via better-sqlite3 + Kysely |
+| Validation | Zod |
 | Charts | Recharts |
-| Excel export | ExcelJS |
+| Excel import/export | ExcelJS |
+| Tests | Vitest |
 
 ---
 
@@ -64,6 +80,13 @@ This starts three things concurrently:
 
 The Electron window connects to the Vite dev server, so React hot-reload works normally.
 
+### Useful scripts
+
+```bash
+npm run typecheck   # tsc --noEmit across client + server
+npm test            # Vitest suites for client + server
+```
+
 ---
 
 ## Building
@@ -85,8 +108,8 @@ npm run package
 ```
 
 Outputs to `dist-electron/`:
-- `CoachBoard Setup x.x.x.exe` — NSIS installer (~74 MB)
-- `win-unpacked/` — unpacked app directory (~244 MB)
+- `CoachBoard Setup x.x.x.exe` — NSIS installer
+- `win-unpacked/` — unpacked app directory
 
 ---
 
@@ -97,17 +120,20 @@ CoachBoard/
 ├── client/          # React frontend (Vite)
 │   └── src/
 │       ├── components/
-│       ├── pages/
+│       ├── pages/    # Dashboard, Athletes, Programs, Calculators, Payments, Excel Styles
 │       └── lib/
 ├── server/          # Express backend
 │   └── src/
-│       ├── routes/  # athletes, programs, progress
-│       ├── db.ts    # Kysely + SQLite setup
-│       └── app.ts   # Express app factory
+│       ├── routes/    # athletes, programs, progress, payments, style, exportStyles
+│       ├── services/  # program/import/export/analysis/suggestion/payment logic
+│       ├── db.ts      # Kysely + SQLite setup
+│       └── app.ts     # Express app factory
+├── shared/          # Code shared by client + server
+│                    # rpe, exercises, knowledge, payments, scoring, warmup, exportLayout, types
 ├── electron/        # Electron main process
 │   └── src/
 │       └── main.ts  # starts Express, opens BrowserWindow
-└── package.json     # npm workspaces root
+└── package.json     # npm workspaces root (client, server, shared, electron)
 ```
 
-The app runs Express on `localhost:3001` inside the Electron process. The React frontend talks to it via the `/api/*` routes. SQLite data is stored at `%APPDATA%\CoachBoard\coachboard.sqlite`.
+The app runs Express on `localhost:3001` inside the Electron process. The React frontend talks to it via the `/api/*` routes. SQLite data is stored in the app's `userData` directory under `%APPDATA%`.
