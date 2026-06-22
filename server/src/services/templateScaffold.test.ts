@@ -118,6 +118,44 @@ async function buildVertical(): Promise<string> {
   return Buffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer).toString('base64')
 }
 
+// A week-grid template whose day sections are weekday labels in the lead column
+// (English/Swedish), with the header on the first day's row. Block width 8.
+async function buildWeekdaySheet(): Promise<string> {
+  const wb = new ExcelJS.Workbook()
+  const ws = wb.addWorksheet('WD')
+  const lead = (w: number) => 1 + w * 8
+  ws.getCell(1, lead(0) + 1).value = 'Week 1'; ws.getCell(1, lead(1) + 1).value = 'Week 2'
+  const head = ['Set', 'Reps', 'RPE', 'Load']
+  // Day 1 = Tisdag shares the header row; Day 2 = Torsdag is a bare label row.
+  ;[0, 1].forEach((w) => {
+    ws.getCell(2, lead(w)).value = 'Tisdag'
+    head.forEach((h, i) => { ws.getCell(2, lead(w) + 1 + i).value = h })
+    ws.getCell(3, lead(w)).value = 'Squat'; ;[3, 5, '@6', 180].forEach((v, i) => { ws.getCell(3, lead(w) + 1 + i).value = v })
+    ws.getCell(5, lead(w)).value = 'Torsdag'
+    ws.getCell(6, lead(w)).value = 'Bench'; ;[3, 8, '@7', 110].forEach((v, i) => { ws.getCell(6, lead(w) + 1 + i).value = v })
+  })
+  return Buffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer).toString('base64')
+}
+
+describe('renderScaffold — weekday day-section labels', () => {
+  it('keeps weekday section labels (Tisdag/Torsdag) instead of wiping them', async () => {
+    const out = await renderScaffold(await buildWeekdaySheet(), program,
+      [{ id: 'd1', scheduled_date: '2026-01-06' }, { id: 'd2', scheduled_date: '2026-01-08' }],
+      [
+        { name: 'Front Squat', sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rpe: '7', order_index: 0, workout_id: 'd1' },
+        { name: 'Incline Bench', sets: '3', reps: '10', weight: 60, intensity: null, load_used: null, rpe: '8', order_index: 0, workout_id: 'd2' },
+      ])
+    const ws = await load(out!)
+    const labels = new Set<string>()
+    ws.eachRow((row) => row.eachCell((c) => { if (typeof c.value === 'string') labels.add(c.value) }))
+    expect(labels.has('Tisdag')).toBe(true)
+    expect(labels.has('Torsdag')).toBe(true)   // previously wiped — the bug this guards
+    expect(labels.has('Front Squat')).toBe(true)
+    expect(labels.has('Incline Bench')).toBe(true)
+    expect(labels.has('Squat')).toBe(false)    // source movement gone
+  })
+})
+
 describe('renderScaffold — vertical (row-axis)', () => {
   it('rebuilds a vertical template: own movement, chrome + link, one week, no remnants', async () => {
     const out = await renderScaffold(await buildVertical(), program,

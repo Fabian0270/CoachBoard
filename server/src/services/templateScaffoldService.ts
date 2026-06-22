@@ -35,6 +35,9 @@ type WorkoutRow = { id: string; scheduled_date: string | null }
 type ProgramRow = { start_date: string | null }
 
 const WEEK_BANNER = /^week\s*\d+$/i
+// English + Swedish weekday day-section labels (incl. ASCII-stripped forms).
+const WEEKDAY = /^(mon|tue|wed|thu|fri|sat|sun|mån|man|tis|ons|tor|fre|lör|lor|sön|son)/i
+const DAY_N = /^day\s*\d+/i
 
 function daysBetween(a: string, b: string): number {
   const [ay, am, ad] = a.split('-').map(Number)
@@ -497,16 +500,22 @@ export async function renderScaffold(
   const firstMovementRow = Math.min(...allSlots.map((s) => s.row))
   const dataWidth = Math.max(...allSlots.flatMap((s) =>
     [s.rel.name, s.rel.sets, s.rel.reps, s.rel.load, s.rel.rpe, s.rel.erpe].filter((n): n is number => n !== null))) + 1
-  const DAY_LABEL = /^day\s*\d+/i
+  const slotRows = new Set(allSlots.map((s) => s.row))
   const isStructuralRow = (r: number): boolean => {
+    // A movement row that holds parsed exercises is never structural — it gets
+    // refilled. Everything else with day/week/header markers must be preserved.
+    if (slotRows.has(r)) return false
     let hasSet = false, hasRep = false
     for (let off = 0; off < dataWidth; off++) {
       const v = ws.getCell(r, blockStart0 + off).value
       if (typeof v !== 'string') continue
-      if (WEEK_BANNER.test(v) || DAY_LABEL.test(v.trim())) return true
-      const t = v.trim().toLowerCase()
-      if (/\bsets?\b/.test(t)) hasSet = true
-      if (/\breps?\b/.test(t)) hasRep = true
+      const t = v.trim()
+      if (WEEK_BANNER.test(t) || DAY_N.test(t)) return true
+      // Weekday day-section label (e.g. "Torsdag") in a non-movement row.
+      if (WEEKDAY.test(t) && t.length <= 10 && !/\d/.test(t)) return true
+      const lower = t.toLowerCase()
+      if (/\bsets?\b/.test(lower)) hasSet = true
+      if (/\breps?\b/.test(lower)) hasRep = true
     }
     return hasSet && hasRep
   }
