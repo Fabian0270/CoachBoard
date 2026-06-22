@@ -231,9 +231,12 @@ export interface ExternalExerciseRow {
   loadCap?: number | null    // "Load Cap" — prescribed weight
   restTime?: string | null   // "Rest Time"
   // Server-internal: absolute 1-based worksheet columns for each writable field
-  // on this row (sheetRow). Used only by the template re-fill engine to overwrite
-  // the original file's data cells; ignored by capture/commit and the client.
+  // on this row (sheetRow). Used only by the scaffold export engine to locate and
+  // rewrite the original file's cells; ignored by capture/commit and the client.
+  // `name` may be a per-week column or a single shared column (same value across
+  // weeks ⇒ a shared movement-name column, as in some horizontal layouts).
   refillCols?: {
+    name: number | null
     sets: number | null
     reps: number | null
     load: number | null

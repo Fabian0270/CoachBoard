@@ -1,20 +1,23 @@
 import ExcelJS from 'exceljs'
-import { analyzeScaffold, type ScaffoldGeometry } from './externalImportService.js'
+import { parseExternalFile } from './externalImportService.js'
+import type { ExternalExerciseRow } from 'coachboard-shared'
 
 // ---------------------------------------------------------------------------
-// Scaffold export (Feature: export style templates v2).
+// Scaffold export (Feature: export style templates v2) — LAYOUT-AGNOSTIC.
 //
-// A saved style is treated as a reusable SCAFFOLD, not a fixed file:
-//   • the chrome (decorative boxes, Coach Notes, the working form-link button)
-//     is copied verbatim once;
-//   • ONE week-block's structure + cell styles (colours, fonts, borders, the
-//     column layout incl. eRPE) is captured and re-stamped per week;
-//   • all content — week count, days, movements, numbers — comes from the NEW
-//     program, so nothing from the source program leaks through.
+// A saved style is the coach's real .xlsx. To export a program "in that style"
+// we CLONE the file (so chrome, the form-link button, merged boxes, fonts,
+// borders and exact layout are preserved byte-for-byte) and then, driven purely
+// by the cell positions the parser already extracts for ANY layout:
+//   • add or remove whole WEEK-BLOCKS so the sheet has exactly the new program's
+//     week count (a 1-week program from a 4-week style ⇒ one week);
+//   • rewrite the movement names + numbers from the NEW program and clear the
+//     rest, so nothing from the source program remains.
 //
-// Generic over any block-grid sheet (no per-file hardcoding). Returns null when
-// the sheet isn't a block-grid we can analyse, so the caller falls back to the
-// descriptor renderer.
+// Nothing is hardcoded per layout: weeks-as-columns sheets (block-grid /
+// week-grid / horizontal) are all handled through one column-axis code path
+// derived from each row's detected data-cell columns. Row-axis (vertical) sheets
+// return null and the caller falls back to the descriptor renderer.
 // ---------------------------------------------------------------------------
 
 type ExerciseRow = {
@@ -31,10 +34,12 @@ type ExerciseRow = {
 type WorkoutRow = { id: string; scheduled_date: string | null }
 type ProgramRow = { start_date: string | null }
 
-function daysBetween(fromIso: string, toIso: string): number {
-  const [fy, fm, fd] = fromIso.split('-').map(Number)
-  const [ty, tm, td] = toIso.split('-').map(Number)
-  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000)
+const WEEK_BANNER = /^week\s*\d+$/i
+
+function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number)
+  const [by, bm, bd] = b.split('-').map(Number)
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000)
 }
 function mondayIso(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number)
@@ -60,12 +65,140 @@ function rpeValue(ex: ExerciseRow): string | null {
   return null
 }
 
-// One movement slot in the canonical structure (shared row across all weeks).
-interface Slot { name: string; row: number }
-interface Day { seqDay: number; dayHeaderRow: number; colHeaderRow: number; slots: Slot[] }
+/** A1 column letters → 1-based column number. */
+function colNum(letters: string): number {
+  let n = 0
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64)
+  return n
+}
+
+/**
+ * Rebuild columns 1..lastCol of a sheet into a fresh worksheet, preserving cell
+ * values, styles, hyperlinks, merges, widths and row heights. Used to drop
+ * trailing week-blocks reliably (unlike spliceColumns, which drops hyperlinks).
+ * Formulas are blanked — a re-filled block starts fresh and a copied shared
+ * formula would have no master.
+ */
+function copyColumnPrefix(src: ExcelJS.Worksheet, lastCol: number, maxRow: number): ExcelJS.Worksheet {
+  const wb = new ExcelJS.Workbook()
+  const dst = wb.addWorksheet(src.name)
+  for (let c = 1; c <= lastCol; c++) {
+    const w = src.getColumn(c).width
+    if (w) dst.getColumn(c).width = w
+  }
+  for (let r = 1; r <= maxRow; r++) {
+    const sr = src.getRow(r)
+    if (sr.height) dst.getRow(r).height = sr.height
+    for (let c = 1; c <= lastCol; c++) {
+      const sc = src.getCell(r, c)
+      const dc = dst.getCell(r, c)
+      dc.style = sc.style
+      if (sc.type === ExcelJS.ValueType.Formula) dc.value = null
+      else if (sc.hyperlink) dc.value = { text: String(sc.text ?? ''), hyperlink: sc.hyperlink }
+      else dc.value = sc.value
+    }
+  }
+  const merges: string[] = (src.model?.merges as string[] | undefined)
+    ?? Object.keys((src as unknown as { _merges?: Record<string, unknown> })._merges ?? {})
+  for (const range of merges) {
+    const m = range.match(/^[A-Z]+\d+:([A-Z]+)(\d+)$/)
+    if (m && colNum(m[1]) <= lastCol && Number(m[2]) <= maxRow) {
+      try { dst.mergeCells(range) } catch { /* ignore overlaps */ }
+    }
+  }
+  return dst
+}
+
+interface RelCols { name: number | null; sets: number | null; reps: number | null; load: number | null; rpe: number | null; erpe: number | null }
+// A movement row of the template's FIRST week — the row skeleton replicated across weeks.
+interface Slot { row: number; rel: RelCols; sharedNameCol: number | null }
+interface DaySkel { dayIndex: number; slots: Slot[] }
+
+interface ColumnGeometry {
+  blockStart0: number   // 1-based col where week-0's block data starts
+  stride: number        // columns between consecutive weeks (incl. any gap)
+  templateWeeks: number
+  sharedNameCol: number | null // a single movement-name column shared by all weeks, else null
+  days: DaySkel[]
+  bannerRow: number     // first row carrying a "Week n" banner
+  lastRow: number       // last movement row
+}
+
+/** Derive the column-axis geometry from the parser's per-row data-cell positions. */
+function deriveColumnGeometry(tEx: ExternalExerciseRow[]): ColumnGeometry | null {
+  const weeks = [...new Set(tEx.map((e) => e.weekIndex))].sort((a, b) => a - b)
+  if (weeks.length === 0) return null
+
+  const nameColOf = (w: number) => {
+    const names = tEx.filter((e) => e.weekIndex === w).map((e) => e.refillCols!.name).filter((n): n is number => n !== null)
+    return names.length ? Math.min(...names) : null
+  }
+  // A single movement-name column reused by every week ⇒ a shared name column
+  // (some horizontal layouts); otherwise the name lives inside each week-block.
+  const name0 = nameColOf(weeks[0])
+  const name1 = weeks.length >= 2 ? nameColOf(weeks[1]) : null
+  const sharedNameCol = name0 !== null && name0 === name1 ? name0 : null
+
+  // Columns that belong to a week-block: data fields always, plus the name when
+  // it is per-block (so the block start covers the whole block, not just data).
+  const blockCols = (e: ExternalExerciseRow): number[] => {
+    const c = e.refillCols!
+    const cols = [c.sets, c.reps, c.load, c.rpe, c.erpe]
+    if (sharedNameCol === null) cols.push(c.name)
+    return cols.filter((n): n is number => n !== null)
+  }
+  const blockStartOf = (w: number) => {
+    const cols = tEx.filter((e) => e.weekIndex === w).flatMap(blockCols)
+    return cols.length ? Math.min(...cols) : Infinity
+  }
+
+  const start0 = blockStartOf(weeks[0])
+  if (!isFinite(start0)) return null
+
+  // Column axis = the block start advances across weeks. (Row axis ⇒ vertical ⇒ caller falls back.)
+  let stride: number
+  if (weeks.length >= 2) {
+    const start1 = blockStartOf(weeks[1])
+    if (!isFinite(start1) || start1 <= start0) return null // not column-axis
+    stride = (start1 - start0) / (weeks[1] - weeks[0])
+  } else {
+    const maxCol = Math.max(...tEx.flatMap(blockCols))
+    stride = maxCol - start0 + 2 // single-week template: best-effort block width + 1 gap
+  }
+
+  // Row skeleton from the first week, grouped into days (preserving sheet order).
+  const week0 = tEx.filter((e) => e.weekIndex === weeks[0]).sort((a, b) => a.sheetRow - b.sheetRow)
+  const days: DaySkel[] = []
+  for (const e of week0) {
+    const c = e.refillCols!
+    const rel: RelCols = {
+      name: sharedNameCol === null && c.name !== null ? c.name - start0 : null,
+      sets: c.sets !== null ? c.sets - start0 : null,
+      reps: c.reps !== null ? c.reps - start0 : null,
+      load: c.load !== null ? c.load - start0 : null,
+      rpe: c.rpe !== null ? c.rpe - start0 : null,
+      erpe: c.erpe !== null ? c.erpe - start0 : null,
+    }
+    let day = days.find((d) => d.dayIndex === e.dayIndex)
+    if (!day) { day = { dayIndex: e.dayIndex, slots: [] }; days.push(day) }
+    day.slots.push({ row: e.sheetRow, rel, sharedNameCol })
+  }
+  if (days.length === 0) return null
+
+  const bannerRow = Math.min(...week0.map((e) => e.sheetRow))
+  return {
+    blockStart0: start0,
+    stride,
+    templateWeeks: weeks.length,
+    sharedNameCol,
+    days,
+    bannerRow,
+    lastRow: Math.max(...tEx.map((e) => e.sheetRow)),
+  }
+}
 
 /** Group the new program's exercises into weeks → sequential days → ordered movements. */
-function buildProgramStructure(program: ProgramRow, workouts: WorkoutRow[], exercises: ExerciseRow[]) {
+function buildProgramContent(program: ProgramRow, workouts: WorkoutRow[], exercises: ExerciseRow[]) {
   const startMonday = mondayIso(program.start_date!)
   const dateByWorkout = new Map<string, string>()
   for (const w of workouts) if (w.scheduled_date) dateByWorkout.set(w.id, w.scheduled_date)
@@ -81,7 +214,6 @@ function buildProgramStructure(program: ProgramRow, workouts: WorkoutRow[], exer
   }
   if (located.length === 0) return null
 
-  // Sequential day index within each week (calendar weekday → 0,1,2…).
   const weeks = [...new Set(located.map((l) => l.week))].sort((a, b) => a - b)
   const seqByWeek = new Map<number, Map<number, number>>()
   for (const w of weeks) {
@@ -89,29 +221,15 @@ function buildProgramStructure(program: ProgramRow, workouts: WorkoutRow[], exer
     seqByWeek.set(w, new Map(days.map((d, i) => [d, i])))
   }
 
-  // Per (week, seqDay) ordered exercise list.
-  const byWeekDay = new Map<string, ExerciseRow[]>()
-  for (const l of located) {
-    const seq = seqByWeek.get(l.week)!.get(l.day)!
-    const key = `${l.week}-${seq}`
-    if (!byWeekDay.has(key)) byWeekDay.set(key, [])
-    byWeekDay.get(key)!.push(l.ex)
-  }
-  for (const list of byWeekDay.values()) list.sort((a, b) => a.order_index - b.order_index)
-
-  // Canonical day list: union of seqDays; per day, the longest movement list seen.
-  const seqDays = [...new Set([...byWeekDay.keys()].map((k) => Number(k.split('-')[1])))].sort((a, b) => a - b)
-  const canonicalNames = new Map<number, string[]>()
-  for (const sd of seqDays) {
-    let names: string[] = []
-    for (const w of weeks) {
-      const list = byWeekDay.get(`${w}-${sd}`) ?? []
-      if (list.length > names.length) names = list.map((e) => e.name)
-    }
-    canonicalNames.set(sd, names)
-  }
-
-  return { weeks, seqDays, canonicalNames, byWeekDay }
+  // content[weekSeq][daySeq] = ordered exercises
+  const content: ExerciseRow[][][] = weeks.map(() => [])
+  located.forEach((l) => {
+    const wSeq = weeks.indexOf(l.week)
+    const dSeq = seqByWeek.get(l.week)!.get(l.day)!
+    ;(content[wSeq][dSeq] ??= []).push(l.ex)
+  })
+  for (const week of content) for (const day of week) day?.sort((a, b) => a.order_index - b.order_index)
+  return { weekCount: weeks.length, content }
 }
 
 export async function renderScaffold(
@@ -123,129 +241,138 @@ export async function renderScaffold(
   if (!program.start_date) return null
   const buffer = Buffer.from(templateBase64, 'base64')
 
-  const geom = await analyzeScaffold(buffer)
-  if (!geom) return null
+  const preview = await parseExternalFile(buffer)
+  const tEx = preview.exercises.filter((e) => e.refillCols && e.refillCols.sets !== null)
+  if (tEx.length === 0) return null
 
-  const structure = buildProgramStructure(program, workouts, exercises)
-  if (!structure || structure.weeks.length === 0) return null
-  const { weeks, seqDays, canonicalNames, byWeekDay } = structure
+  const geom = deriveColumnGeometry(tEx)
+  if (!geom) return null // row-axis / undetectable ⇒ caller falls back to the descriptor renderer
 
-  // Source workbook = style provider (read styles, chrome, merges, widths).
-  const srcWb = new ExcelJS.Workbook()
-  await srcWb.xlsx.load(buffer as unknown as ArrayBuffer)
-  const src = srcWb.worksheets[0]
-  if (!src) return null
+  const prog = buildProgramContent(program, workouts, exercises)
+  if (!prog || prog.weekCount === 0) return null
+  const newWeeks = prog.weekCount
 
-  // Build the row skeleton (shared across all week-blocks) from the canonical days.
-  let r = geom.bannerRow
-  const days: Day[] = []
-  for (const sd of seqDays) {
-    const names = canonicalNames.get(sd) ?? []
-    const dayHeaderRow = r
-    const colHeaderRow = r + 1
-    const slots: Slot[] = names.map((name, i) => ({ name, row: colHeaderRow + 1 + i }))
-    days.push({ seqDay: sd, dayHeaderRow, colHeaderRow, slots })
-    r = colHeaderRow + 1 + slots.length + 1 // movements + one blank separator row
+  // Clone the original (keeps chrome, form link, merges, styles intact).
+  const wb = new ExcelJS.Workbook()
+  await wb.xlsx.load(buffer as unknown as ArrayBuffer)
+  let ws = wb.worksheets[0]
+  if (!ws) return null
+
+  const { blockStart0, stride, templateWeeks, lastRow } = geom
+
+  // The block region's top row = the first "Week n" banner (above the movement
+  // rows). Copying/renumbering uses this so banners + headers are included and
+  // top-row chrome (e.g. the form-link button) is never duplicated into a week.
+  let regionTop = geom.bannerRow
+  for (let r = 1; r <= lastRow; r++) {
+    let hit = false
+    for (let c = blockStart0; c < blockStart0 + stride * templateWeeks; c++) {
+      const v = ws.getCell(r, c).value
+      if (typeof v === 'string' && WEEK_BANNER.test(v)) { hit = true; break }
+    }
+    if (hit) { regionTop = r; break }
   }
 
-  // Output workbook.
-  const outWb = new ExcelJS.Workbook()
-  const out = outWb.addWorksheet(geom.sheetName)
-
-  // 1. Copy the chrome region verbatim (values, styles, hyperlinks, row heights).
-  for (let row = 1; row <= geom.chromeRows; row++) {
-    const srcRow = src.getRow(row)
-    const outRow = out.getRow(row)
-    if (srcRow.height) outRow.height = srcRow.height
-    srcRow.eachCell({ includeEmpty: false }, (cell, col) => {
-      const oc = out.getCell(row, col)
-      oc.value = cell.value          // hyperlink cells carry {text, hyperlink}
-      oc.style = cell.style
-    })
-  }
-  // Re-create merges that live entirely within the chrome region.
-  const merges: string[] = (src.model?.merges as string[] | undefined)
-    ?? Object.keys((src as unknown as { _merges?: Record<string, unknown> })._merges ?? {})
-  for (const range of merges) {
-    const m = range.match(/^[A-Z]+(\d+):[A-Z]+(\d+)$/)
-    if (m && Number(m[1]) <= geom.chromeRows && Number(m[2]) <= geom.chromeRows) {
-      try { out.mergeCells(range) } catch { /* ignore overlaps */ }
+  // 1. Make the sheet hold exactly `newWeeks` week-blocks.
+  if (newWeeks < templateWeeks) {
+    // Drop the extra trailing week-blocks by rebuilding a column-prefix into a
+    // fresh sheet. (ExcelJS spliceColumns corrupts hyperlinks, so we don't use it.)
+    const lastKeptCol = blockStart0 + newWeeks * stride - 1
+    ws = copyColumnPrefix(ws, lastKeptCol, lastRow)
+  } else if (newWeeks > templateWeeks) {
+    // Append copies of week-0's block (banner row downward only, so top-row chrome
+    // such as the form-link button is never duplicated into new weeks).
+    for (let w = templateWeeks; w < newWeeks; w++) {
+      const destBase = blockStart0 + w * stride
+      for (let off = 0; off < stride; off++) {
+        const srcCol = blockStart0 + off
+        const dstCol = destBase + off
+        const width = ws.getColumn(srcCol).width
+        if (width) ws.getColumn(dstCol).width = width
+        for (let r = regionTop; r <= lastRow; r++) {
+          const sc = ws.getCell(r, srcCol)
+          const dc = ws.getCell(r, dstCol)
+          dc.style = sc.style
+          // Never clone a formula (e.g. e1RM): a copied shared-formula has no
+          // master and breaks the writer — appended weeks start blank anyway.
+          dc.value = sc.type === ExcelJS.ValueType.Formula ? null : sc.value
+        }
+      }
     }
   }
 
-  // 2. Column widths: chrome columns from source; block columns by offset.
-  const totalWeeks = weeks.length
-  const lastCol = geom.blockStartCol + totalWeeks * geom.blockWidth
-  for (let col = 1; col < geom.blockStartCol; col++) {
-    const w = src.getColumn(col).width
-    if (w) out.getColumn(col).width = w
-  }
-  for (let w = 0; w < totalWeeks; w++) {
-    const base = geom.blockStartCol + w * geom.blockWidth
-    geom.colWidths.forEach((width, off) => { if (width) out.getColumn(base + off).width = width })
-  }
-  void lastCol
-
-  // 3. Captured style prototypes + day-label format from the source.
-  const styleAt = ([row, col]: [number, number]) => src.getCell(row, col).style
-  const dayProto = styleAt(geom.styleRefs.dayBanner)
-  const weekProto = styleAt(geom.styleRefs.weekBanner)
-  const headerProto = styleAt(geom.styleRefs.header)
-  const nameProto = styleAt(geom.styleRefs.name)
-  const bodyProto = styleAt(geom.styleRefs.body)
-
-  const dayLabelText = String(src.getCell(...geom.styleRefs.dayBanner).text ?? 'DAY 1')
-  const dayLabel = (i: number) => dayLabelText.replace(/\d+/, String(i + 1)) || `DAY ${i + 1}`
-
-  const rpeCol = geom.columns.find((c) => c.key === 'rpe')
-  const rpeAt = rpeCol
-    ? String(src.getCell(geom.firstDataRow, geom.blockStartCol + rpeCol.offset).text ?? '').trim().startsWith('@')
+  // 2. @-RPE notation, sampled from the source.
+  const rpeSlot = geom.days.flatMap((d) => d.slots).find((s) => s.rel.rpe !== null)
+  const rpeAt = rpeSlot
+    ? String(ws.getCell(rpeSlot.row, blockStart0 + rpeSlot.rel.rpe!).text ?? '').trim().startsWith('@')
     : false
   const fmtRpe = (v: string | null) => (v === null ? null : rpeAt && !v.startsWith('@') ? `@${v}` : v)
 
-  // 4. Stamp one styled, content-filled block per program week.
-  weeks.forEach((weekNo, wIdx) => {
-    const base = geom.blockStartCol + wIdx * geom.blockWidth
-    for (let di = 0; di < days.length; di++) {
-      const day = days[di]
-
-      // Day banner (lead col) + the "Week n" banner on day 0's row.
-      const dayCell = out.getCell(day.dayHeaderRow, base)
-      dayCell.value = dayLabel(di)
-      dayCell.style = dayProto
-      if (di === 0) {
-        const wkCell = out.getCell(day.dayHeaderRow, base + geom.weekBannerOffset)
-        wkCell.value = `Week ${wIdx + 1}`
-        wkCell.style = weekProto
-      }
-
-      // Column header row.
-      for (const col of geom.columns) {
-        const hc = out.getCell(day.colHeaderRow, base + col.offset)
-        hc.value = col.label
-        hc.style = headerProto
-      }
-
-      // Movement rows for this week.
-      const list = byWeekDay.get(`${weekNo}-${day.seqDay}`) ?? []
-      day.slots.forEach((slot, i) => {
-        const ex = list[i] ?? null
-        for (const col of geom.columns) {
-          const cell = out.getCell(slot.row, base + col.offset)
-          cell.style = col.key === 'name' ? nameProto : bodyProto
-          if (col.key === 'name') { cell.value = slot.name || null; continue }
-          if (!ex) { cell.value = null; continue }
-          switch (col.key) {
-            case 'sets': cell.value = ex.sets ?? null; break
-            case 'reps': cell.value = ex.reps ?? null; break
-            case 'load': { const lv = loadValue(ex); cell.value = lv === null ? null : lv; break }
-            case 'rpe': cell.value = fmtRpe(rpeValue(ex)); break
-            case 'erpe': cell.value = null; break // executed RPE always blank in a fresh block
-          }
-        }
-      })
+  // Movement-area rows to wipe before refilling — covers spacer / placeholder name
+  // rows the parser skips (otherwise the source's movement names linger). Keeps
+  // structural rows (Week banners, "DAY n" labels, repeated column headers).
+  const allSlots = geom.days.flatMap((d) => d.slots)
+  const firstMovementRow = Math.min(...allSlots.map((s) => s.row))
+  const dataWidth = Math.max(...allSlots.flatMap((s) =>
+    [s.rel.name, s.rel.sets, s.rel.reps, s.rel.load, s.rel.rpe, s.rel.erpe].filter((n): n is number => n !== null))) + 1
+  const DAY_LABEL = /^day\s*\d+/i
+  const isStructuralRow = (r: number): boolean => {
+    let hasSet = false, hasRep = false
+    for (let off = 0; off < dataWidth; off++) {
+      const v = ws.getCell(r, blockStart0 + off).value
+      if (typeof v !== 'string') continue
+      if (WEEK_BANNER.test(v) || DAY_LABEL.test(v.trim())) return true
+      const t = v.trim().toLowerCase()
+      if (/\bsets?\b/.test(t)) hasSet = true
+      if (/\breps?\b/.test(t)) hasRep = true
     }
-  })
+    return hasSet && hasRep
+  }
+  const clearableRows: number[] = []
+  for (let r = firstMovementRow; r <= lastRow; r++) if (!isStructuralRow(r)) clearableRows.push(r)
+  // Shared movement-name column (when present) is cleared once across all weeks.
+  if (geom.sharedNameCol !== null) {
+    for (const r of clearableRows) ws.getCell(r, geom.sharedNameCol).value = null
+  }
 
-  return Buffer.from((await outWb.xlsx.writeBuffer()) as ArrayBuffer)
+  // 3. Rewrite every week-block from the new program; clear unfilled slots.
+  for (let w = 0; w < newWeeks; w++) {
+    const base = blockStart0 + w * stride
+    // Wipe the movement area of this block so no source movements remain.
+    for (const r of clearableRows) {
+      for (let off = 0; off < dataWidth; off++) ws.getCell(r, base + off).value = null
+    }
+    geom.days.forEach((day, dSeq) => {
+      const dayExs = prog.content[w]?.[dSeq] ?? []
+      day.slots.forEach((slot, i) => {
+        const ex = dayExs[i] ?? null
+        const set = (col: number | null, value: ExcelJS.CellValue) => {
+          if (col !== null) ws.getCell(slot.row, base + col).value = value
+        }
+        // Name: per-block column, or a single shared column (written once, on week 0).
+        if (slot.sharedNameCol !== null) {
+          if (w === 0) ws.getCell(slot.row, slot.sharedNameCol).value = ex ? ex.name : null
+        } else {
+          set(slot.rel.name, ex ? ex.name : null)
+        }
+        set(slot.rel.sets, ex ? ex.sets ?? null : null)
+        set(slot.rel.reps, ex ? ex.reps ?? null : null)
+        set(slot.rel.load, ex ? (loadValue(ex) ?? null) : null)
+        set(slot.rel.rpe, ex ? fmtRpe(rpeValue(ex)) : null)
+        set(slot.rel.erpe, null) // executed RPE always blank in a fresh block
+      })
+    })
+
+    // Renumber the week banner inside this block.
+    for (let r = regionTop; r <= lastRow; r++) {
+      for (let c = base; c < base + stride; c++) {
+        const cell = ws.getCell(r, c)
+        if (typeof cell.value === 'string' && WEEK_BANNER.test(cell.value)) {
+          cell.value = `Week ${w + 1}`
+        }
+      }
+    }
+  }
+
+  return Buffer.from((await ws.workbook.xlsx.writeBuffer()) as ArrayBuffer)
 }

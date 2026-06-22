@@ -456,124 +456,6 @@ export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportP
 }
 
 // ---------------------------------------------------------------------------
-// Scaffold analysis (Feature: export style templates v2) — describe a block-grid
-// sheet's STRUCTURE so the scaffold generator can rebuild it for an arbitrary
-// program: where the chrome (decorations + form link) lives, where week-blocks
-// start, the column layout inside a block (incl. eRPE), and which original cells
-// to copy styles from. Generic over any block-grid file — no per-file hardcoding.
-//
-// Only the block-grid family is analysed here (the common coach layout: weeks as
-// side-by-side blocks whose lead column holds "DAY n" sections with the
-// Movement/Sets/Reps header repeated under each day). Other layouts return null
-// and the caller falls back to the descriptor renderer.
-// ---------------------------------------------------------------------------
-
-export type ScaffoldColKey = 'name' | 'sets' | 'reps' | 'load' | 'rpe' | 'erpe'
-
-export interface ScaffoldColumn {
-  offset: number   // column offset within a week-block (0 = lead/name column)
-  key: ScaffoldColKey
-  label: string    // header wording from the source ("Movement", "LOAD", "eRPE", …)
-}
-
-export interface ScaffoldGeometry {
-  sheetName: string
-  chromeRows: number          // rows 1..chromeRows copied verbatim (boxes + form link)
-  bannerRow: number           // source row of the first "DAY 1 | Week 1" banner
-  headerRow: number           // source row of the Movement/Sets/Reps header
-  firstDataRow: number        // source row of the first movement
-  blockStartCol: number       // 1-based lead column of week-0's block
-  blockWidth: number          // columns per week INCLUDING the trailing gap
-  weekBannerOffset: number    // offset within a block where "Week n" sits
-  columns: ScaffoldColumn[]   // ordered columns inside a block (name + sets/reps/load/rpe[/erpe])
-  // Source cells to copy cell styles from (1-based [row, col]).
-  styleRefs: {
-    dayBanner: [number, number]   // the "DAY 1" lead cell on the banner row
-    weekBanner: [number, number]  // the "Week 1" cell
-    header: [number, number]      // a column-header cell
-    name: [number, number]        // a movement-name cell
-    body: [number, number]        // a numeric data cell
-  }
-  colWidths: Array<number | undefined>  // width per block column (index = offset)
-}
-
-export async function analyzeScaffold(buffer: Buffer): Promise<ScaffoldGeometry | null> {
-  const wb = new ExcelJS.Workbook()
-  await wb.xlsx.load(buffer as unknown as ArrayBuffer)
-  const ws = wb.worksheets[0]
-  if (!ws) return null
-
-  const maxCol = Math.max(ws.columnCount || 0, 1)
-  const maxRow = ws.rowCount || 0
-  const readRow = makeReadRow(ws, maxCol)
-
-  const banner = findWeekBannerRow(readRow, maxRow)
-  if (!banner) return null
-  const blockStarts = detectBlockGridStarts(readRow, banner)
-  if (!blockStarts || blockStarts.length === 0) return null // block-grid family only
-
-  const blockStartCol = blockStarts[0]
-  const blockWidth = blockStarts.length >= 2 ? blockStarts[1] - blockStarts[0] : 8
-  const weekBannerOffset = banner.weekCols[0] - blockStartCol
-
-  // Header row: first row at/after the banner whose first block holds Sets+Reps.
-  let headerRow = 0
-  const limit = Math.min(maxRow, banner.row + 8)
-  for (let r = banner.row; r <= limit; r++) {
-    const b0 = readRow(r).slice(blockStartCol - 1, blockStartCol - 1 + blockWidth).join(' ').toLowerCase()
-    if (/\bset/.test(b0) && /\brep/.test(b0)) { headerRow = r; break }
-  }
-  if (!headerRow) return null
-
-  const headerCells = readRow(headerRow)
-  const fields = resolveGridFields(headerCells, blockStartCol, blockWidth)
-  if (fields.name === null || fields.sets === null || fields.reps === null) return null
-
-  const label = (off: number | null): string =>
-    off === null ? '' : (headerCells[blockStartCol - 1 + off] ?? '')
-
-  // Ordered columns inside a block. Keep the source header wording.
-  const colDefs: Array<{ off: number | null; key: ScaffoldColKey }> = [
-    { off: fields.name, key: 'name' },
-    { off: fields.sets, key: 'sets' },
-    { off: fields.reps, key: 'reps' },
-    { off: fields.load, key: 'load' },
-    { off: fields.rpe, key: 'rpe' },
-    { off: fields.erpe, key: 'erpe' },
-  ]
-  const columns: ScaffoldColumn[] = colDefs
-    .filter((c): c is { off: number; key: ScaffoldColKey } => c.off !== null)
-    .map((c) => ({ offset: c.off, key: c.key, label: label(c.off) || c.key }))
-    .sort((a, b) => a.offset - b.offset)
-
-  const firstDataRow = headerRow + 1
-  const colWidths: Array<number | undefined> = []
-  for (let off = 0; off < blockWidth; off++) {
-    colWidths[off] = ws.getColumn(blockStartCol + off).width
-  }
-
-  return {
-    sheetName: ws.name,
-    chromeRows: banner.row - 1,
-    bannerRow: banner.row,
-    headerRow,
-    firstDataRow,
-    blockStartCol,
-    blockWidth,
-    weekBannerOffset,
-    columns,
-    styleRefs: {
-      dayBanner: [banner.row, blockStartCol],
-      weekBanner: [banner.row, banner.weekCols[0]],
-      header: [headerRow, blockStartCol + (fields.sets ?? 1)],
-      name: [firstDataRow, blockStartCol + fields.name],
-      body: [firstDataRow, blockStartCol + (fields.sets ?? 1)],
-    },
-    colWidths,
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Vertical layout — weeks/days are section-header ROWS stacked top-to-bottom.
 // ---------------------------------------------------------------------------
 function parseVertical(readRow: ReadRow, maxRow: number): ParseResult {
@@ -658,7 +540,7 @@ function parseVertical(readRow: ReadRow, maxRow: number): ParseResult {
         load: normalizeLoad(col(cells, mapping.load), r, warnings),
         rpe: normalizeRpe(col(cells, mapping.rpe), mapping.rpeFromRir, r, warnings),
         sheetRow: r,
-        refillCols: { sets: mapping.sets, reps: mapping.reps, load: mapping.load, rpe: mapping.rpe, erpe: null },
+        refillCols: { name: mapping.exercise, sets: mapping.sets, reps: mapping.reps, load: mapping.load, rpe: mapping.rpe, erpe: null },
       })
       continue
     }
@@ -865,6 +747,7 @@ function parseHorizontal(
         loadCap: normalizeLoadCap(loadCapText),
         restTime: restText || null,
         refillCols: {
+          name: fields.name !== null ? base + fields.name : sharedNameCol,
           sets: fields.sets !== null ? base + fields.sets : null,
           reps: fields.reps !== null ? base + fields.reps : null,
           load: fields.loadUsed !== null ? base + fields.loadUsed : null,
@@ -1087,6 +970,7 @@ function parseBlockGrid(
         sheetRow: r,
         intensity,
         refillCols: {
+          name: fields.name !== null ? base + fields.name : null,
           sets: fields.sets !== null ? base + fields.sets : null,
           reps: fields.reps !== null ? base + fields.reps : null,
           load: fields.load !== null ? base + fields.load : null,
@@ -1268,6 +1152,7 @@ function parseWeekGrid(
         sheetRow: r,
         intensity,
         refillCols: {
+          name: fields.name !== null ? base + fields.name : null,
           sets: fields.sets !== null ? base + fields.sets : null,
           reps: fields.reps !== null ? base + fields.reps : null,
           load: fields.load !== null ? base + fields.load : null,

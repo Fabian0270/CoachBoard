@@ -18,8 +18,11 @@ async function buildTemplate(): Promise<string> {
   ws.getCell(4, 9).value = 'DAY 1'; ws.getCell(4, 10).value = 'Week 2'
   const cols = ['Movement', 'SETS', 'REPS', 'LOAD', 'RPE', 'eRPE']
   cols.forEach((c, i) => { ws.getCell(5, 2 + i).value = c; ws.getCell(5, 9 + i).value = c })
+  // Two movement rows per day so a 2-movement program maps onto the template.
   ;['Squat', 1, 3, 180, '@6', 6].forEach((v, i) => { ws.getCell(6, 2 + i).value = v })
+  ;['Bench', 3, 8, 110, '@6', 6].forEach((v, i) => { ws.getCell(7, 2 + i).value = v })
   ;['Squat', 1, 3, 185, '@6-7', 5].forEach((v, i) => { ws.getCell(6, 9 + i).value = v })
+  ;['Bench', 3, 8, 115, '@7', 7].forEach((v, i) => { ws.getCell(7, 9 + i).value = v })
   return Buffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer).toString('base64')
 }
 
