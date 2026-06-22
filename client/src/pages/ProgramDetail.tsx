@@ -353,7 +353,7 @@ export default function ProgramDetail() {
                                   <GripVertical className="h-2.5 w-2.5 text-muted-foreground/30" />
                                 )}
                                 {status === 'saving' && <Loader2 className="h-3 w-3 animate-spin" />}
-                                {status === 'saved' && <Check className="h-3 w-3 text-green-600" />}
+                                {status === 'saved' && <Check className="h-3 w-3 text-green-600 dark:text-green-400" />}
                                 {status === 'error' && <X className="h-3 w-3 text-destructive" />}
                               </span>
                             </div>

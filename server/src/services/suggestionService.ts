@@ -318,6 +318,10 @@ export async function generateDraftProgram(
       end_date: endIso,
       status: 'draft',
       enabled_columns: source.enabled_columns ? JSON.stringify(source.enabled_columns) : null,
+      // Carry the source's captured Excel layout + original file so the draft
+      // exports in the coach's own style (Feature: export style templates).
+      export_layout: source.export_layout ? JSON.stringify(source.export_layout) : null,
+      export_template_xlsx: source.export_template_xlsx ?? null,
       focus: draftFocus,
       created_at: now,
       updated_at: now,

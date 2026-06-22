@@ -2,6 +2,9 @@
 // Server DB types (AthleteTable, ProgramTable, etc.) are internal to the server;
 // these represent what the API actually sends over the wire.
 
+import type { ExportLayoutTemplate } from './exportLayout.js'
+export type { ExportLayoutTemplate } from './exportLayout.js'
+
 export interface Athlete {
   id: string
   name: string
@@ -59,7 +62,20 @@ export interface Program {
   updated_at: string
   enabled_columns: ToggleableColumn[] | null
   focus: SuggestionGoal | null
+  // Captured "fingerprint" of the coach's Excel layout (from an import), replayed
+  // on export so this program looks like the coach's own sheet. null = generic.
+  export_layout: ExportLayoutTemplate | null
   workouts?: Workout[]
+}
+
+// A reusable, opt-in saved style the coach can apply to future programs. Created
+// from the import step's "save this program's style" toggle; lives independently
+// of any one program (survives program deletion, renameable).
+export interface ExportStyle {
+  id: string
+  name: string
+  descriptor: ExportLayoutTemplate
+  created_at: string
 }
 
 export interface ProgressRecord {
@@ -214,6 +230,19 @@ export interface ExternalExerciseRow {
   intensity?: string | null  // "Intensity/Weight" — prescribed
   loadCap?: number | null    // "Load Cap" — prescribed weight
   restTime?: string | null   // "Rest Time"
+  // Server-internal: absolute 1-based worksheet columns for each writable field
+  // on this row (sheetRow). Used only by the scaffold export engine to locate and
+  // rewrite the original file's cells; ignored by capture/commit and the client.
+  // `name` may be a per-week column or a single shared column (same value across
+  // weeks ⇒ a shared movement-name column, as in some horizontal layouts).
+  refillCols?: {
+    name: number | null
+    sets: number | null
+    reps: number | null
+    load: number | null
+    rpe: number | null
+    erpe: number | null
+  }
 }
 
 export type ExternalLayout = 'horizontal' | 'vertical' | 'block-grid' | 'week-grid'
@@ -235,6 +264,10 @@ export interface ExternalImportPreview {
   // Best-guess training focus from rep ranges / RPE arc — pre-selects the focus
   // dropdown in the wizard. null when there aren't enough numeric reps to guess.
   suggestedFocus: SuggestionGoal | null
+  // Captured layout "fingerprint" (colors, fonts, orientation, day labels) of the
+  // uploaded file, persisted on the program so it re-exports in the coach's style.
+  // null when no exercises were detected (nothing to capture from).
+  layoutTemplate: ExportLayoutTemplate | null
 }
 
 export interface ExternalImportCommitResult {
@@ -510,6 +543,14 @@ export interface CreateProgramBody {
   end_date?: string | null
   status?: string
   enabled_columns?: ToggleableColumn[] | null
+  // Optional: copy the export_layout (and enabled_columns) of an existing
+  // program into this new one, so a manually-created program can reuse a coach's
+  // saved style without going through the generate-new-program flow.
+  style_source_program_id?: string | null
+  // Optional: apply a saved style from the export-style library (takes
+  // precedence over style_source_program_id). This is what the New Program
+  // "Copy style from a previous program" picker sends.
+  export_style_id?: string | null
 }
 
 export interface UpdateProgramBody {

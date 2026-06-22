@@ -9,8 +9,14 @@ import type {
   ExternalImportCommitResult,
   ExternalImportPreview,
   ExternalImportWarning,
+  ExportLayoutTemplate,
   SuggestionGoal,
 } from 'coachboard-shared'
+import {
+  COLUMN_LABELS,
+  type ExportColumnKey,
+  type ExportLayoutColumn,
+} from 'coachboard-shared/exportLayout'
 
 // ---------------------------------------------------------------------------
 // External import parser (Feature 4a)
@@ -206,7 +212,12 @@ function weekdayOffset(text: string): number | null {
 const emptyMapping = (): ExternalColumnMapping =>
   ({ exercise: null, sets: null, reps: null, load: null, rpe: null, rpeFromRir: false })
 
-type ParseResult = Omit<ExternalImportPreview, 'layout' | 'suggestedFocus'>
+// The internal parse result also carries `headerRow` — the worksheet row whose
+// cells hold the column-header labels — so the style capture can sample fonts,
+// colors and header wording from a known location. Not part of the public preview.
+type ParseResult = Omit<ExternalImportPreview, 'layout' | 'suggestedFocus' | 'layoutTemplate'> & {
+  headerRow?: number
+}
 type ReadRow = (r: number) => string[]
 
 /** First number in a reps cell ("5", "3-5", "3–5") → the lower bound, or null. */
@@ -284,6 +295,117 @@ function findWeekBannerRow(readRow: ReadRow, maxRow: number): { row: number; wee
   return null
 }
 
+// ---------------------------------------------------------------------------
+// Layout template capture — read the uploaded file's styling + structure into
+// an ExportLayoutTemplate so any program based on this import re-exports in the
+// coach's own look (colors, fonts, orientation, day labels) rather than
+// CoachBoard's generic style. Sampled from representative cells located via the
+// detection results (header row, banner cell, first data row).
+// ---------------------------------------------------------------------------
+
+/** Solid-fill ARGB at a cell, or null (theme fills / no fill / out of range → null). */
+function cellFillArgb(ws: ExcelJS.Worksheet, row: number, col: number): string | null {
+  if (row < 1 || col < 1) return null
+  const fill = ws.getCell(row, col).fill as ExcelJS.Fill | undefined
+  if (fill && fill.type === 'pattern' && fill.pattern === 'solid') {
+    const argb = (fill as ExcelJS.FillPattern).fgColor?.argb
+    if (typeof argb === 'string') return argb
+  }
+  return null
+}
+
+function cellFont(ws: ExcelJS.Worksheet, row: number, col: number): Partial<ExcelJS.Font> {
+  if (row < 1 || col < 1) return {}
+  return ws.getCell(row, col).font ?? {}
+}
+
+const EXTERNAL_TO_EXPORT_KEY: Record<ExternalColumnKey, ExportColumnKey> = {
+  exercise: 'name', sets: 'sets', reps: 'reps', load: 'load_used', rpe: 'rpe',
+}
+
+/** Distinctly-Swedish weekday prefixes (accented + ASCII-safe forms). */
+const SV_DAY_MARKERS = ['mån', 'man', 'tis', 'ons', 'tor', 'fre', 'lör', 'lor', 'sön', 'son']
+
+function captureLayoutTemplate(
+  ws: ExcelJS.Worksheet,
+  info: {
+    orientation: ExportLayoutTemplate['orientation']
+    columnMapping: ExternalColumnMapping
+    exercises: ExternalExerciseRow[]
+    headerRow?: number
+    bannerRow: number | null
+    bannerCol: number | null
+  },
+): ExportLayoutTemplate {
+  const { orientation, columnMapping, exercises, headerRow, bannerRow, bannerCol } = info
+  const nameCol = columnMapping.exercise
+  const rpeCol = columnMapping.rpe
+  const bodyRow = exercises[0]?.sheetRow ?? null
+
+  // --- columns + the coach's own header wording ---
+  const columns: ExportLayoutColumn[] = []
+  for (const extKey of ['exercise', 'sets', 'reps', 'load', 'rpe'] as ExternalColumnKey[]) {
+    const colIdx = columnMapping[extKey]
+    if (typeof colIdx !== 'number') continue
+    const expKey = EXTERNAL_TO_EXPORT_KEY[extKey]
+    const headerText = headerRow ? cellToString(ws.getCell(headerRow, colIdx).value) : ''
+    columns.push({ key: expKey, label: headerText || COLUMN_LABELS[expKey] })
+  }
+
+  // --- day labels + language (from the detected day-section labels) ---
+  const labelByDay = new Map<number, string>()
+  for (const ex of exercises) {
+    if (!labelByDay.has(ex.dayIndex) && ex.dayLabel) labelByDay.set(ex.dayIndex, ex.dayLabel)
+  }
+  let sawWeekday = false
+  let sawDayN = false
+  let language: 'en' | 'sv' = 'en'
+  for (const label of labelByDay.values()) {
+    if (/^day\s*\d+/i.test(label)) sawDayN = true
+    else if (weekdayOffset(label) !== null) sawWeekday = true
+    if (SV_DAY_MARKERS.some((m) => label.toLowerCase().startsWith(m))) language = 'sv'
+  }
+  const dayStyle: ExportLayoutTemplate['dayLabels']['style'] =
+    sawWeekday ? 'weekday' : sawDayN ? 'dayN' : 'split'
+  const maxDay = labelByDay.size ? Math.max(...labelByDay.keys()) : -1
+  const custom: (string | null)[] = []
+  for (let i = 0; i <= maxDay; i++) custom[i] = labelByDay.get(i) ?? null
+
+  // --- RPE notation: a leading "@" in the source RPE cell ("@8") ---
+  let rpeNotation: ExportLayoutTemplate['rpeNotation'] = 'plain'
+  if (typeof rpeCol === 'number') {
+    for (const ex of exercises.slice(0, 20)) {
+      if (cellToString(ws.getCell(ex.sheetRow, rpeCol).value).startsWith('@')) {
+        rpeNotation = 'at'
+        break
+      }
+    }
+  }
+
+  // --- colors + fonts sampled from representative cells ---
+  const headerFont = headerRow && nameCol ? cellFont(ws, headerRow, nameCol) : {}
+  const columnHeader = headerRow && nameCol ? cellFillArgb(ws, headerRow, nameCol) : null
+  return {
+    version: 1,
+    orientation,
+    columns,
+    dayLabels: { style: dayStyle, language, custom },
+    rpeNotation,
+    colors: {
+      weekBanner: bannerRow && bannerCol ? cellFillArgb(ws, bannerRow, bannerCol) : columnHeader,
+      dayHeader: headerRow ? cellFillArgb(ws, headerRow, 1) : null,
+      columnHeader,
+      trackingHeader: headerRow && typeof rpeCol === 'number' ? cellFillArgb(ws, headerRow, rpeCol) : null,
+      body: bodyRow && nameCol ? cellFillArgb(ws, bodyRow, nameCol) : null,
+    },
+    fonts: {
+      headerBold: !!headerFont.bold,
+      headerItalic: !!headerFont.italic,
+      nameBold: bodyRow && nameCol ? !!cellFont(ws, bodyRow, nameCol).bold : false,
+    },
+  }
+}
+
 export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportPreview> {
   const wb = new ExcelJS.Workbook()
   // ExcelJS's Buffer type diverges from Node's generic Buffer<ArrayBufferLike>
@@ -293,7 +415,7 @@ export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportP
     return {
       layout: 'vertical', columnMapping: emptyMapping(), weeks: 0, days: 0,
       exerciseCount: 0, exercises: [], warnings: [], errors: ['No worksheet found in the uploaded file.'],
-      suggestedFocus: null,
+      suggestedFocus: null, layoutTemplate: null,
     }
   }
 
@@ -301,8 +423,8 @@ export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportP
   const maxRow = ws.rowCount || 0
   const readRow = makeReadRow(ws, maxCol)
 
+  const banner = findWeekBannerRow(readRow, maxRow)
   const dispatch = (): { layout: ExternalImportPreview['layout'] } & ParseResult => {
-    const banner = findWeekBannerRow(readRow, maxRow)
     if (banner) {
       const blockStarts = detectBlockGridStarts(readRow, banner)
       if (blockStarts) {
@@ -318,7 +440,19 @@ export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportP
   }
 
   const result = dispatch()
-  return { ...result, suggestedFocus: guessFocus(result.exercises) }
+  const layoutTemplate = result.exercises.length > 0
+    ? captureLayoutTemplate(ws, {
+        orientation: result.layout,
+        columnMapping: result.columnMapping,
+        exercises: result.exercises,
+        headerRow: result.headerRow,
+        bannerRow: banner?.row ?? null,
+        bannerCol: banner?.weekCols[0] ?? null,
+      })
+    : null
+  const { headerRow: _omit, ...preview } = result
+  void _omit
+  return { ...preview, suggestedFocus: guessFocus(result.exercises), layoutTemplate }
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +540,7 @@ function parseVertical(readRow: ReadRow, maxRow: number): ParseResult {
         load: normalizeLoad(col(cells, mapping.load), r, warnings),
         rpe: normalizeRpe(col(cells, mapping.rpe), mapping.rpeFromRir, r, warnings),
         sheetRow: r,
+        refillCols: { name: mapping.exercise, sets: mapping.sets, reps: mapping.reps, load: mapping.load, rpe: mapping.rpe, erpe: null },
       })
       continue
     }
@@ -433,6 +568,7 @@ function parseVertical(readRow: ReadRow, maxRow: number): ParseResult {
   if (exercises.length === 0) warnings.push({ message: 'No exercise rows were detected in the file.' })
 
   return {
+    headerRow,
     columnMapping: mapping,
     weeks: new Set(exercises.map((e) => e.weekIndex)).size,
     days: new Set(exercises.map((e) => `${e.weekIndex}-${e.dayIndex}`)).size,
@@ -610,6 +746,14 @@ function parseHorizontal(
         intensity: normalizeIntensity(intensityText),
         loadCap: normalizeLoadCap(loadCapText),
         restTime: restText || null,
+        refillCols: {
+          name: fields.name !== null ? base + fields.name : sharedNameCol,
+          sets: fields.sets !== null ? base + fields.sets : null,
+          reps: fields.reps !== null ? base + fields.reps : null,
+          load: fields.loadUsed !== null ? base + fields.loadUsed : null,
+          rpe: fields.rpe !== null ? base + fields.rpe : null,
+          erpe: null,
+        },
       })
     }
   }
@@ -629,6 +773,7 @@ function parseHorizontal(
   }
 
   return {
+    headerRow: labelRow,
     columnMapping: mapping,
     weeks: new Set(exercises.map((e) => e.weekIndex)).size,
     days: new Set(exercises.map((e) => `${e.weekIndex}-${e.dayIndex}`)).size,
@@ -681,20 +826,23 @@ interface GridFields {
   reps: number | null
   load: number | null
   rpe: number | null
+  erpe: number | null   // executed RPE — ignored on import, but tracked so the
+                        // re-fill engine can clear stale executed values
   rpeFromRir: boolean
 }
 
 function resolveGridFields(headerCells: string[], blockStart: number, blockWidth: number): GridFields {
-  const f: GridFields = { name: null, sets: null, reps: null, load: null, rpe: null, rpeFromRir: false }
+  const f: GridFields = { name: null, sets: null, reps: null, load: null, rpe: null, erpe: null, rpeFromRir: false }
   for (let off = 0; off < blockWidth; off++) {
     const toks = tokenize(headerCells[blockStart - 1 + off] ?? '')
     if (toks.length === 0) continue
     const has = (...words: string[]) => toks.some((t) => words.includes(t))
-    // "eRPE" (executed) tokenises to ["erpe"] and is skipped — we keep the
-    // prescribed "RPE" column. Order: name, then the specific RPE before the
-    // generic set/rep/load so a stray token never steals a numeric column.
+    // "eRPE" (executed) tokenises to ["erpe"] and is NOT used as the prescribed
+    // RPE — we keep the plain "RPE" column — but its position is recorded for the
+    // re-fill engine. Order: name, then specific RPE before the generic
+    // set/rep/load so a stray token never steals a numeric column.
     if (f.name === null && has('movement', 'exercise', 'lift', 'name', 'discipline')) f.name = off
-    else if (toks.includes('erpe')) continue
+    else if (toks.includes('erpe')) { if (f.erpe === null) f.erpe = off; continue }
     else if (f.rpe === null && has('rpe', 'effort', 'rir')) { f.rpe = off; f.rpeFromRir = toks.includes('rir') }
     else if (f.reps === null && has('reps', 'rep', 'repetitions')) f.reps = off
     else if (f.sets === null && has('sets', 'set')) f.sets = off
@@ -821,6 +969,14 @@ function parseBlockGrid(
         rpe,
         sheetRow: r,
         intensity,
+        refillCols: {
+          name: fields.name !== null ? base + fields.name : null,
+          sets: fields.sets !== null ? base + fields.sets : null,
+          reps: fields.reps !== null ? base + fields.reps : null,
+          load: fields.load !== null ? base + fields.load : null,
+          rpe: fields.rpe !== null ? base + fields.rpe : null,
+          erpe: fields.erpe !== null ? base + fields.erpe : null,
+        },
       })
     }
   }
@@ -840,6 +996,7 @@ function parseBlockGrid(
   }
 
   return {
+    headerRow,
     columnMapping: mapping,
     weeks: new Set(exercises.map((e) => e.weekIndex)).size,
     days: new Set(exercises.map((e) => `${e.weekIndex}-${e.dayIndex}`)).size,
@@ -994,6 +1151,14 @@ function parseWeekGrid(
         rpe,
         sheetRow: r,
         intensity,
+        refillCols: {
+          name: fields.name !== null ? base + fields.name : null,
+          sets: fields.sets !== null ? base + fields.sets : null,
+          reps: fields.reps !== null ? base + fields.reps : null,
+          load: fields.load !== null ? base + fields.load : null,
+          rpe: fields.rpe !== null ? base + fields.rpe : null,
+          erpe: fields.erpe !== null ? base + fields.erpe : null,
+        },
       })
     }
   }
@@ -1013,6 +1178,7 @@ function parseWeekGrid(
   }
 
   return {
+    headerRow,
     columnMapping: mapping,
     weeks: new Set(exercises.map((e) => e.weekIndex)).size,
     days: new Set(exercises.map((e) => `${e.weekIndex}-${e.dayIndex}`)).size,
@@ -1054,7 +1220,16 @@ const sameName = (a: string, b: string): boolean =>
 
 export async function commitExternalProgram(
   exercises: ExternalExerciseRow[],
-  meta: { athleteId: string; name: string; status: string; startDate?: string | null; weeks: number; focus?: string | null },
+  meta: {
+    athleteId: string
+    name: string
+    status: string
+    startDate?: string | null
+    weeks: number
+    focus?: string | null
+    exportLayout?: ExportLayoutTemplate | null
+    templateXlsx?: string | null   // base64 of the original file, for re-fill export
+  },
 ): Promise<ExternalImportCommitResult> {
   const athlete = await findAthleteById(meta.athleteId)
   if (!athlete) throw new Error(`Athlete not found: ${meta.athleteId}`)
@@ -1090,6 +1265,8 @@ export async function commitExternalProgram(
         status: meta.status,
         enabled_columns: null,
         focus: meta.focus ?? null,
+        export_layout: meta.exportLayout ? JSON.stringify(meta.exportLayout) : null,
+        export_template_xlsx: meta.templateXlsx ?? null,
         created_at: now,
         updated_at: now,
       })

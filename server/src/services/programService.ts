@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db.js'
+import { parseExportLayout } from 'coachboard-shared/exportLayout'
 
 // ---------------------------------------------------------------------------
 // Column helpers — live here because they touch DB representation
@@ -18,22 +19,24 @@ export function serializeEnabledColumns(input: unknown): string | null {
   return JSON.stringify(filtered)
 }
 
-export function withParsedColumns<T extends { enabled_columns: string | null }>(
+// Turn the DB row's stringly-typed enabled_columns + export_layout into the
+// parsed shapes the API contract (Program) promises.
+export function withParsedColumns<T extends { enabled_columns: string | null; export_layout?: string | null }>(
   program: T,
-): T & { enabled_columns: ToggleableColumn[] | null } {
-  if (!program.enabled_columns) return { ...program, enabled_columns: null }
-  try {
-    const parsed = JSON.parse(program.enabled_columns)
-    if (!Array.isArray(parsed)) return { ...program, enabled_columns: null }
-    return {
-      ...program,
-      enabled_columns: parsed.filter((c): c is ToggleableColumn =>
-        (TOGGLEABLE_COLUMNS as readonly string[]).includes(c),
-      ),
-    }
-  } catch {
-    return { ...program, enabled_columns: null }
+) {
+  const export_layout = parseExportLayout(program.export_layout ?? null)
+  let enabled_columns: ToggleableColumn[] | null = null
+  if (program.enabled_columns) {
+    try {
+      const parsed = JSON.parse(program.enabled_columns)
+      if (Array.isArray(parsed)) {
+        enabled_columns = parsed.filter((c): c is ToggleableColumn =>
+          (TOGGLEABLE_COLUMNS as readonly string[]).includes(c),
+        )
+      }
+    } catch { /* leave null */ }
   }
+  return { ...program, enabled_columns, export_layout }
 }
 
 const toIso = (d: Date) => d.toISOString().slice(0, 10)
@@ -127,8 +130,42 @@ export async function createProgram(data: {
   status?: string
   enabled_columns?: unknown
   focus?: string | null
+  // Copy the export_layout (and, when the caller didn't set its own, the
+  // enabled_columns) from an existing program — the manual "reuse a saved style"
+  // path. Silently ignored if the source program no longer exists.
+  style_source_program_id?: string | null
+  // Apply a saved style from the export-style library. Takes precedence over
+  // style_source_program_id. Silently ignored if the style no longer exists.
+  export_style_id?: string | null
 }) {
   const now = new Date().toISOString()
+
+  let exportLayout: string | null = null
+  let exportTemplateXlsx: string | null = null
+  let enabledColumns = serializeEnabledColumns(data.enabled_columns)
+  if (data.export_style_id) {
+    const style = await getDb()
+      .selectFrom('export_styles')
+      .select(['descriptor', 'template_xlsx'])
+      .where('id', '=', data.export_style_id)
+      .executeTakeFirst()
+    if (style) {
+      exportLayout = style.descriptor
+      exportTemplateXlsx = style.template_xlsx
+    }
+  } else if (data.style_source_program_id) {
+    const source = await getDb()
+      .selectFrom('programs')
+      .select(['export_layout', 'export_template_xlsx', 'enabled_columns'])
+      .where('id', '=', data.style_source_program_id)
+      .executeTakeFirst()
+    if (source) {
+      exportLayout = source.export_layout
+      exportTemplateXlsx = source.export_template_xlsx
+      if (data.enabled_columns === undefined) enabledColumns = source.enabled_columns
+    }
+  }
+
   const row = await getDb()
     .insertInto('programs')
     .values({
@@ -139,8 +176,10 @@ export async function createProgram(data: {
       start_date: data.start_date ?? null,
       end_date: data.end_date ?? null,
       status: data.status ?? 'active',
-      enabled_columns: serializeEnabledColumns(data.enabled_columns),
+      enabled_columns: enabledColumns,
       focus: data.focus ?? null,
+      export_layout: exportLayout,
+      export_template_xlsx: exportTemplateXlsx,
       created_at: now,
       updated_at: now,
     })

@@ -137,6 +137,9 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
   const [athleteId, setAthleteId] = useState('')
   const [status, setStatus] = useState('active')
   const [startDate, setStartDate] = useState(todayIso())
+  // opt-in: also save this file's layout into the reusable style library
+  const [saveStyle, setSaveStyle] = useState(false)
+  const [styleName, setStyleName] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -157,6 +160,8 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
     setAthleteId('')
     setStatus('active')
     setStartDate(todayIso())
+    setSaveStyle(false)
+    setStyleName('')
     if (folderRef.current) folderRef.current.value = ''
     if (filesRef.current) filesRef.current.value = ''
   }
@@ -256,6 +261,10 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
       const params = new URLSearchParams({ athlete_id: athleteId, name: entry.programName.trim(), status })
       if (status !== 'archived' && startDate) params.set('start_date', startDate)
       if (entry.focus) params.set('focus', entry.focus)
+      if (saveStyle && entry.preview?.layoutTemplate) {
+        params.set('save_style', '1')
+        if (styleName.trim()) params.set('style_name', styleName.trim())
+      }
       const buf = await entry.file.arrayBuffer()
       const res = await fetch(`/api/programs/import-external?${params.toString()}`, {
         method: 'POST',
@@ -449,7 +458,7 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
 
                 {singlePreview!.warnings.length > 0 && (
                   <div className="space-y-1">
-                    <h3 className="text-sm font-semibold flex items-center gap-1 text-amber-600">
+                    <h3 className="text-sm font-semibold flex items-center gap-1 text-amber-600 dark:text-amber-400">
                       <AlertTriangle className="h-3.5 w-3.5" />
                       {singlePreview!.warnings.length} warning{singlePreview!.warnings.length !== 1 ? 's' : ''}
                     </h3>
@@ -512,6 +521,31 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
                         : 'Labels this program so suggestions can learn your style.'}
                     </p>
                   </div>
+
+                  {singlePreview!.layoutTemplate && (
+                    <div className="space-y-2 rounded-md border p-3">
+                      <label className="flex items-center gap-2 text-sm font-medium">
+                        <input
+                          type="checkbox"
+                          checked={saveStyle}
+                          onChange={(e) => setSaveStyle(e.target.checked)}
+                        />
+                        Save this program’s style for future programs
+                      </label>
+                      <p className="text-xs text-muted-foreground">
+                        Adds this sheet’s layout (colors, columns, day labels) to your style library so
+                        you can apply it when creating new programs.
+                      </p>
+                      {saveStyle && (
+                        <input
+                          className={inputClass}
+                          placeholder={`Style name (defaults to “${single.programName.trim() || 'Program'}”)`}
+                          value={styleName}
+                          onChange={(e) => setStyleName(e.target.value)}
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {error && <p className="text-sm text-destructive">{error}</p>}
@@ -608,7 +642,7 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
                                   {e.preview!.weeks}w × {e.preview!.exerciseCount} ex
                                 </span>
                                 {warnings > 0 && (
-                                  <span className="text-xs text-amber-600 flex items-center gap-0.5 whitespace-nowrap" title={e.preview!.warnings.map((w) => w.message).join('\n')}>
+                                  <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-0.5 whitespace-nowrap" title={e.preview!.warnings.map((w) => w.message).join('\n')}>
                                     <AlertTriangle className="h-3 w-3" />{warnings}
                                   </span>
                                 )}
@@ -650,7 +684,7 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
         {/* Step: done (bulk summary; single navigates away) */}
         {step === 'done' && summary && (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-green-600">
+            <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
               <Check className="h-5 w-5" />
               <span className="text-sm font-medium">
                 Imported {summary.imported} program{summary.imported !== 1 ? 's' : ''} into {summary.athletes} athlete{summary.athletes !== 1 ? 's' : ''}.

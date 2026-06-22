@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, session, dialog } from 'electron'
+import { app, BrowserWindow, Menu, session, dialog, nativeTheme } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { createServer } from 'http'
@@ -67,6 +67,9 @@ async function createWindow(): Promise<void> {
     width: 1280,
     height: 800,
     autoHideMenuBar: true,
+    // Match the app's light/dark background during load to avoid a white flash.
+    // Approximates the renderer's "system" default; values mirror --background in index.css.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

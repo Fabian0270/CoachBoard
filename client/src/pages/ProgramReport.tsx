@@ -29,9 +29,9 @@ function fmt(n: number | null | undefined, decimals = 1): string {
 }
 
 function deviationLabel(delta: number): string {
-  if (delta > 0.4) return 'text-red-500'
-  if (delta < -0.4) return 'text-blue-500'
-  return 'text-emerald-600'
+  if (delta > 0.4) return 'text-red-500 dark:text-red-400'
+  if (delta < -0.4) return 'text-blue-500 dark:text-blue-400'
+  return 'text-emerald-600 dark:text-emerald-400'
 }
 
 export default function ProgramReport() {
@@ -293,7 +293,7 @@ export default function ProgramReport() {
                           </div>
                         </div>
                         {alreadyUpdated ? (
-                          <div className="flex items-center gap-1.5 text-sm text-emerald-600">
+                          <div className="flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
                             <CheckCircle2 className="h-4 w-4" />
                             Saved
                           </div>

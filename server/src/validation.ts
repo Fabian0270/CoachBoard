@@ -50,6 +50,10 @@ export const schemas = {
       status: statusEnum.optional(),
       enabled_columns: z.array(enabledColumnEnum).nullable().optional(),
       focus: optionalFocus,
+      // Manual "reuse a saved style" — copy export_layout from this program …
+      style_source_program_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
+      // … or apply a saved style from the export-style library (takes precedence).
+      export_style_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
     }).refine(dateRangeValid, dateRangeIssue),
     update: z.object({
       name: z.string().min(1).max(200).optional(),
@@ -160,6 +164,13 @@ export const schemas = {
     status: z.enum(['active', 'completed', 'archived']),
     start_date: optionalIsoDate,
     focus: optionalFocus,
+    // Opt-in: also save the captured layout into the reusable style library.
+    // Query-string booleans arrive as the string "1"/"true".
+    save_style: z.preprocess(
+      (v) => v === '1' || v === 'true' || v === true,
+      z.boolean().optional(),
+    ),
+    style_name: optionalString(100),
   }).refine(
     (data) => data.status === 'archived' || !!data.start_date,
     { message: 'start_date is required unless the program is archived', path: ['start_date'] },
