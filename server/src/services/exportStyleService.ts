@@ -39,6 +39,16 @@ export async function createExportStyle(
   return { id, name, descriptor, created_at: now }
 }
 
+export async function renameExportStyle(id: string, name: string): Promise<boolean> {
+  const row = await getDb()
+    .updateTable('export_styles')
+    .set({ name })
+    .where('id', '=', id)
+    .returningAll()
+    .executeTakeFirst()
+  return !!row
+}
+
 export async function deleteExportStyle(id: string): Promise<boolean> {
   const row = await getDb()
     .deleteFrom('export_styles')

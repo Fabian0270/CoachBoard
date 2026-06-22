@@ -11,6 +11,7 @@ import ProgramReport from './pages/ProgramReport'
 import ProgramComparison from './pages/ProgramComparison'
 import Calculators from './pages/Calculators'
 import Payments from './pages/Payments'
+import ExportStyles from './pages/ExportStyles'
 
 export default function App() {
   return (
@@ -28,6 +29,7 @@ export default function App() {
             <Route path="/programs/:id/report" element={<ProgramReport />} />
             <Route path="/calculators" element={<Calculators />} />
             <Route path="/payments" element={<Payments />} />
+            <Route path="/styles" element={<ExportStyles />} />
           </Routes>
         </Layout>
       </ErrorBoundary>

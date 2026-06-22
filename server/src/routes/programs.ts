@@ -23,7 +23,7 @@ import {
 import { parseImportFile, commitImport } from '../services/importService.js'
 import { parseExternalFile, commitExternalProgram } from '../services/externalImportService.js'
 import { renderProgramWorkbook } from '../services/exportService.js'
-import { refillTemplate } from '../services/templateRefillService.js'
+import { renderScaffold } from '../services/templateScaffoldService.js'
 import { createExportStyle } from '../services/exportStyleService.js'
 import { getProgramReport } from '../services/analysisService.js'
 import { generateDraftProgram } from '../services/suggestionService.js'
@@ -276,14 +276,16 @@ router.get('/:id/export', async (req: Request, res: Response): Promise<void> => 
       return
     }
 
-    // Prefer re-filling the coach's original file (preserves hyperlinks, header
-    // boxes, eRPE, exact layout); fall back to the descriptor/generic renderer.
+    // Prefer rebuilding the coach's style as a scaffold around THIS program's
+    // content (chrome + form link copied once, week-block styling re-stamped per
+    // program week, no source remnants); fall back to the descriptor/generic
+    // renderer when there's no stored original or its layout isn't supported.
     let buffer: Buffer | null = null
     if (program.export_template_xlsx) {
       try {
-        buffer = await refillTemplate(program.export_template_xlsx, program, workouts, exercises)
+        buffer = await renderScaffold(program.export_template_xlsx, program, workouts, exercises)
       } catch {
-        buffer = null // any re-fill failure → fall back to the renderer below
+        buffer = null // any scaffold failure → fall back to the renderer below
       }
     }
     if (!buffer) buffer = await renderProgramWorkbook(program, workouts, exercises)

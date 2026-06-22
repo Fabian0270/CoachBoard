@@ -2,7 +2,7 @@ import { beforeAll, describe, it, expect } from 'vitest'
 import { initializeDatabase } from '../db.js'
 import { createAthlete } from './athleteService.js'
 import { createProgram, findProgramById } from './programService.js'
-import { createExportStyle, findAllExportStyles, deleteExportStyle } from './exportStyleService.js'
+import { createExportStyle, findAllExportStyles, renameExportStyle, deleteExportStyle } from './exportStyleService.js'
 import type { ExportLayoutTemplate } from 'coachboard-shared'
 
 const TEMPLATE: ExportLayoutTemplate = {
@@ -68,6 +68,17 @@ describe('export style library', () => {
     const created = await createProgram({ athlete_id: athleteId, name: 'Bytes Program', export_style_id: saved.id })
     const program = await findProgramById(created.id)
     expect(program!.export_template_xlsx).toBe('QkFTRTY0')
+  })
+
+  it('renames a saved style', async () => {
+    const saved = await createExportStyle('Old Name', TEMPLATE)
+    expect(await renameExportStyle(saved.id, 'New Name')).toBe(true)
+    const found = (await findAllExportStyles()).find((s) => s.id === saved.id)
+    expect(found?.name).toBe('New Name')
+  })
+
+  it('returns false renaming an unknown style', async () => {
+    expect(await renameExportStyle('00000000-0000-0000-0000-000000000000', 'X')).toBe(false)
   })
 
   it('deletes a saved style', async () => {

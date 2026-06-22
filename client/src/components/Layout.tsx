@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, Dumbbell, Calculator, Wallet } from 'lucide-react'
+import { LayoutDashboard, Users, Dumbbell, Calculator, Wallet, Palette } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 const navItems = [
@@ -8,6 +8,7 @@ const navItems = [
   { to: '/programs', label: 'Programs', icon: Dumbbell },
   { to: '/calculators', label: 'Calculators', icon: Calculator },
   { to: '/payments', label: 'Payments', icon: Wallet },
+  { to: '/styles', label: 'Excel Styles', icon: Palette },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {
