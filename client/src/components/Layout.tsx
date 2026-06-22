@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom'
 import { LayoutDashboard, Users, Dumbbell, Calculator, Wallet, Palette } from 'lucide-react'
 import { cn } from '../lib/utils'
+import ThemeToggle from './ThemeToggle'
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -15,22 +16,25 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
-      <nav className="bg-primary text-primary-foreground w-full md:w-56 md:min-h-screen flex md:flex-col">
-        <div className="p-4 font-bold text-xl border-b border-primary-foreground/20 hidden md:block">CoachBoard</div>
+      <nav className="bg-primary text-primary-foreground dark:bg-[#181818] dark:text-[#c8c8c8] dark:border-r dark:border-[#2b2b2b] w-full md:w-56 md:min-h-screen flex md:flex-col">
+        <div className="p-4 font-bold text-xl border-b border-primary-foreground/20 dark:border-[#2b2b2b] dark:text-[#e0e0e0] hidden md:block">CoachBoard</div>
         <div className="flex md:flex-col flex-1 overflow-x-auto md:overflow-visible">
           {navItems.map(({ to, label, icon: Icon }) => (
             <Link
               key={to}
               to={to}
               className={cn(
-                'flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors hover:bg-primary-foreground/10',
-                location.pathname === to && 'bg-primary-foreground/20',
+                'flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors hover:bg-primary-foreground/10 dark:border-l-2 dark:border-l-transparent dark:text-[#c8c8c8] dark:hover:bg-[#2a2d2e]',
+                location.pathname === to && 'bg-primary-foreground/20 dark:bg-[#37373d] dark:text-white dark:border-l-blue-500',
               )}
             >
               <Icon className="h-4 w-4 shrink-0" />
               <span className="hidden md:inline">{label}</span>
             </Link>
           ))}
+        </div>
+        <div className="hidden md:block">
+          <ThemeToggle />
         </div>
       </nav>
       <main className="flex-1 p-6 overflow-auto">{children}</main>

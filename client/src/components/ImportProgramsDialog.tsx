@@ -458,7 +458,7 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
 
                 {singlePreview!.warnings.length > 0 && (
                   <div className="space-y-1">
-                    <h3 className="text-sm font-semibold flex items-center gap-1 text-amber-600">
+                    <h3 className="text-sm font-semibold flex items-center gap-1 text-amber-600 dark:text-amber-400">
                       <AlertTriangle className="h-3.5 w-3.5" />
                       {singlePreview!.warnings.length} warning{singlePreview!.warnings.length !== 1 ? 's' : ''}
                     </h3>
@@ -642,7 +642,7 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
                                   {e.preview!.weeks}w × {e.preview!.exerciseCount} ex
                                 </span>
                                 {warnings > 0 && (
-                                  <span className="text-xs text-amber-600 flex items-center gap-0.5 whitespace-nowrap" title={e.preview!.warnings.map((w) => w.message).join('\n')}>
+                                  <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-0.5 whitespace-nowrap" title={e.preview!.warnings.map((w) => w.message).join('\n')}>
                                     <AlertTriangle className="h-3 w-3" />{warnings}
                                   </span>
                                 )}
@@ -684,7 +684,7 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
         {/* Step: done (bulk summary; single navigates away) */}
         {step === 'done' && summary && (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-green-600">
+            <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
               <Check className="h-5 w-5" />
               <span className="text-sm font-medium">
                 Imported {summary.imported} program{summary.imported !== 1 ? 's' : ''} into {summary.athletes} athlete{summary.athletes !== 1 ? 's' : ''}.

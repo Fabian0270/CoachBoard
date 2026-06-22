@@ -186,7 +186,7 @@ export default function ImportDialog({ open, onOpenChange, programId, onImported
 
             {hasWarnings && (
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold flex items-center gap-1 text-amber-600">
+                <h3 className="text-sm font-semibold flex items-center gap-1 text-amber-600 dark:text-amber-400">
                   <AlertTriangle className="h-3.5 w-3.5" />
                   {preview.warnings.length} warning{preview.warnings.length !== 1 ? 's' : ''}
                 </h3>
@@ -222,7 +222,7 @@ export default function ImportDialog({ open, onOpenChange, programId, onImported
         {/* Step: done */}
         {step === 'done' && (
           <div className="space-y-4">
-            <div className="flex items-center gap-3 text-green-600">
+            <div className="flex items-center gap-3 text-green-600 dark:text-green-400">
               <Check className="h-5 w-5" />
               <span className="text-sm font-medium">
                 {updatedCount} exercise{updatedCount !== 1 ? 's' : ''} updated — program marked as completed.

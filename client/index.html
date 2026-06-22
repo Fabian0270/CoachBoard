@@ -7,6 +7,19 @@
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="theme-color" content="#1d4ed8" />
     <title>CoachBoard</title>
+    <script>
+      // Apply the saved theme before first paint to avoid a flash of the wrong theme.
+      (function () {
+        try {
+          var stored = localStorage.getItem('coachboard-theme') || 'system'
+          var dark =
+            stored === 'dark' ||
+            (stored === 'system' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches)
+          if (dark) document.documentElement.classList.add('dark')
+        } catch (e) {}
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
