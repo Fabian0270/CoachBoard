@@ -39,6 +39,25 @@ function liftKeyFor(name: string): LiftKey | null {
   return null
 }
 
+// Latest stored 1RM per main lift for an athlete, keyed by lift. Used to scale a
+// draft's loads to the athlete it's being generated for — essential when the
+// source program belongs to a different athlete.
+async function storedMaxE1rmMap(athleteId: string): Promise<Map<LiftKey, number>> {
+  const rows = await getDb()
+    .selectFrom('athlete_maxes')
+    .selectAll()
+    .where('athlete_id', '=', athleteId)
+    .orderBy('lift_name', 'asc')
+    .orderBy('recorded_at', 'desc')
+    .execute()
+  const map = new Map<LiftKey, number>()
+  for (const m of rows) {
+    const key = liftKeyFor(m.lift_name)
+    if (key && !map.has(key)) map.set(key, m.weight) // most-recent row per lift wins
+  }
+  return map
+}
+
 function toIso(d: Date): string {
   return d.toISOString().slice(0, 10)
 }
@@ -253,28 +272,8 @@ export async function generateDraftProgram(
   const report = await getProgramReport(sourceProgramId)
   if (!report) throw new Error(`Could not compute report for program ${sourceProgramId}`)
 
-  // Build e1RM map: program report first, athlete stored maxes as fallback.
-  const e1rmMap = new Map<LiftKey, number>()
-  for (const trend of report.e1rmTrends) {
-    if (trend.latestE1RM !== null) {
-      e1rmMap.set(trend.liftKey as LiftKey, trend.latestE1RM)
-    }
-  }
-  for (const max of report.storedMaxes) {
-    const key = liftKeyFor(max.lift_name)
-    if (key && !e1rmMap.has(key)) e1rmMap.set(key, max.weight)
-  }
-
-  // Positive deviation = athlete worked harder than planned → ease off next block.
-  const rpeAdjustment = clamp((report.avgRpeDeviation ?? 0) * 0.05, -0.05, 0.05)
-
   const template = findTemplate(body.templateId)
   if (!template) throw new Error(`Unknown template: ${body.templateId}`)
-
-  const slotsByLift = new Map<LiftKey, WeekSlot[]>()
-  for (const [liftKey, e1rm] of e1rmMap) {
-    slotsByLift.set(liftKey, template.generate(body.weeks, e1rm, rpeAdjustment, body.style))
-  }
 
   // Tag the draft with the template's goal so it, too, feeds the style profile.
   const draftFocus = SUGGESTION_TEMPLATES.find((t) => t.id === body.templateId)?.goal ?? null
@@ -301,6 +300,53 @@ export async function generateDraftProgram(
   // suggestions. Default off → behaviour unchanged. Never touches carried-over
   // accessories (see shared/knowledge.ts contract).
   const layout = body.enrichAccessories ? enrichLayout(baseLayout) : baseLayout
+
+  // Generating for a *different* athlete than the source program belongs to — e.g.
+  // a brand-new athlete with no programs of their own reusing another athlete's
+  // block. The new athlete's own maxes must drive the loads (never the source
+  // athlete's), and the source athlete's RPE deviation must not nudge them.
+  const crossAthlete = source.athlete_id !== body.athleteId
+
+  // Build the e1RM map that scales each main lift's loads.
+  const e1rmMap = new Map<LiftKey, number>()
+  if (crossAthlete) {
+    for (const [key, weight] of await storedMaxE1rmMap(body.athleteId)) e1rmMap.set(key, weight)
+  } else {
+    // Same athlete: the finished program's measured e1RM, with their stored maxes
+    // as a fallback for lifts that lack a usable in-program estimate.
+    for (const trend of report.e1rmTrends) {
+      if (trend.latestE1RM !== null) e1rmMap.set(trend.liftKey as LiftKey, trend.latestE1RM)
+    }
+    for (const max of report.storedMaxes) {
+      const key = liftKeyFor(max.lift_name)
+      if (key && !e1rmMap.has(key)) e1rmMap.set(key, max.weight)
+    }
+  }
+
+  // Cross-athlete with no recorded max for a lift in the layout: still scaffold the
+  // main lift (sets/reps/RPE from the template) but leave the weight blank for the
+  // coach to fill, rather than borrowing the source athlete's load.
+  const blankWeightLifts = new Set<LiftKey>()
+  if (crossAthlete) {
+    for (const day of layout) {
+      for (const seg of day.lifts) {
+        if (!e1rmMap.has(seg.liftKey)) {
+          e1rmMap.set(seg.liftKey, 0)
+          blankWeightLifts.add(seg.liftKey)
+        }
+      }
+    }
+  }
+
+  // Positive deviation = athlete worked harder than planned → ease off next block.
+  const rpeAdjustment = crossAthlete
+    ? 0
+    : clamp((report.avgRpeDeviation ?? 0) * 0.05, -0.05, 0.05)
+
+  const slotsByLift = new Map<LiftKey, WeekSlot[]>()
+  for (const [liftKey, e1rm] of e1rmMap) {
+    slotsByLift.set(liftKey, template.generate(body.weeks, e1rm, rpeAdjustment, body.style))
+  }
 
   const db = getDb()
   const now = new Date().toISOString()
@@ -360,7 +406,7 @@ export async function generateDraftProgram(
               name: LIFT_DISPLAY[seg.liftKey],
               sets: String(slot.sets),
               reps: String(slot.reps),
-              weight: slot.weight,
+              weight: blankWeightLifts.has(seg.liftKey) ? null : slot.weight,
               duration: null,
               distance: null,
               notes: null,

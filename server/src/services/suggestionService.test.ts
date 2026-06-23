@@ -552,4 +552,75 @@ describe('generateDraftProgram', () => {
       expect(mains).toHaveLength(1)
     })
   })
+
+  // ── Cross-athlete generation ────────────────────────────────────────────────
+  // A brand-new athlete with no programs of their own can base a draft on another
+  // athlete's program. Loads must come from the NEW athlete's maxes, never the
+  // source athlete's.
+  describe('generating for a different athlete than the source program', () => {
+    async function mainLiftWeights(programId: string, lift: string): Promise<(number | null)[]> {
+      const rows = await getDb()
+        .selectFrom('exercises')
+        .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+        .select(['exercises.name', 'exercises.weight'])
+        .where('workouts.program_id', '=', programId)
+        .execute()
+      return rows.filter((r) => r.name === lift).map((r) => r.weight)
+    }
+
+    it("scales loads to the new athlete's own maxes, not the source athlete's", async () => {
+      // New athlete with a much lighter squat than the source athlete (180 kg).
+      const newbie = await createAthlete({ name: 'New Lifter' })
+      await getDb().insertInto('athlete_maxes').values({
+        id: 'max-squat-newbie', athlete_id: newbie.id, lift_name: 'Squat',
+        weight: 90, unit: 'kg', recorded_at: '2026-01-01', notes: null,
+      }).execute()
+
+      const result = await generateDraftProgram(completedProgramId, {
+        athleteId: newbie.id,
+        templateId: 'strength_linear',
+        weeks: 4,
+        trainingDaysPerWeek: 3,
+        startDate: '2026-07-06', // Monday
+      })
+
+      const draft = await getDb().selectFrom('programs').selectAll()
+        .where('id', '=', result.draftProgramId).executeTakeFirstOrThrow()
+      expect(draft.athlete_id).toBe(newbie.id)
+
+      // Every prescribed squat weight must reflect the 90 kg e1RM, not 180 kg.
+      const weights = await mainLiftWeights(result.draftProgramId, 'Squat')
+      expect(weights.length).toBeGreaterThan(0)
+      weights.forEach((w) => {
+        expect(w).not.toBeNull()
+        expect(w!).toBeLessThan(120) // well under anything derived from a 180 kg max
+      })
+    })
+
+    it('still scaffolds a main lift the new athlete has no max for, with a blank weight', async () => {
+      // This athlete has only a squat max — bench/deadlift have no recorded max.
+      const partial = await createAthlete({ name: 'Squat-Only Lifter' })
+      await getDb().insertInto('athlete_maxes').values({
+        id: 'max-squat-partial', athlete_id: partial.id, lift_name: 'Squat',
+        weight: 100, unit: 'kg', recorded_at: '2026-01-01', notes: null,
+      }).execute()
+
+      const result = await generateDraftProgram(completedProgramId, {
+        athleteId: partial.id,
+        templateId: 'strength_linear',
+        weeks: 4,
+        trainingDaysPerWeek: 3,
+        startDate: '2026-08-03', // Monday
+      })
+
+      // Bench Press is still laid out (structure preserved) but with no weight.
+      const benchWeights = await mainLiftWeights(result.draftProgramId, 'Bench Press')
+      expect(benchWeights.length).toBeGreaterThan(0)
+      benchWeights.forEach((w) => expect(w).toBeNull())
+
+      // Squat, which the athlete has a max for, still gets a real weight.
+      const squatWeights = await mainLiftWeights(result.draftProgramId, 'Squat')
+      squatWeights.forEach((w) => expect(w).not.toBeNull())
+    })
+  })
 })

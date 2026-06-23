@@ -21,9 +21,22 @@ export default function ThemeToggle() {
     setThemeState(next)
   }
 
+  const activeIndex = options.findIndex((o) => o.value === theme)
+
   return (
     <div className="p-3 md:border-t border-primary-foreground/20 dark:border-[#2b2b2b]">
-      <div className="flex gap-1 rounded-md bg-primary-foreground/10 dark:bg-[#2a2d2e] p-1">
+      <div className="relative flex rounded-md bg-primary-foreground/10 dark:bg-[#2a2d2e] p-1">
+        {/* Sliding indicator — sits behind the buttons and glides to the
+            selected option. Width is one third of the track (minus the p-1
+            padding); translateX steps it by its own width per option. */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-1 left-1 rounded bg-primary-foreground/20 dark:bg-[#37373d] shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none"
+          style={{
+            width: 'calc((100% - 0.5rem) / 3)',
+            transform: `translateX(${activeIndex * 100}%)`,
+          }}
+        />
         {options.map(({ value, label, icon: Icon }) => (
           <button
             key={value}
@@ -33,8 +46,8 @@ export default function ThemeToggle() {
             aria-label={`${label} theme`}
             aria-pressed={theme === value}
             className={cn(
-              'flex flex-1 items-center justify-center rounded p-1.5 transition-colors hover:bg-primary-foreground/10 dark:text-[#c8c8c8] dark:hover:bg-[#37373d]',
-              theme === value && 'bg-primary-foreground/20 dark:bg-[#37373d] dark:text-white',
+              'relative z-10 flex flex-1 items-center justify-center rounded p-1.5 transition-colors hover:text-white/90 dark:text-[#c8c8c8] dark:hover:text-white',
+              theme === value && 'dark:text-white',
             )}
           >
             <Icon className="h-4 w-4" />

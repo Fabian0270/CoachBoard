@@ -68,6 +68,11 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
   const [pickedProgramId, setPickedProgramId] = useState<string | null>(null)
   const [sourceAthletes, setSourceAthletes] = useState<SelectableAthlete[] | null>(null)
   const [sourcePrograms, setSourcePrograms] = useState<SelectableProgram[] | null>(null)
+  // The source program can come from another athlete (e.g. a brand-new athlete
+  // with no programs reusing a colleague's block). `sourceAthleteId === null`
+  // means "this athlete"; `pickingSourceAthlete` shows the athlete picker.
+  const [sourceAthleteId, setSourceAthleteId] = useState<string | null>(null)
+  const [pickingSourceAthlete, setPickingSourceAthlete] = useState(false)
   const [sourcesLoading, setSourcesLoading] = useState(false)
   const [sourcesError, setSourcesError] = useState<string | null>(null)
   const [goal, setGoal] = useState<SuggestionGoal | null>(null)
@@ -129,8 +134,10 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
     return () => { cancelled = true }
   }, [open, goal, selectedPattern])
 
+  // Load the athlete list both for the target-athlete step and for the
+  // "pick another athlete's program" source picker.
   useEffect(() => {
-    if (!open || step !== 'athlete' || sourceAthletes !== null) return
+    if (!open || (step !== 'athlete' && !pickingSourceAthlete) || sourceAthletes !== null) return
     setSourcesLoading(true)
     setSourcesError(null)
     fetch('/api/athletes')
@@ -138,11 +145,12 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
       .then((data) => setSourceAthletes(Array.isArray(data) ? data : []))
       .catch(() => setSourcesError('Failed to load athletes'))
       .finally(() => setSourcesLoading(false))
-  }, [open, step, sourceAthletes])
+  }, [open, step, pickingSourceAthlete, sourceAthletes])
 
   useEffect(() => {
-    const eid = athleteId ?? pickedAthleteId
-    if (!open || step !== 'source' || sourcePrograms !== null || !eid) return
+    const targetAthleteId = athleteId ?? pickedAthleteId
+    const eid = sourceAthleteId ?? targetAthleteId
+    if (!open || step !== 'source' || pickingSourceAthlete || sourcePrograms !== null || !eid) return
     setSourcesLoading(true)
     setSourcesError(null)
     fetch(`/api/programs?athlete_id=${eid}`)
@@ -153,7 +161,7 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
       })
       .catch(() => setSourcesError('Failed to load programs'))
       .finally(() => setSourcesLoading(false))
-  }, [open, step, sourcePrograms, athleteId, pickedAthleteId])
+  }, [open, step, sourcePrograms, athleteId, pickedAthleteId, sourceAthleteId, pickingSourceAthlete])
 
   function reset() {
     setStep(firstStep(programId, athleteId))
@@ -161,6 +169,8 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
     setPickedProgramId(null)
     setSourceAthletes(null)
     setSourcePrograms(null)
+    setSourceAthleteId(null)
+    setPickingSourceAthlete(false)
     setSourcesLoading(false)
     setSourcesError(null)
     setGoal(null)
@@ -205,6 +215,19 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
   function pickSourceProgram(prog: SelectableProgram) {
     setPickedProgramId(prog.id)
     setStep('goal')
+  }
+
+  // Switch the source program list to a different athlete's programs.
+  function pickSourceAthlete(aId: string) {
+    setSourceAthleteId(aId)
+    setSourcePrograms(null) // trigger refetch for the new athlete
+    setPickingSourceAthlete(false)
+  }
+
+  // Return the source list to the athlete the program is being generated for.
+  function resetToOwnAthlete() {
+    setSourceAthleteId(null)
+    setSourcePrograms(null)
   }
 
   function pickGoal(g: SuggestionGoal) {
@@ -330,6 +353,10 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
   const variantsForGoal = goal ? SUGGESTION_TEMPLATES.filter((t) => t.goal === goal) : []
   const stepIdx = stepList.indexOf(step)
 
+  const targetAthleteId = athleteId ?? pickedAthleteId
+  const viewingOtherAthlete = sourceAthleteId !== null && sourceAthleteId !== targetAthleteId
+  const sourceAthleteName = sourceAthletes?.find((a) => a.id === sourceAthleteId)?.name ?? null
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-lg">
@@ -369,13 +396,49 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
           </div>
         )}
 
-        {step === 'source' && (
+        {step === 'source' && pickingSourceAthlete && (
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground mb-3">Whose program should the new block be based on?</p>
+            {sourcesLoading && <p className="text-sm text-muted-foreground">Loading athletes…</p>}
+            {sourcesError && <p className="text-sm text-destructive">{sourcesError}</p>}
+            {sourceAthletes !== null && sourceAthletes.length === 0 && (
+              <p className="text-sm text-muted-foreground">No athletes found.</p>
+            )}
+            {sourceAthletes?.map((a) => (
+              <button
+                key={a.id}
+                onClick={() => pickSourceAthlete(a.id)}
+                className="w-full text-left rounded-lg border p-3 hover:bg-accent transition-colors font-medium flex items-center justify-between gap-2"
+              >
+                <span>{a.name}</span>
+                {a.id === targetAthleteId && (
+                  <span className="text-xs font-normal rounded bg-muted px-1.5 py-0.5 text-muted-foreground">this athlete</span>
+                )}
+              </button>
+            ))}
+            <BackButton onClick={() => setPickingSourceAthlete(false)} />
+          </div>
+        )}
+
+        {step === 'source' && !pickingSourceAthlete && (
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground mb-3">Which completed or archived program should the new block be based on?</p>
+            {viewingOtherAthlete && (
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+                <span className="text-muted-foreground">
+                  Showing <span className="font-medium text-foreground">{sourceAthleteName ?? 'another athlete'}</span>'s programs
+                </span>
+                <button type="button" onClick={resetToOwnAthlete} className="text-xs text-muted-foreground underline shrink-0">
+                  Show this athlete's
+                </button>
+              </div>
+            )}
             {sourcesLoading && <p className="text-sm text-muted-foreground">Loading programs…</p>}
             {sourcesError && <p className="text-sm text-destructive">{sourcesError}</p>}
             {sourcePrograms !== null && sourcePrograms.length === 0 && (
-              <p className="text-sm text-muted-foreground">No completed or archived programs found for this athlete.</p>
+              <p className="text-sm text-muted-foreground">
+                No completed or archived programs found for this athlete{viewingOtherAthlete ? '' : ' yet'}.
+              </p>
             )}
             {sourcePrograms?.map((p) => (
               <button
@@ -394,6 +457,14 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
                 )}
               </button>
             ))}
+            {/* Always available: base the block on any other athlete's program. */}
+            <button
+              type="button"
+              onClick={() => setPickingSourceAthlete(true)}
+              className="w-full text-left rounded-lg border border-dashed p-3 hover:bg-accent transition-colors text-sm text-muted-foreground"
+            >
+              Use another athlete's program…
+            </button>
             {stepIdx > 0 && <BackButton onClick={goBack} />}
           </div>
         )}

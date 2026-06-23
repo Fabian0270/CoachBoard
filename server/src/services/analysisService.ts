@@ -59,16 +59,39 @@ export function buildWorkoutWeekMap(
   return map
 }
 
-// Parse prescribed RPE from free-text intensity field.
-// Accepts: "RPE 8", "@ 8", "@8", "rpe8.5", "@ 8.5" etc.
+// Parse the prescribed RPE out of the free-text Intensity/Weight field. Coaches
+// write the target effort several ways, so accept them all:
+//   "RPE 8", "@ 8", "@8", "rpe8.5"  — explicit marker (also alongside a load, e.g. "100kg @8")
+//   "8", "8.5"                       — a bare number that fills the whole field
+//   "8-9", "RPE 8-9"                 — a range → midpoint
+// A field containing a percentage (e.g. "70%") is a load target, not an RPE, so a
+// bare percentage is ignored. The result is snapped to the nearest 0.5 within the
+// 5–10 RPE band; anything outside it (weights, reps) is rejected.
 function parseRpeFromIntensity(intensity: string | null): number | null {
   if (!intensity) return null
-  const match = intensity.match(/(?:rpe\s*|@\s*)(\d+(?:[.,]\d+)?)/i)
+  const text = intensity.trim()
+  if (!text) return null
+
+  const range = '(\\d+(?:[.,]\\d+)?)(?:\\s*[-–]\\s*(\\d+(?:[.,]\\d+)?))?'
+  // Explicit RPE/@ marker wins even when a weight or % shares the cell.
+  let match = text.match(new RegExp(`(?:rpe\\s*|@\\s*)${range}`, 'i'))
+  // Otherwise treat a bare number/range that is the entire field as the RPE,
+  // unless it's a percentage load target.
+  if (!match && !text.includes('%')) {
+    match = text.match(new RegExp(`^${range}$`))
+  }
   if (!match) return null
-  const val = parseFloat(match[1].replace(',', '.'))
-  if (isNaN(val) || val < 5 || val > 10) return null
-  if (!Number.isInteger(val * 2)) return null
-  return val
+
+  const lo = parseFloat(match[1].replace(',', '.'))
+  if (isNaN(lo)) return null
+  let val = lo
+  if (match[2]) {
+    const hi = parseFloat(match[2].replace(',', '.'))
+    if (!isNaN(hi)) val = (lo + hi) / 2
+  }
+  const snapped = Math.round(val * 2) / 2
+  if (snapped < 5 || snapped > 10) return null
+  return snapped
 }
 
 export async function getProgramReport(programId: string): Promise<ProgramReport | null> {
