@@ -1,0 +1,74 @@
+{
+  "layout": "vertical",
+  "columnMapping": {
+    "exercise": 1,
+    "sets": 2,
+    "reps": 3,
+    "load": 4,
+    "rpe": 5,
+    "rpeFromRir": false
+  },
+  "weeks": 2,
+  "days": 3,
+  "exerciseCount": 5,
+  "suggestedFocus": "strength",
+  "errors": [],
+  "warnings": [],
+  "exercises": [
+    {
+      "weekIndex": 0,
+      "dayIndex": 0,
+      "weekLabel": "Vecka 1",
+      "dayLabel": "Måndag",
+      "name": "Knäböj",
+      "sets": "3",
+      "reps": "5",
+      "load": "100",
+      "rpe": "8"
+    },
+    {
+      "weekIndex": 0,
+      "dayIndex": 0,
+      "weekLabel": "Vecka 1",
+      "dayLabel": "Måndag",
+      "name": "Bänkpress",
+      "sets": "3",
+      "reps": "5",
+      "load": "82.5",
+      "rpe": "7.5"
+    },
+    {
+      "weekIndex": 0,
+      "dayIndex": 1,
+      "weekLabel": "Vecka 1",
+      "dayLabel": "Torsdag",
+      "name": "Marklyft",
+      "sets": "1",
+      "reps": "5",
+      "load": "140",
+      "rpe": "9"
+    },
+    {
+      "weekIndex": 1,
+      "dayIndex": 0,
+      "weekLabel": "Vecka 2",
+      "dayLabel": "Måndag",
+      "name": "Knäböj",
+      "sets": "3",
+      "reps": "5",
+      "load": "105",
+      "rpe": "8"
+    },
+    {
+      "weekIndex": 1,
+      "dayIndex": 0,
+      "weekLabel": "Vecka 2",
+      "dayLabel": "Måndag",
+      "name": "Chins",
+      "sets": "3",
+      "reps": "8",
+      "load": null,
+      "rpe": "8"
+    }
+  ]
+}

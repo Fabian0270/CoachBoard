@@ -1,0 +1,54 @@
+{
+  "layout": "vertical",
+  "columnMapping": {
+    "exercise": 1,
+    "sets": 2,
+    "reps": 3,
+    "load": 4,
+    "rpe": 5,
+    "rpeFromRir": true
+  },
+  "weeks": 1,
+  "days": 2,
+  "exerciseCount": 3,
+  "suggestedFocus": "strength",
+  "errors": [],
+  "warnings": [
+    "Row 5: variable reps \"AMRAP\" kept as-is (no fixed value)."
+  ],
+  "exercises": [
+    {
+      "weekIndex": 0,
+      "dayIndex": 0,
+      "weekLabel": "Week 1",
+      "dayLabel": "Day 1",
+      "name": "Squat",
+      "sets": "4",
+      "reps": "6-10",
+      "load": "100",
+      "rpe": "8"
+    },
+    {
+      "weekIndex": 0,
+      "dayIndex": 0,
+      "weekLabel": "Week 1",
+      "dayLabel": "Day 1",
+      "name": "Bench",
+      "sets": "3",
+      "reps": "AMRAP",
+      "load": "60",
+      "rpe": "7"
+    },
+    {
+      "weekIndex": 0,
+      "dayIndex": 1,
+      "weekLabel": "Week 1",
+      "dayLabel": "Day 2",
+      "name": "Deadlift",
+      "sets": "1",
+      "reps": "3",
+      "load": "140",
+      "rpe": "10"
+    }
+  ]
+}
