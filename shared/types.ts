@@ -247,6 +247,20 @@ export interface ExternalExerciseRow {
 
 export type ExternalLayout = 'horizontal' | 'vertical' | 'block-grid' | 'week-grid'
 
+// Manual overrides a coach supplies from the import wizard when auto-detection
+// gets it wrong. Applied to the simple vertical (stacked-table) layout: force the
+// header row and/or pin specific columns to fields. Any field left undefined
+// falls back to auto-detection; an explicit null clears a detected column.
+export interface ExternalParseOverrides {
+  headerRow?: number              // 1-based row to treat as the header
+  exercise?: number | null        // 1-based column index for each field
+  sets?: number | null
+  reps?: number | null
+  load?: number | null
+  rpe?: number | null
+  rpeFromRir?: boolean            // treat the RPE column as RIR (convert to RPE)
+}
+
 export interface ExternalImportWarning {
   sheetRow?: number
   message: string
@@ -268,6 +282,12 @@ export interface ExternalImportPreview {
   // uploaded file, persisted on the program so it re-exports in the coach's style.
   // null when no exercises were detected (nothing to capture from).
   layoutTemplate: ExportLayoutTemplate | null
+  // Surfaced so the wizard can offer manual column/header remapping when
+  // auto-detection is wrong. headerRowIndex is 1-based (0 if none found);
+  // headerCells is that row's per-column text; columnCount is the sheet width.
+  headerRowIndex: number
+  headerCells: string[]
+  columnCount: number
 }
 
 export interface ExternalImportCommitResult {

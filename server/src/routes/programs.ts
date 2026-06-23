@@ -27,8 +27,36 @@ import { renderScaffold } from '../services/templateScaffoldService.js'
 import { createExportStyle } from '../services/exportStyleService.js'
 import { getProgramReport } from '../services/analysisService.js'
 import { generateDraftProgram } from '../services/suggestionService.js'
+import type { ExternalParseOverrides } from 'coachboard-shared'
 
 const router = Router()
+
+// Manual column/header remapping for the external importer, read from query params.
+// header_row=N forces the header row; map_<field>=N pins a column (1-based), while
+// map_<field>=none|'' clears a detected one; rpe_is_rir=1 marks the RPE column as
+// RIR. Any param that's absent falls back to auto-detection.
+function externalOverridesFromQuery(q: Request['query']): ExternalParseOverrides | undefined {
+  const asInt = (v: unknown): number | undefined => {
+    if (typeof v !== 'string' || v.trim() === '') return undefined
+    const n = parseInt(v, 10)
+    return Number.isFinite(n) ? n : undefined
+  }
+  // undefined = absent (auto), null = explicitly cleared, number = pinned column.
+  const asColumn = (v: unknown): number | null | undefined => {
+    if (v === undefined) return undefined
+    if (v === '' || v === 'none') return null
+    return asInt(v)
+  }
+  const o: ExternalParseOverrides = {}
+  const hr = asInt(q.header_row); if (hr !== undefined) o.headerRow = hr
+  const ex = asColumn(q.map_exercise); if (ex !== undefined) o.exercise = ex
+  const sets = asColumn(q.map_sets); if (sets !== undefined) o.sets = sets
+  const reps = asColumn(q.map_reps); if (reps !== undefined) o.reps = reps
+  const load = asColumn(q.map_load); if (load !== undefined) o.load = load
+  const rpe = asColumn(q.map_rpe); if (rpe !== undefined) o.rpe = rpe
+  if (q.rpe_is_rir !== undefined) o.rpeFromRir = q.rpe_is_rir === '1' || q.rpe_is_rir === 'true'
+  return Object.keys(o).length > 0 ? o : undefined
+}
 
 // ---------------------------------------------------------------------------
 // Programs
@@ -350,7 +378,8 @@ router.post(
         return
       }
 
-      const preview = await parseExternalFile(buffer)
+      const overrides = externalOverridesFromQuery(req.query)
+      const preview = await parseExternalFile(buffer, overrides)
 
       // dry_run=1 → preview only (Feature 4a)
       if (req.query.dry_run === '1') {
