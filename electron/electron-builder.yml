@@ -27,6 +27,17 @@ win:
   target:
     - target: nsis
       arch: [x64]
+  # Code signing is optional until a certificate is available. electron-builder
+  # signs automatically when CSC_LINK (path to / base64 of the .pfx) and
+  # CSC_KEY_PASSWORD are present in the environment; with no certificate set it
+  # produces an UNSIGNED build (current behaviour). The block below only
+  # configures *how* signing happens once a cert is supplied — it does not force
+  # signing. See docs/CODE_SIGNING.md for how to obtain and configure a cert.
+  signtoolOptions:
+    # RFC-3161 timestamp so signatures stay valid after the cert expires.
+    rfc3161TimeStampServer: http://timestamp.digicert.com
+    signingHashAlgorithms:
+      - sha256
 
 nsis:
   oneClick: false
