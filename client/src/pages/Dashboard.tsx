@@ -6,6 +6,7 @@ import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Users, Dumbbell, Plus, AlertTriangle } from 'lucide-react'
 import MyStyleCard from '../components/MyStyleCard'
+import Onboarding from '../components/Onboarding'
 import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
 
 interface Stats {
@@ -89,17 +90,8 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
-      <MyStyleCard />
-      {stats.athletes === 0 && (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <Users className="h-12 w-12 text-muted-foreground mb-4" />
-            <h2 className="text-lg font-semibold mb-2">No athletes yet</h2>
-            <p className="text-muted-foreground mb-4">Get started by adding your first athlete.</p>
-            <Link to="/athletes/new"><Button>Add your first athlete</Button></Link>
-          </CardContent>
-        </Card>
-      )}
+      {/* Fresh install → guided onboarding instead of the (empty) style card. */}
+      {stats.athletes === 0 ? <Onboarding /> : <MyStyleCard />}
     </div>
   )
 }

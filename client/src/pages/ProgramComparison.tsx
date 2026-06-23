@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -15,6 +15,7 @@ const STATUSES = ['active', 'completed', 'archived'] as const
 
 export default function ProgramComparison() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [athletes, setAthletes] = useState<Athlete[]>([])
   const [programs, setPrograms] = useState<Program[]>([])
   const [selectedAthlete, setSelectedAthlete] = useState<string>('all')
@@ -40,6 +41,16 @@ export default function ProgramComparison() {
   }
 
   useEffect(() => { loadData() }, [])
+
+  // Deep link from onboarding: /programs?import=1 opens the bulk-import dialog
+  // straight away, then drops the param so a refresh doesn't reopen it.
+  useEffect(() => {
+    if (searchParams.get('import') === '1') {
+      setImportOpen(true)
+      searchParams.delete('import')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   useEffect(() => {
     if (!menuOpen) return
