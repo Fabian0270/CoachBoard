@@ -5,10 +5,12 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
+import { useToast } from '../components/ui/toast'
 import { ArrowLeft } from 'lucide-react'
 
 export default function NewAthlete() {
   const navigate = useNavigate()
+  const toast = useToast()
   const [form, setForm] = useState({ name: '', email: '', sport: '', date_of_birth: '', notes: '' })
   const [saving, setSaving] = useState(false)
 
@@ -23,14 +25,14 @@ export default function NewAthlete() {
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        alert(`Failed to create athlete: ${err.error ?? JSON.stringify(err)}`)
+        toast.error(`Failed to create athlete: ${err.error ?? JSON.stringify(err)}`)
         setSaving(false)
         return
       }
       const athlete = await res.json()
       navigate(`/athletes/${athlete.id}`)
     } catch (err) {
-      alert(`Network error: ${String(err)}`)
+      toast.error(`Network error: ${String(err)}`)
       setSaving(false)
     }
   }

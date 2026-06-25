@@ -1,5 +1,6 @@
 import type { Program, Workout, Exercise } from '../lib/programUtils'
 import { pendingWorkoutCreations } from '../lib/programUtils'
+import { useConfirm } from '../components/ui/confirm-dialog'
 
 type SetProgram = React.Dispatch<React.SetStateAction<Program | null>>
 type FlashCell = (date: string, status: 'saving' | 'saved' | 'error') => void
@@ -10,6 +11,8 @@ export function useWorkoutActions(
   setProgram: SetProgram,
   flashCell: FlashCell,
 ) {
+  const confirm = useConfirm()
+
   const updateWorkout = (workoutId: string, mut: (w: Workout) => Workout) => {
     setProgram((p) => p ? { ...p, workouts: p.workouts.map((w) => w.id === workoutId ? mut(w) : w) } : p)
   }
@@ -99,7 +102,7 @@ export function useWorkoutActions(
 
   const deleteWorkout = async (workoutId: string, onDeleted: () => void): Promise<void> => {
     if (!id) return
-    if (!confirm('Clear this day? All exercises will be removed.')) return
+    if (!(await confirm({ title: 'Clear this day?', description: 'All exercises will be removed.', confirmLabel: 'Clear', destructive: true }))) return
     try {
       const res = await fetch(`/api/programs/${id}/workouts/${workoutId}`, { method: 'DELETE' })
       if (!res.ok && res.status !== 404) return

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { useToast } from '../components/ui/toast'
+import { useConfirm } from '../components/ui/confirm-dialog'
 import { Palette, Pencil, Trash2, Check, X } from 'lucide-react'
 
 interface ExportStyle {
@@ -12,6 +14,8 @@ interface ExportStyle {
 }
 
 export default function ExportStyles() {
+  const toast = useToast()
+  const confirm = useConfirm()
   const [styles, setStyles] = useState<ExportStyle[]>([])
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -39,14 +43,19 @@ export default function ExportStyles() {
       body: JSON.stringify({ name }),
     })
     if (res.ok) { cancelEdit(); load() }
-    else alert('Failed to rename style')
+    else toast.error('Failed to rename style')
   }
 
   const remove = async (s: ExportStyle) => {
-    if (!confirm(`Delete the style "${s.name}"? Programs already using it keep their look; it just won't be offered for new programs.`)) return
+    if (!(await confirm({
+      title: `Delete the style "${s.name}"?`,
+      description: "Programs already using it keep their look; it just won't be offered for new programs.",
+      confirmLabel: 'Delete',
+      destructive: true,
+    }))) return
     const res = await fetch(`/api/export-styles/${s.id}`, { method: 'DELETE' })
     if (res.ok) load()
-    else alert('Failed to delete style')
+    else toast.error('Failed to delete style')
   }
 
   return (

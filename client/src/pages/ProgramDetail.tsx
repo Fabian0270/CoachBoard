@@ -9,6 +9,8 @@ import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
+import { useToast } from '../components/ui/toast'
+import { useConfirm } from '../components/ui/confirm-dialog'
 import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle } from 'lucide-react'
 import ImportDialog from '../components/ImportDialog'
 import ExerciseEditor from '../components/program-detail/ExerciseEditor'
@@ -25,6 +27,8 @@ import {
 export default function ProgramDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const toast = useToast()
+  const confirm = useConfirm()
   const { program, setProgram, notFound } = useProgramData(id)
   const [setupForm, setSetupForm] = useState({ start_date: '', weeks: '4' })
   const [savingDuration, setSavingDuration] = useState(false)
@@ -104,17 +108,17 @@ export default function ProgramDetail() {
         setProgram((p) => p ? { ...p, ...updated } : p)
       } else {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        alert(`Failed to set duration: ${err.error ?? JSON.stringify(err)}`)
+        toast.error(`Failed to set duration: ${err.error ?? JSON.stringify(err)}`)
       }
     } catch (err) {
-      alert(`Network error: ${String(err)}`)
+      toast.error(`Network error: ${String(err)}`)
     } finally {
       setSavingDuration(false)
     }
   }
 
   const handleDelete = async () => {
-    if (!confirm('Delete this program?')) return
+    if (!(await confirm({ title: 'Delete this program?', confirmLabel: 'Delete', destructive: true }))) return
     await fetch(`/api/programs/${id}`, { method: 'DELETE' })
     navigate('/programs')
   }
