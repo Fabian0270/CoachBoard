@@ -283,7 +283,7 @@ export default function ProgramDetail() {
             {program.start_date} → {program.end_date} · {grid.weeks} {grid.weeks === 1 ? 'week' : 'weeks'} · click any day to edit
           </div>
           <div className="overflow-x-auto rounded-md border border-border bg-card">
-            <table className="w-full border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
+            <table className="w-full min-w-[640px] border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
               <colgroup>
                 <col style={{ width: 64 }} />
                 {DAY_LABELS.map((d) => <col key={d} />)}
