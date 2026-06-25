@@ -183,7 +183,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
                     (Tuchscherer RPE chart, rounded to 2.5 kg).
                   </p>
                   <div className="overflow-x-auto rounded-md border border-border">
-                    <table className="w-full border-collapse text-sm">
+                    <table className="w-full min-w-[600px] border-collapse text-sm">
                       <thead>
                         <tr className="bg-muted/50 text-xs text-muted-foreground">
                           <th className="border-b border-r border-border px-2 py-1.5 text-left font-medium">Reps</th>
