@@ -69,6 +69,33 @@ export async function deleteAthlete(id: string) {
   return getDb().deleteFrom('athletes').where('id', '=', id).returningAll().executeTakeFirst()
 }
 
+// Delete the athlete but keep their programs for reuse with another athlete:
+// detach the programs (athlete_id → NULL) and archive them first, so the FK's
+// ON DELETE CASCADE no longer matches them. The athlete's own records (maxes,
+// payments, progress) still cascade away with the deleted athlete row.
+// Detached programs keep feeding the suggestion engine (style is scoped by status)
+// and can be re-assigned to an athlete later.
+export async function deleteAthleteKeepingPrograms(id: string) {
+  const db = getDb()
+  return db.transaction().execute(async (trx) => {
+    const athlete = await trx
+      .selectFrom('athletes')
+      .selectAll()
+      .where('id', '=', id)
+      .executeTakeFirst()
+    if (!athlete) return undefined
+
+    await trx
+      .updateTable('programs')
+      .set({ athlete_id: null, status: 'archived', updated_at: new Date().toISOString() })
+      .where('athlete_id', '=', id)
+      .execute()
+
+    await trx.deleteFrom('athletes').where('id', '=', id).execute()
+    return athlete
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Athlete maxes (PRs) — history is kept; "current max" = latest row per lift
 // ---------------------------------------------------------------------------

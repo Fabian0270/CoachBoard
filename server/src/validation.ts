@@ -63,6 +63,9 @@ export const schemas = {
       status: statusEnum.optional(),
       enabled_columns: z.array(enabledColumnEnum).nullable().optional(),
       focus: optionalFocus,
+      // Reassign an unassigned (or any) program to an athlete. Only a real athlete
+      // id — detaching to NULL happens through the athlete-delete "keep programs" path.
+      athlete_id: z.uuid().optional(),
     }).refine(dateRangeValid, dateRangeIssue),
     duration: z.object({
       start_date: isoDate,

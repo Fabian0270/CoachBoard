@@ -7,6 +7,8 @@ import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
+import { useToast } from '../components/ui/toast'
+import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
 import AthleteMaxes from '../components/AthleteMaxes'
 import PaymentsSection from '../components/PaymentsSection'
 import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles } from 'lucide-react'
@@ -32,6 +34,8 @@ interface Program {
 export default function AthleteDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const toast = useToast()
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [athlete, setAthlete] = useState<Athlete | null>(null)
   const [programs, setPrograms] = useState<Program[]>([])
   const [notFound, setNotFound] = useState(false)
@@ -62,11 +66,7 @@ export default function AthleteDetail() {
     return () => document.removeEventListener('click', close)
   }, [newMenuOpen])
 
-  const handleDelete = async () => {
-    if (!confirm('Delete this athlete?')) return
-    await fetch(`/api/athletes/${id}`, { method: 'DELETE' })
-    navigate('/athletes')
-  }
+  const handleDelete = () => setDeleteOpen(true)
 
   const startEdit = () => {
     if (!athlete) return
@@ -96,10 +96,10 @@ export default function AthleteDetail() {
         setEditing(false)
       } else {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        alert(`Failed to save: ${err.error ?? JSON.stringify(err)}`)
+        toast.error(`Failed to save: ${err.error ?? JSON.stringify(err)}`)
       }
     } catch (err) {
-      alert(`Network error: ${String(err)}`)
+      toast.error(`Network error: ${String(err)}`)
     } finally {
       setSaving(false)
     }
@@ -236,6 +236,12 @@ export default function AthleteDetail() {
           onCreated={(draftId) => navigate(`/programs/${draftId}`)}
         />
       )}
+      <DeleteAthleteDialog
+        athlete={athlete}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onDeleted={() => navigate('/athletes')}
+      />
     </div>
   )
 }

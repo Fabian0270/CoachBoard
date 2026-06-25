@@ -61,7 +61,7 @@ export default function ProgramReport() {
   }, [id])
 
   const handleUpdateMax = async (liftKey: string, displayName: string, e1rm: number) => {
-    if (!report) return
+    if (!report?.athleteId) return
     setUpdatingMax((prev) => new Set([...prev, liftKey]))
     try {
       const res = await fetch(`/api/athletes/${report.athleteId}/maxes`, {
@@ -110,7 +110,7 @@ export default function ProgramReport() {
         {program.focus && (
           <Badge variant="outline" className="capitalize">{program.focus}</Badge>
         )}
-        {(program.status === 'completed' || program.status === 'archived') && (
+        {report.athleteId && (program.status === 'completed' || program.status === 'archived') && (
           <Button
             variant="outline"
             size="sm"
@@ -123,7 +123,7 @@ export default function ProgramReport() {
         )}
       </div>
 
-      {id && report && (
+      {id && report.athleteId && (
         <SuggestProgramDialog
           open={suggestOpen}
           onOpenChange={setSuggestOpen}
@@ -292,7 +292,9 @@ export default function ProgramReport() {
                               : `No stored max  →  e1RM this block: ${fmt(trend.latestE1RM)} kg`}
                           </div>
                         </div>
-                        {alreadyUpdated ? (
+                        {!report.athleteId ? (
+                          <span className="text-sm text-muted-foreground">Assign an athlete to save PRs</span>
+                        ) : alreadyUpdated ? (
                           <div className="flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
                             <CheckCircle2 className="h-4 w-4" />
                             Saved

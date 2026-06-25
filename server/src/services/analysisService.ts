@@ -189,14 +189,17 @@ export async function getProgramReport(programId: string): Promise<ProgramReport
       ? Math.round((deltas.reduce((a, b) => a + b, 0) / deltas.length) * 100) / 100
       : null
 
-  // Latest stored max per lift for the athlete
-  const maxRows = await getDb()
-    .selectFrom('athlete_maxes')
-    .selectAll()
-    .where('athlete_id', '=', program.athlete_id)
-    .orderBy('lift_name', 'asc')
-    .orderBy('recorded_at', 'desc')
-    .execute()
+  // Latest stored max per lift for the athlete. Unassigned programs (athlete deleted,
+  // program kept) have no owner, so there are no stored maxes to baseline against.
+  const maxRows = program.athlete_id
+    ? await getDb()
+        .selectFrom('athlete_maxes')
+        .selectAll()
+        .where('athlete_id', '=', program.athlete_id)
+        .orderBy('lift_name', 'asc')
+        .orderBy('recorded_at', 'desc')
+        .execute()
+    : []
 
   const seenLifts = new Set<string>()
   const storedMaxes: AthleteMax[] = maxRows.filter((m) => {

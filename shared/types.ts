@@ -52,7 +52,9 @@ export const TOGGLEABLE_COLUMNS: ToggleableColumn[] = ['rest_time', 'intensity',
 
 export interface Program {
   id: string
-  athlete_id: string
+  // null = unassigned: the owning athlete was deleted with "keep programs", so the
+  // program is detached (and archived) but kept for reuse with another athlete.
+  athlete_id: string | null
   name: string
   description: string | null
   start_date: string | null
@@ -326,7 +328,7 @@ export interface RPEDeviationRow {
 
 export interface ProgramReport {
   programId: string
-  athleteId: string
+  athleteId: string | null  // null = unassigned program (owning athlete deleted)
   e1rmTrends: LiftE1RMTrend[]
   rpeDeviations: RPEDeviationRow[]
   avgRpeDeviation: number | null
