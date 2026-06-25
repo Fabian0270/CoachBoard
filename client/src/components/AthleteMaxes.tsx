@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
+import { useToast } from './ui/toast'
+import { useConfirm } from './ui/confirm-dialog'
 import { Plus, Trash2 } from 'lucide-react'
 
 const SUGGESTED_LIFTS = ['Squat', 'Bench Press', 'Deadlift']
@@ -16,6 +18,8 @@ function formatWeight(w: number): string {
 }
 
 export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
+  const toast = useToast()
+  const confirm = useConfirm()
   const [maxes, setMaxes] = useState<AthleteMax[]>([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ lift_name: '', weight: '', recorded_at: today() })
@@ -61,7 +65,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        alert(`Failed to save PR: ${err.error ?? JSON.stringify(err)}`)
+        toast.error(`Failed to save PR: ${err.error ?? JSON.stringify(err)}`)
         return
       }
       const created: AthleteMax = await res.json()
@@ -73,14 +77,18 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
       setSelectedLift(created.lift_name)
       setForm({ lift_name: '', weight: '', recorded_at: today() })
     } catch (err) {
-      alert(`Network error: ${String(err)}`)
+      toast.error(`Network error: ${String(err)}`)
     } finally {
       setSaving(false)
     }
   }
 
   const handleDelete = async (max: AthleteMax) => {
-    if (!confirm(`Delete ${max.lift_name} ${formatWeight(max.weight)} ${max.unit} (${max.recorded_at})?`)) return
+    if (!(await confirm({
+      title: `Delete ${max.lift_name} ${formatWeight(max.weight)} ${max.unit} (${max.recorded_at})?`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    }))) return
     const res = await fetch(`/api/athletes/${athleteId}/maxes/${max.id}`, { method: 'DELETE' })
     if (res.ok || res.status === 404) {
       setMaxes((list) => list.filter((m) => m.id !== max.id))
@@ -175,7 +183,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
                     (Tuchscherer RPE chart, rounded to 2.5 kg).
                   </p>
                   <div className="overflow-x-auto rounded-md border border-border">
-                    <table className="w-full border-collapse text-sm">
+                    <table className="w-full min-w-[600px] border-collapse text-sm">
                       <thead>
                         <tr className="bg-muted/50 text-xs text-muted-foreground">
                           <th className="border-b border-r border-border px-2 py-1.5 text-left font-medium">Reps</th>

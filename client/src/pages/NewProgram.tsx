@@ -6,6 +6,7 @@ import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { useToast } from '../components/ui/toast'
 import { ArrowLeft } from 'lucide-react'
 
 interface Athlete { id: string; name: string }
@@ -16,6 +17,7 @@ const NO_STYLE = '__none__'
 
 export default function NewProgram() {
   const navigate = useNavigate()
+  const toast = useToast()
   const [searchParams] = useSearchParams()
   const [athletes, setAthletes] = useState<Athlete[]>([])
   const [styles, setStyles] = useState<ExportStyle[]>([])
@@ -55,14 +57,14 @@ export default function NewProgram() {
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        alert(`Failed to create program: ${err.error ?? JSON.stringify(err)}`)
+        toast.error(`Failed to create program: ${err.error ?? JSON.stringify(err)}`)
         setSaving(false)
         return
       }
       const program = await res.json()
       navigate(`/programs/${program.id}`)
     } catch (err) {
-      alert(`Network error: ${String(err)}`)
+      toast.error(`Network error: ${String(err)}`)
       setSaving(false)
     }
   }

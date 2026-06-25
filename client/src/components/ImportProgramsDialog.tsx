@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
 import { Button } from './ui/button'
 import { FolderUp, Upload, Loader2, AlertTriangle, XCircle, Check } from 'lucide-react'
 import { parseArchiveFilename } from '../lib/bulkImport'
-import type { ExternalImportPreview, ExternalColumnMapping, SuggestionGoal } from 'coachboard-shared'
+import type { ExternalImportPreview, ExternalColumnMapping, ExternalParseOverrides, SuggestionGoal } from 'coachboard-shared'
 
 interface Athlete { id: string; name: string; archived: number }
 
@@ -85,6 +85,89 @@ function ColumnMapping({ mapping }: { mapping: ExternalColumnMapping }) {
   )
 }
 
+// Build the override query params sent on re-parse and commit (matches the
+// server's externalOverridesFromQuery). Absent fields fall back to auto-detection.
+function overrideParams(o: ExternalParseOverrides): URLSearchParams {
+  const p = new URLSearchParams()
+  if (o.headerRow !== undefined) p.set('header_row', String(o.headerRow))
+  const col = (key: string, v: number | null | undefined) => {
+    if (v === undefined) return
+    p.set(key, v === null ? 'none' : String(v))
+  }
+  col('map_exercise', o.exercise)
+  col('map_sets', o.sets)
+  col('map_reps', o.reps)
+  col('map_load', o.load)
+  col('map_rpe', o.rpe)
+  if (o.rpeFromRir !== undefined) p.set('rpe_is_rir', o.rpeFromRir ? '1' : '0')
+  return p
+}
+
+const MAP_FIELDS: { key: 'exercise' | 'sets' | 'reps' | 'load' | 'rpe'; label: string; required?: boolean }[] = [
+  { key: 'exercise', label: 'Exercise', required: true },
+  { key: 'sets', label: 'Sets', required: true },
+  { key: 'reps', label: 'Reps', required: true },
+  { key: 'load', label: 'Load' },
+  { key: 'rpe', label: 'RPE / RIR' },
+]
+
+// Editable column/header mapping — the recovery path when auto-detection is wrong.
+// Driven by the server's effective mapping (preview.columnMapping); each change
+// calls onOverride, which re-parses with the accumulated overrides.
+function ColumnMapper({ preview, reparsing, onOverride }: {
+  preview: ExternalImportPreview
+  reparsing: boolean
+  onOverride: (patch: Partial<ExternalParseOverrides>) => void
+}) {
+  const cols = Array.from({ length: Math.max(preview.columnCount, 1) }, (_, i) => i + 1)
+  const colLabel = (i: number) => {
+    const h = preview.headerCells[i - 1]?.trim()
+    return h ? `${colLetter(i)} — ${h}` : `Column ${colLetter(i)}`
+  }
+  return (
+    <div className="rounded-md border p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold">Column mapping</span>
+        {reparsing && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Wrong? Point each field at the right column. Exercise, Sets and Reps are required.
+      </p>
+      <div className="flex items-center gap-2 text-sm">
+        <label className="w-28 shrink-0 text-muted-foreground">Header row</label>
+        <input
+          type="number"
+          min={1}
+          className={`${inputClass} w-24`}
+          value={preview.headerRowIndex || 1}
+          onChange={(e) => { const n = parseInt(e.target.value, 10); if (n > 0) onOverride({ headerRow: n }) }}
+        />
+      </div>
+      {MAP_FIELDS.map(({ key, label, required }) => (
+        <div key={key} className="flex items-center gap-2 text-sm">
+          <label className="w-28 shrink-0 text-muted-foreground">{label}{required && ' *'}</label>
+          <select
+            className={`${inputClass} flex-1`}
+            value={preview.columnMapping[key] ?? ''}
+            onChange={(e) => onOverride({ [key]: e.target.value === '' ? null : parseInt(e.target.value, 10) })}
+          >
+            <option value="">— none —</option>
+            {cols.map((i) => <option key={i} value={i}>{colLabel(i)}</option>)}
+          </select>
+        </div>
+      ))}
+      <label className="flex items-center gap-2 text-xs text-muted-foreground pt-0.5">
+        <input
+          type="checkbox"
+          checked={preview.columnMapping.rpeFromRir}
+          onChange={(e) => onOverride({ rpeFromRir: e.target.checked })}
+        />
+        That column holds RIR (reps in reserve), not RPE — convert it
+      </label>
+    </div>
+  )
+}
+
 function ExerciseTable({ preview }: { preview: ExternalImportPreview }) {
   return (
     <div className="overflow-x-auto rounded border max-h-[40vh]">
@@ -136,6 +219,10 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
   // single-mode finalize state
   const [athleteId, setAthleteId] = useState('')
   const [status, setStatus] = useState('active')
+  // single-mode manual column/header overrides (the remap recovery path)
+  const [overrides, setOverrides] = useState<ExternalParseOverrides>({})
+  const [reparsing, setReparsing] = useState(false)
+  const [remapOpen, setRemapOpen] = useState(false)
   const [startDate, setStartDate] = useState(todayIso())
   // opt-in: also save this file's layout into the reusable style library
   const [saveStyle, setSaveStyle] = useState(false)
@@ -160,6 +247,9 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
     setAthleteId('')
     setStatus('active')
     setStartDate(todayIso())
+    setOverrides({})
+    setReparsing(false)
+    setRemapOpen(false)
     setSaveStyle(false)
     setStyleName('')
     if (folderRef.current) folderRef.current.value = ''
@@ -251,6 +341,37 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
     setAssignments((a) => ({ ...a, [groupKey]: { ...a[groupKey], ...patch } }))
   }
 
+  // Re-parse the single file with the coach's accumulated manual overrides and
+  // swap in the fresh preview (which carries the corrected mapping + data).
+  async function applyOverride(patch: Partial<ExternalParseOverrides>) {
+    const entry = entries[0]
+    if (!entry) return
+    const next = { ...overrides, ...patch }
+    setOverrides(next)
+    setReparsing(true)
+    try {
+      const params = overrideParams(next)
+      params.set('dry_run', '1')
+      const buf = await entry.file.arrayBuffer()
+      const res = await fetch(`/api/programs/import-external?${params.toString()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: buf,
+      })
+      const data = await res.json()
+      if (res.ok) {
+        const pv = data as ExternalImportPreview
+        setEntry(entry.key, { preview: pv, error: null, focus: entry.focus || (pv.suggestedFocus ?? '') })
+      } else {
+        setEntry(entry.key, { preview: null, error: data.error ?? 'Preview failed' })
+      }
+    } catch {
+      setEntry(entry.key, { error: 'Failed to reach server' })
+    } finally {
+      setReparsing(false)
+    }
+  }
+
   // --- single-import commit -------------------------------------------------
   async function handleSingleConfirm() {
     const entry = entries[0]
@@ -265,6 +386,9 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
         params.set('save_style', '1')
         if (styleName.trim()) params.set('style_name', styleName.trim())
       }
+      // Commit with the same manual overrides used in the preview, so the stored
+      // program (and its captured style) matches exactly what the coach reviewed.
+      for (const [k, v] of overrideParams(overrides)) params.set(k, v)
       const buf = await entry.file.arrayBuffer()
       const res = await fetch(`/api/programs/import-external?${params.toString()}`, {
         method: 'POST',
@@ -442,7 +566,11 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
                     ? <li>{single.error}</li>
                     : singlePreview!.errors.map((err, i) => <li key={i}>{err}</li>)}
                 </ul>
-                {singlePreview && <ColumnMapping mapping={singlePreview.columnMapping} />}
+                {/* Recovery: when the file parsed but couldn't be mapped, let the
+                    coach fix the columns live — fixing them clears the error. */}
+                {singlePreview && (
+                  <ColumnMapper preview={singlePreview} reparsing={reparsing} onOverride={applyOverride} />
+                )}
                 <div className="flex justify-end pt-2">
                   <Button variant="outline" onClick={reset}>Choose another file</Button>
                 </div>
@@ -454,7 +582,23 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
                   <strong>{singlePreview!.days}</strong> day-block{singlePreview!.days !== 1 ? 's' : ''},{' '}
                   <strong>{singlePreview!.exerciseCount}</strong> exercise{singlePreview!.exerciseCount !== 1 ? 's' : ''}.
                 </p>
-                <ColumnMapping mapping={singlePreview!.columnMapping} />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <ColumnMapping mapping={singlePreview!.columnMapping} />
+                    {singlePreview!.layout === 'vertical' && (
+                      <button
+                        type="button"
+                        onClick={() => setRemapOpen((o) => !o)}
+                        className="text-xs text-muted-foreground underline shrink-0"
+                      >
+                        {remapOpen ? 'Hide mapping' : 'Adjust…'}
+                      </button>
+                    )}
+                  </div>
+                  {remapOpen && singlePreview!.layout === 'vertical' && (
+                    <ColumnMapper preview={singlePreview!} reparsing={reparsing} onOverride={applyOverride} />
+                  )}
+                </div>
 
                 {singlePreview!.warnings.length > 0 && (
                   <div className="space-y-1">

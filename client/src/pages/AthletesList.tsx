@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
+import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
 import { Plus, Users, Trash2 } from 'lucide-react'
 
 interface Athlete {
@@ -16,7 +17,7 @@ interface Athlete {
 export default function AthletesList() {
   const [athletes, setAthletes] = useState<Athlete[]>([])
   const [loading, setLoading] = useState(true)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [toDelete, setToDelete] = useState<Athlete | null>(null)
   const [showArchived, setShowArchived] = useState(false)
 
   useEffect(() => {
@@ -27,16 +28,10 @@ export default function AthletesList() {
       .catch(() => setLoading(false))
   }, [])
 
-  const handleDelete = async (e: React.MouseEvent, athlete: Athlete) => {
+  const handleDelete = (e: React.MouseEvent, athlete: Athlete) => {
     e.preventDefault()
     e.stopPropagation()
-    if (!confirm(`Delete "${athlete.name}"? This will also delete all their programs.`)) return
-    setDeletingId(athlete.id)
-    const res = await fetch(`/api/athletes/${athlete.id}`, { method: 'DELETE' })
-    if (res.ok || res.status === 404) {
-      setAthletes((list) => list.filter((a) => a.id !== athlete.id))
-    }
-    setDeletingId(null)
+    setToDelete(athlete)
   }
 
   if (loading) return <div className="text-muted-foreground">Loading...</div>
@@ -61,7 +56,6 @@ export default function AthletesList() {
       <button
         type="button"
         onClick={(e) => handleDelete(e, athlete)}
-        disabled={deletingId === athlete.id}
         aria-label={`Delete ${athlete.name}`}
         className="absolute top-2 right-2 p-2 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-destructive transition-opacity disabled:opacity-50"
       >
@@ -107,6 +101,13 @@ export default function AthletesList() {
           )}
         </div>
       )}
+
+      <DeleteAthleteDialog
+        athlete={toDelete}
+        open={toDelete !== null}
+        onOpenChange={(v) => { if (!v) setToDelete(null) }}
+        onDeleted={() => setAthletes((list) => list.filter((a) => a.id !== toDelete?.id))}
+      />
     </div>
   )
 }

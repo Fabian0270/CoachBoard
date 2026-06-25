@@ -1,0 +1,41 @@
+{
+  "layout": "vertical",
+  "columnMapping": {
+    "exercise": 1,
+    "sets": 2,
+    "reps": 3,
+    "load": 4,
+    "rpe": 5,
+    "rpeFromRir": false
+  },
+  "weeks": 1,
+  "days": 2,
+  "exerciseCount": 2,
+  "suggestedFocus": "hypertrophy",
+  "errors": [],
+  "warnings": [],
+  "exercises": [
+    {
+      "weekIndex": 0,
+      "dayIndex": 0,
+      "weekLabel": "W1",
+      "dayLabel": "Mon",
+      "name": "Squat",
+      "sets": "3",
+      "reps": "5",
+      "load": "100",
+      "rpe": "8"
+    },
+    {
+      "weekIndex": 0,
+      "dayIndex": 1,
+      "weekLabel": "W1",
+      "dayLabel": "Tue",
+      "name": "Bench",
+      "sets": "3",
+      "reps": "8",
+      "load": "60",
+      "rpe": "7"
+    }
+  ]
+}

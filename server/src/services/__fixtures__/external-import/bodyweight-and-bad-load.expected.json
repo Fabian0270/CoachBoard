@@ -1,0 +1,54 @@
+{
+  "layout": "vertical",
+  "columnMapping": {
+    "exercise": 1,
+    "sets": 2,
+    "reps": 3,
+    "load": 4,
+    "rpe": 5,
+    "rpeFromRir": false
+  },
+  "weeks": 1,
+  "days": 1,
+  "exerciseCount": 3,
+  "suggestedFocus": "hypertrophy",
+  "errors": [],
+  "warnings": [
+    "Row 5: could not read load \"85%\" — left blank."
+  ],
+  "exercises": [
+    {
+      "weekIndex": 0,
+      "dayIndex": 0,
+      "weekLabel": "Week 1",
+      "dayLabel": "Day 1",
+      "name": "Pull-up",
+      "sets": "3",
+      "reps": "8",
+      "load": null,
+      "rpe": "8"
+    },
+    {
+      "weekIndex": 0,
+      "dayIndex": 0,
+      "weekLabel": "Week 1",
+      "dayLabel": "Day 1",
+      "name": "Squat",
+      "sets": "5",
+      "reps": "3",
+      "load": null,
+      "rpe": "8"
+    },
+    {
+      "weekIndex": 0,
+      "dayIndex": 0,
+      "weekLabel": "Week 1",
+      "dayLabel": "Day 1",
+      "name": "Dip",
+      "sets": "3",
+      "reps": "10",
+      "load": null,
+      "rpe": "7"
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 import { HashRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import ErrorBoundary from './components/ErrorBoundary'
+import { ToastProvider } from './components/ui/toast'
+import { ConfirmProvider } from './components/ui/confirm-dialog'
 import Dashboard from './pages/Dashboard'
 import AthletesList from './pages/AthletesList'
 import AthleteDetail from './pages/AthleteDetail'
@@ -17,6 +19,8 @@ export default function App() {
   return (
     <HashRouter>
       <ErrorBoundary>
+        <ToastProvider>
+        <ConfirmProvider>
         <Layout>
           <Routes>
             <Route path="/" element={<Dashboard />} />
@@ -32,6 +36,8 @@ export default function App() {
             <Route path="/styles" element={<ExportStyles />} />
           </Routes>
         </Layout>
+        </ConfirmProvider>
+        </ToastProvider>
       </ErrorBoundary>
     </HashRouter>
   )

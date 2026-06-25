@@ -17,7 +17,7 @@ export interface AthleteTable {
 
 export interface ProgramTable {
   id: string
-  athlete_id: string
+  athlete_id: string | null  // null = unassigned (owning athlete deleted, program kept)
   name: string
   description: string | null
   start_date: string | null
@@ -145,10 +145,14 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
     )
   `.execute(_db)
 
+  // athlete_id is nullable: deleting an athlete with "keep programs" detaches their
+  // programs (athlete_id → NULL, status → archived) instead of cascade-deleting them,
+  // so the coach can reuse them with another athlete. The FK stays ON DELETE CASCADE —
+  // detach NULLs the column first, so the cascade only fires for true full deletes.
   await sql`
     CREATE TABLE IF NOT EXISTS programs (
       id TEXT PRIMARY KEY,
-      athlete_id TEXT NOT NULL,
+      athlete_id TEXT,
       name TEXT NOT NULL,
       description TEXT,
       start_date TEXT,
@@ -211,6 +215,52 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await addColumnIfMissing('programs', 'focus', 'TEXT')
   await addColumnIfMissing('programs', 'export_layout', 'TEXT')
   await addColumnIfMissing('programs', 'export_template_xlsx', 'TEXT')
+
+  // Databases created before the "keep programs on athlete delete" feature made
+  // `programs.athlete_id` NOT NULL. Dropping a NOT NULL constraint in SQLite requires
+  // a table rebuild. Done only when needed (idempotent), with foreign keys disabled
+  // around the swap so DROP TABLE doesn't cascade-delete workouts. All columns are
+  // guaranteed present by the ALTERs above.
+  const programCols = (
+    await sql<{ name: string; notnull: number }>`PRAGMA table_info(programs)`.execute(_db)
+  ).rows
+  const athleteIdCol = programCols.find((c) => c.name === 'athlete_id')
+  if (athleteIdCol && Number(athleteIdCol.notnull) === 1) {
+    await sql`PRAGMA foreign_keys = OFF`.execute(_db)
+    await _db.transaction().execute(async (trx) => {
+      await sql`
+        CREATE TABLE programs_new (
+          id TEXT PRIMARY KEY,
+          athlete_id TEXT,
+          name TEXT NOT NULL,
+          description TEXT,
+          start_date TEXT,
+          end_date TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          enabled_columns TEXT,
+          focus TEXT,
+          export_layout TEXT,
+          export_template_xlsx TEXT,
+          FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+        )
+      `.execute(trx)
+      await sql`
+        INSERT INTO programs_new
+          (id, athlete_id, name, description, start_date, end_date, status,
+           created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx)
+        SELECT
+          id, athlete_id, name, description, start_date, end_date, status,
+          created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx
+        FROM programs
+      `.execute(trx)
+      await sql`DROP TABLE programs`.execute(trx)
+      await sql`ALTER TABLE programs_new RENAME TO programs`.execute(trx)
+      await sql`CREATE INDEX IF NOT EXISTS idx_programs_athlete_id ON programs(athlete_id)`.execute(trx)
+    })
+    await sql`PRAGMA foreign_keys = ON`.execute(_db)
+  }
   await addColumnIfMissing('exercises', 'rest_time', 'TEXT')
   await addColumnIfMissing('exercises', 'intensity', 'TEXT')
   await addColumnIfMissing('exercises', 'load_used', 'TEXT')

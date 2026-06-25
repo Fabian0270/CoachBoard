@@ -6,6 +6,7 @@ import {
   createAthlete,
   updateAthlete,
   deleteAthlete,
+  deleteAthleteKeepingPrograms,
   findMaxesByAthlete,
   createAthleteMax,
   deleteAthleteMax,
@@ -54,9 +55,14 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
   }
 })
 
+// keep_programs=1 detaches + archives the athlete's programs instead of
+// cascade-deleting them, so they can be reused with another athlete later.
 router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
-    const deleted = await deleteAthlete(String(req.params.id))
+    const keepPrograms = req.query.keep_programs === '1'
+    const deleted = keepPrograms
+      ? await deleteAthleteKeepingPrograms(String(req.params.id))
+      : await deleteAthlete(String(req.params.id))
     if (!deleted) { res.status(404).json({ error: 'Athlete not found' }); return }
     res.status(204).send()
   } catch {

@@ -1,0 +1,30 @@
+{
+  "layout": "vertical",
+  "columnMapping": {
+    "exercise": 1,
+    "sets": 2,
+    "reps": 3,
+    "load": 4,
+    "rpe": 5,
+    "rpeFromRir": false
+  },
+  "weeks": 1,
+  "days": 1,
+  "exerciseCount": 1,
+  "suggestedFocus": "strength",
+  "errors": [],
+  "warnings": [],
+  "exercises": [
+    {
+      "weekIndex": 0,
+      "dayIndex": 0,
+      "weekLabel": "Week 1",
+      "dayLabel": "Day 1",
+      "name": "Squat",
+      "sets": "3",
+      "reps": "5",
+      "load": "120",
+      "rpe": "8"
+    }
+  ]
+}

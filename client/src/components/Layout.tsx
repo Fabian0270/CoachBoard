@@ -15,8 +15,8 @@ const navItems = [
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   return (
-    <div className="min-h-screen flex flex-col md:flex-row">
-      <nav className="bg-primary text-primary-foreground dark:bg-[#181818] dark:text-[#c8c8c8] dark:border-r dark:border-[#2b2b2b] w-full md:w-56 md:min-h-screen flex md:flex-col">
+    <div className="h-screen overflow-hidden flex flex-col md:flex-row">
+      <nav className="bg-primary text-primary-foreground dark:bg-[#181818] dark:text-[#c8c8c8] dark:border-r dark:border-[#2b2b2b] shrink-0 w-full md:w-56 md:h-screen md:overflow-y-auto flex md:flex-col">
         <div className="p-4 font-bold text-xl border-b border-primary-foreground/20 dark:border-[#2b2b2b] dark:text-[#e0e0e0] hidden md:block">CoachBoard</div>
         <div className="flex md:flex-col flex-1 overflow-x-auto md:overflow-visible">
           {navItems.map(({ to, label, icon: Icon }) => (
@@ -37,7 +37,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <ThemeToggle />
         </div>
       </nav>
-      <main className="flex-1 p-6 overflow-auto">{children}</main>
+      <main className="flex-1 min-w-0 p-6 overflow-auto h-full">{children}</main>
     </div>
   )
 }

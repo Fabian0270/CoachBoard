@@ -9,6 +9,7 @@ import type {
   ExternalImportCommitResult,
   ExternalImportPreview,
   ExternalImportWarning,
+  ExternalParseOverrides,
   ExportLayoutTemplate,
   SuggestionGoal,
 } from 'coachboard-shared'
@@ -34,12 +35,15 @@ import {
 
 const HEADER_SCAN_ROWS = 10
 
+// Header aliases, English + Swedish (the primary user base). Tokens are matched
+// case-insensitively against tokenised header cells, so each entry is a single
+// lowercased word (see tokenize, which preserves å/ä/ö).
 const ALIASES: Record<ExternalColumnKey, string[]> = {
-  exercise: ['exercise', 'movement', 'lift', 'name', 'discipline'],
-  sets: ['sets', 'set'],
-  reps: ['reps', 'rep', 'repetitions'],
-  load: ['load', 'weight', 'kg', 'lbs', 'lb', 'intensity'],
-  rpe: ['rpe', 'effort'],
+  exercise: ['exercise', 'movement', 'lift', 'name', 'discipline', 'övning', 'övningar', 'rörelse'],
+  sets: ['sets', 'set', 'serie', 'serier'],
+  reps: ['reps', 'rep', 'repetitions', 'repetition', 'repetitioner'],
+  load: ['load', 'weight', 'kg', 'lbs', 'lb', 'intensity', 'intensitet', 'vikt', 'belastning', 'kilo'],
+  rpe: ['rpe', 'effort', 'ansträngning'],
 }
 const RIR_ALIASES = ['rir']
 
@@ -76,8 +80,10 @@ function cellToString(value: ExcelJS.CellValue): string {
   return String(value).trim()
 }
 
+// Keep Nordic letters (å ä ö) so Swedish headers like "Övning" / "Vikt" survive
+// tokenisation — a plain [^a-z0-9] split would drop the diacritics and mangle them.
 const tokenize = (text: string): string[] =>
-  text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  text.toLowerCase().split(/[^a-z0-9åäö]+/).filter(Boolean)
 
 const NUMERIC = /^\d+(\.\d+)?$/
 const RANGE = /^\d+(\.\d+)?\s*[-–—]\s*\d+(\.\d+)?$/
@@ -88,13 +94,18 @@ function isNumericLike(text: string): boolean {
   return NUMERIC.test(t) || RANGE.test(t)
 }
 
+// Week/day section detection, English + Swedish.
 function classifySectionHeader(text: string): 'week' | 'day' | 'unknown' {
   const t = text.trim().toLowerCase()
-  if (/^(week|block|phase|meso\w*)\b/.test(t) && /\d/.test(t)) return 'week'
-  if (/^w\s*\d+/.test(t)) return 'week'
-  if (/^(day|session)\b/.test(t)) return 'day'
-  if (/^(mon|tue|wed|thu|fri|sat|sun)/.test(t)) return 'day'
+  // "Week 3" / "Vecka 3" / "Block 2" / "Fas 1" / "Mesocykel 1" — needs a number.
+  if (/^(week|vecka|block|phase|fas|meso\w*)\b/.test(t) && /\d/.test(t)) return 'week'
+  if (/^[wv]\s*\d+/.test(t)) return 'week' // "W1" / "V1"
+  // Day / session sections.
+  if (/^(day|dag|session|pass|träningspass)\b/.test(t)) return 'day'
+  if (/^(mon|tue|wed|thu|fri|sat|sun)/.test(t)) return 'day' // English weekdays
+  if (/^(mån|tis|ons|tors|fre|lör|sön)/.test(t)) return 'day' // Swedish weekdays
   if (/^(upper|lower|push|pull|legs|full\s*body)\b/.test(t)) return 'day'
+  if (/^(överkropp|underkropp|ben|helkropp|skjut|drag)\b/.test(t)) return 'day' // Swedish day-types
   return 'unknown'
 }
 
@@ -133,7 +144,7 @@ function resolveHeaderRow(cellTexts: string[]): ResolvedHeader {
 
 // --- shared value normalisation (used by both layout parsers) ---
 
-const BODYWEIGHT = /^bw$|body\s*weight/i
+const BODYWEIGHT = /^bw$|^kv$|body\s*weight|kroppsvikt/i // EN "BW"/"bodyweight", SV "KV"/"kroppsvikt"
 
 function normalizeReps(text: string, sheetRow: number, warnings: ExternalImportWarning[]): string | null {
   let reps = text || null
@@ -215,7 +226,12 @@ const emptyMapping = (): ExternalColumnMapping =>
 // The internal parse result also carries `headerRow` — the worksheet row whose
 // cells hold the column-header labels — so the style capture can sample fonts,
 // colors and header wording from a known location. Not part of the public preview.
-type ParseResult = Omit<ExternalImportPreview, 'layout' | 'suggestedFocus' | 'layoutTemplate'> & {
+// headerRowIndex/headerCells/columnCount are derived once in parseExternalFile,
+// not by the individual layout parsers, so they're omitted here.
+type ParseResult = Omit<
+  ExternalImportPreview,
+  'layout' | 'suggestedFocus' | 'layoutTemplate' | 'headerRowIndex' | 'headerCells' | 'columnCount'
+> & {
   headerRow?: number
 }
 type ReadRow = (r: number) => string[]
@@ -406,7 +422,19 @@ function captureLayoutTemplate(
   }
 }
 
-export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportPreview> {
+// True when the coach supplied any manual override (forces the vertical parser).
+function hasParseOverride(o?: ExternalParseOverrides): boolean {
+  return !!o && (
+    o.headerRow !== undefined || o.rpeFromRir !== undefined ||
+    o.exercise !== undefined || o.sets !== undefined || o.reps !== undefined ||
+    o.load !== undefined || o.rpe !== undefined
+  )
+}
+
+export async function parseExternalFile(
+  buffer: Buffer,
+  overrides?: ExternalParseOverrides,
+): Promise<ExternalImportPreview> {
   const wb = new ExcelJS.Workbook()
   // ExcelJS's Buffer type diverges from Node's generic Buffer<ArrayBufferLike>
   await wb.xlsx.load(buffer as unknown as ArrayBuffer)
@@ -416,6 +444,7 @@ export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportP
       layout: 'vertical', columnMapping: emptyMapping(), weeks: 0, days: 0,
       exerciseCount: 0, exercises: [], warnings: [], errors: ['No worksheet found in the uploaded file.'],
       suggestedFocus: null, layoutTemplate: null,
+      headerRowIndex: 0, headerCells: [], columnCount: 0,
     }
   }
 
@@ -439,7 +468,14 @@ export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportP
     return { layout: 'vertical', ...parseVertical(readRow, maxRow) }
   }
 
-  const result = dispatch()
+  // A manual override describes a simple stacked table, so force the vertical
+  // parser with the override rather than re-running layout auto-detection.
+  const result = hasParseOverride(overrides)
+    ? { layout: 'vertical' as const, ...parseVertical(readRow, maxRow, overrides) }
+    : dispatch()
+
+  // Style capture reads cells located via the (possibly overridden) header row +
+  // column mapping, so a manual remap re-points the fingerprint too.
   const layoutTemplate = result.exercises.length > 0
     ? captureLayoutTemplate(ws, {
         orientation: result.layout,
@@ -450,43 +486,72 @@ export async function parseExternalFile(buffer: Buffer): Promise<ExternalImportP
         bannerCol: banner?.weekCols[0] ?? null,
       })
     : null
+  const headerRowIndex = result.headerRow ?? 0
+  const headerCells = headerRowIndex > 0 ? readRow(headerRowIndex) : []
   const { headerRow: _omit, ...preview } = result
   void _omit
-  return { ...preview, suggestedFocus: guessFocus(result.exercises), layoutTemplate }
+  return {
+    ...preview,
+    suggestedFocus: guessFocus(result.exercises),
+    layoutTemplate,
+    headerRowIndex,
+    headerCells,
+    columnCount: maxCol,
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Vertical layout — weeks/days are section-header ROWS stacked top-to-bottom.
 // ---------------------------------------------------------------------------
-function parseVertical(readRow: ReadRow, maxRow: number): ParseResult {
+function parseVertical(readRow: ReadRow, maxRow: number, overrides?: ExternalParseOverrides): ParseResult {
   const warnings: ExternalImportWarning[] = []
   const errors: string[] = []
 
-  // 1. Header detection — the row in the first HEADER_SCAN_ROWS with the most fields.
-  let headerRow = 0
-  let best: ResolvedHeader | null = null
-  const scanLimit = Math.min(maxRow, HEADER_SCAN_ROWS)
-  for (let r = 1; r <= scanLimit; r++) {
-    const resolved = resolveHeaderRow(readRow(r))
-    if (!best || resolved.matchCount > best.matchCount) {
-      best = resolved
-      headerRow = r
+  // 1. Header row — forced by override, else the row in the first HEADER_SCAN_ROWS
+  // with the most recognised fields.
+  let headerRow = overrides?.headerRow ?? 0
+  let mapping: ExternalColumnMapping
+  if (headerRow > 0) {
+    mapping = resolveHeaderRow(readRow(headerRow)).mapping
+  } else {
+    let best: ResolvedHeader | null = null
+    const scanLimit = Math.min(maxRow, HEADER_SCAN_ROWS)
+    for (let r = 1; r <= scanLimit; r++) {
+      const resolved = resolveHeaderRow(readRow(r))
+      if (!best || resolved.matchCount > best.matchCount) {
+        best = resolved
+        headerRow = r
+      }
     }
+    if (!best || best.matchCount === 0) {
+      // Nothing auto-detected and no manual mapping → surface the header row so the
+      // wizard can offer remapping, with a clear error.
+      if (!hasParseOverride(overrides)) {
+        errors.push('Could not find a header row. Expected columns like Exercise, Sets, Reps, Load, RPE.')
+        return { headerRow, columnMapping: emptyMapping(), weeks: 0, days: 0, exerciseCount: 0, exercises: [], warnings, errors }
+      }
+    }
+    mapping = best ? { ...best.mapping } : emptyMapping()
   }
 
-  if (!best || best.matchCount === 0) {
-    errors.push('Could not find a header row. Expected columns like Exercise, Sets, Reps, Load, RPE.')
-    return { columnMapping: emptyMapping(), weeks: 0, days: 0, exerciseCount: 0, exercises: [], warnings, errors }
+  // 2. Apply the coach's explicit overrides on top of detection (null = clear).
+  if (overrides) {
+    if (overrides.exercise !== undefined) mapping.exercise = overrides.exercise
+    if (overrides.sets !== undefined) mapping.sets = overrides.sets
+    if (overrides.reps !== undefined) mapping.reps = overrides.reps
+    if (overrides.load !== undefined) mapping.load = overrides.load
+    if (overrides.rpe !== undefined) mapping.rpe = overrides.rpe
+    if (overrides.rpeFromRir !== undefined) mapping.rpeFromRir = overrides.rpeFromRir
   }
 
-  const mapping = best.mapping
+  // 3. Required columns.
   const missing: string[] = []
   if (mapping.exercise === null) missing.push('Exercise')
   if (mapping.sets === null) missing.push('Sets')
   if (mapping.reps === null) missing.push('Reps')
   if (missing.length > 0) {
     errors.push(`Required column(s) not found: ${missing.join(', ')}. The file cannot be imported.`)
-    return { columnMapping: mapping, weeks: 0, days: 0, exerciseCount: 0, exercises: [], warnings, errors }
+    return { headerRow, columnMapping: mapping, weeks: 0, days: 0, exerciseCount: 0, exercises: [], warnings, errors }
   }
   if (mapping.load === null) {
     warnings.push({ message: 'No Load/Weight column found — the program can be stored but will have no load data.' })
@@ -545,9 +610,13 @@ function parseVertical(readRow: ReadRow, maxRow: number): ParseResult {
       continue
     }
 
-    // not an exercise row → maybe a section header
-    if (nonEmpty.length <= 2) {
-      const joined = nonEmpty.join(' ')
+    // not an exercise row → maybe a section header. A merged banner ("Week 2"
+    // spanning the table width) echoes its master value across every spanned
+    // column, so a row whose non-empty cells are all the same text is one
+    // logical banner, not a wide data row.
+    const distinct = [...new Set(nonEmpty)]
+    if (nonEmpty.length <= 2 || distinct.length === 1) {
+      const joined = distinct.length === 1 ? distinct[0] : nonEmpty.join(' ')
       const cls = classifySectionHeader(joined)
       if (cls === 'week') {
         weekIdx++

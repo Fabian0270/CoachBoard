@@ -8,6 +8,8 @@ import { Label } from './ui/label'
 import { Textarea } from './ui/textarea'
 import { Badge } from './ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
+import { useToast } from './ui/toast'
+import { useConfirm } from './ui/confirm-dialog'
 import { Plus, Trash2, RefreshCw, Check, Undo2 } from 'lucide-react'
 import { PAYMENT_STATUS_META, CURRENCY_OPTIONS, formatAmount, todayIso, addDays } from '../lib/paymentDisplay'
 
@@ -25,6 +27,8 @@ const emptyForm = () => ({
 })
 
 export default function PaymentsSection({ athleteId }: { athleteId: string }) {
+  const toast = useToast()
+  const confirm = useConfirm()
   const [payments, setPayments] = useState<Payment[]>([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState(emptyForm())
@@ -55,7 +59,7 @@ export default function PaymentsSection({ athleteId }: { athleteId: string }) {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!resolvedPaidThrough) {
-      alert('Set a paid-through date, or enter how many weeks are paid forward.')
+      toast.info('Set a paid-through date, or enter how many weeks are paid forward.')
       return
     }
     setSaving(true)
@@ -75,14 +79,14 @@ export default function PaymentsSection({ athleteId }: { athleteId: string }) {
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        alert(`Failed to add payment: ${err.error ?? JSON.stringify(err)}`)
+        toast.error(`Failed to add payment: ${err.error ?? JSON.stringify(err)}`)
         return
       }
       const created: Payment = await res.json()
       setPayments((list) => sortInto([...list, created]))
       setForm(emptyForm())
     } catch (err) {
-      alert(`Network error: ${String(err)}`)
+      toast.error(`Network error: ${String(err)}`)
     } finally {
       setSaving(false)
     }
@@ -109,7 +113,11 @@ export default function PaymentsSection({ athleteId }: { athleteId: string }) {
   }
 
   const handleDelete = async (p: Payment) => {
-    if (!confirm(`Delete the ${formatAmount(p.amount, p.currency)} payment (through ${p.paid_through})?`)) return
+    if (!(await confirm({
+      title: `Delete the ${formatAmount(p.amount, p.currency)} payment (through ${p.paid_through})?`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    }))) return
     const res = await fetch(`/api/payments/${p.id}`, { method: 'DELETE' })
     if (res.ok || res.status === 404) {
       setPayments((list) => list.filter((x) => x.id !== p.id))

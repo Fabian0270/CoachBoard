@@ -198,6 +198,7 @@ export async function updateProgram(
     status?: string
     enabled_columns?: unknown
     focus?: string | null
+    athlete_id?: string
   },
 ) {
   const row = await getDb()
@@ -212,6 +213,7 @@ export async function updateProgram(
         ? { enabled_columns: serializeEnabledColumns(data.enabled_columns) }
         : {}),
       ...(data.focus !== undefined ? { focus: data.focus ?? null } : {}),
+      ...(data.athlete_id !== undefined ? { athlete_id: data.athlete_id } : {}),
       updated_at: new Date().toISOString(),
     })
     .where('id', '=', id)
