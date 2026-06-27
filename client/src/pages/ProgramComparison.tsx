@@ -8,7 +8,7 @@ import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
 import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog'
-import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
+import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
 
 interface Athlete { id: string; name: string }

@@ -15,7 +15,7 @@ import { Badge } from '../components/ui/badge'
 import { ArrowLeft, TrendingUp, CheckCircle2, Sparkles } from 'lucide-react'
 import type { ProgramReport } from 'coachboard-shared'
 import type { Program } from '../lib/programUtils'
-import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
+import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 
 const LIFT_COLORS: Record<string, string> = {
   squat: '#6366f1',

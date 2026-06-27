@@ -12,7 +12,7 @@ import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
 import AthleteMaxes from '../components/AthleteMaxes'
 import PaymentsSection from '../components/PaymentsSection'
 import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles } from 'lucide-react'
-import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
+import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 
 interface Athlete {
   id: string
