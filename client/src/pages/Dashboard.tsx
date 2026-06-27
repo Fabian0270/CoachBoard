@@ -6,7 +6,7 @@ import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Users, Dumbbell, Plus, AlertTriangle } from 'lucide-react'
 import MyStyleCard from '../components/MyStyleCard'
-import Onboarding from '../components/Onboarding'
+import Onboarding, { isOnboardingComplete } from '../components/Onboarding'
 import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
 
 interface Stats {
@@ -17,6 +17,7 @@ interface Stats {
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats>({ athletes: 0, programs: 0 })
   const [paymentAlerts, setPaymentAlerts] = useState<PaymentAlert[]>([])
+  const [onboardingDone, setOnboardingDone] = useState(isOnboardingComplete())
 
   useEffect(() => {
     Promise.all([
@@ -90,8 +91,10 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
-      {/* Fresh install → guided onboarding instead of the (empty) style card. */}
-      {stats.athletes === 0 ? <Onboarding /> : <MyStyleCard />}
+      {/* Guided onboarding until the coach finishes (or skips) it; the style card after. */}
+      {onboardingDone
+        ? <MyStyleCard />
+        : <Onboarding athleteCount={stats.athletes} onFinish={() => setOnboardingDone(true)} />}
     </div>
   )
 }

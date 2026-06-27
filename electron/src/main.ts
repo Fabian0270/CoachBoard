@@ -80,8 +80,24 @@ async function createWindow(): Promise<void> {
     },
   })
 
-  win.setMenu(null)
-  Menu.setApplicationMenu(null)
+  // Keep a standard Edit menu so the copy/cut/paste/select-all keyboard
+  // accelerators keep working (a null menu disables them). autoHideMenuBar keeps
+  // the bar itself hidden; Alt still reveals it.
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'editMenu' }]))
+
+  // Right-click copy/paste in any text field or over selected text.
+  win.webContents.on('context-menu', (_event, params) => {
+    if (!params.isEditable && !params.selectionText) return
+    const { editFlags } = params
+    const template: Electron.MenuItemConstructorOptions[] = [
+      { role: 'cut', enabled: editFlags.canCut },
+      { role: 'copy', enabled: editFlags.canCopy },
+      { role: 'paste', enabled: editFlags.canPaste },
+      { type: 'separator' },
+      { role: 'selectAll', enabled: editFlags.canSelectAll },
+    ]
+    Menu.buildFromTemplate(template).popup({ window: win })
+  })
 
   // Open external links (e.g. the Google app-password setup links in Settings)
   // in the system browser instead of a blank in-app window.

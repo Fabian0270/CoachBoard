@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useProgramData } from '../hooks/useProgramData'
 import { useProgramCalendar, useWorkoutByDate } from '../hooks/useProgramCalendar'
@@ -11,7 +11,7 @@ import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail } from 'lucide-react'
+import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown } from 'lucide-react'
 import ImportDialog from '../components/ImportDialog'
 import SendProgramDialog from '../components/SendProgramDialog'
 import ExerciseEditor from '../components/program-detail/ExerciseEditor'
@@ -38,8 +38,10 @@ export default function ProgramDetail() {
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [emailOpen, setEmailOpen] = useState(false)
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const [exportToast, setExportToast] = useState(false)
   const exportToastTimer = useRef<number | null>(null)
+  const exportMenuRef = useRef<HTMLDivElement>(null)
   const savedTimers = useRef<Record<string, number>>({})
 
   const [dayDragSource, setDayDragSource] = useState<string | null>(null)
@@ -47,6 +49,13 @@ export default function ProgramDetail() {
 
   const grid = useProgramCalendar(program)
   const workoutByDate = useWorkoutByDate(program)
+
+  useEffect(() => {
+    if (!exportMenuOpen) return
+    const close = () => setExportMenuOpen(false)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [exportMenuOpen])
 
   const flashCell = (date: string, status: 'saving' | 'saved' | 'error') => {
     setCellStatus((s) => ({ ...s, [date]: status }))
@@ -225,12 +234,29 @@ export default function ProgramDetail() {
               <Button variant="outline" size="sm" onClick={() => setColumnsOpen(true)}>
                 <SlidersHorizontal className="h-4 w-4 mr-1" />Columns
               </Button>
-              <Button variant="outline" size="sm" onClick={handleExport}>
-                <Upload className="h-4 w-4 mr-1" />Export
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setEmailOpen(true)}>
-                <Mail className="h-4 w-4 mr-1" />Email
-              </Button>
+              <div className="relative" ref={exportMenuRef}>
+                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setExportMenuOpen((v) => !v) }}>
+                  <Upload className="h-4 w-4 mr-1" />Export<ChevronDown className="h-4 w-4 ml-1" />
+                </Button>
+                {exportMenuOpen && (
+                  <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-md border bg-card shadow-lg py-1" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => { setExportMenuOpen(false); handleExport() }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+                    >
+                      <Download className="h-4 w-4" />Download as Excel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setExportMenuOpen(false); setEmailOpen(true) }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+                    >
+                      <Mail className="h-4 w-4" />Email to athlete
+                    </button>
+                  </div>
+                )}
+              </div>
               <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
                 <Download className="h-4 w-4 mr-1" />Import
               </Button>
