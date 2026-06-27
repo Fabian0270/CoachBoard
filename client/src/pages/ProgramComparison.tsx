@@ -9,7 +9,7 @@ import { useConfirm } from '../components/ui/confirm-dialog'
 import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog'
 import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
-import ImportProgramsDialog from '../components/ImportProgramsDialog'
+import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
 
 interface Athlete { id: string; name: string }
 interface Program { id: string; name: string; status: string; athlete_id: string | null; start_date: string | null }
