@@ -8,6 +8,7 @@ import progressRouter from './routes/progress.js'
 import styleRouter from './routes/style.js'
 import paymentsRouter from './routes/payments.js'
 import exportStylesRouter from './routes/exportStyles.js'
+import settingsRouter from './routes/settings.js'
 
 export function createApp(staticDir?: string, logPath?: string) {
   const app = express()
@@ -28,6 +29,7 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api/style-profile', styleRouter)
   app.use('/api/payments', paymentsRouter)
   app.use('/api/export-styles', exportStylesRouter)
+  app.use('/api/settings', settingsRouter)
 
   // Unknown API routes must 404 as JSON, not fall through to the static catch-all
   app.use('/api', (_req, res) => {

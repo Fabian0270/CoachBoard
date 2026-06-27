@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, session, dialog, nativeTheme } from 'electron'
+import { app, BrowserWindow, Menu, session, dialog, nativeTheme, safeStorage, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { createServer } from 'http'
@@ -35,6 +35,10 @@ async function startServer(): Promise<void> {
 
   const staticDir = resolveServerPath('client/dist')
   log(`Static dir: ${staticDir} (exists: ${fs.existsSync(staticDir)})`)
+
+  // Give the server access to Electron-owned secure storage (DPAPI) + the real
+  // userData path so it can persist the encrypted email app-password (Feature 6a).
+  bundle.configureSecureStore({ safeStorage, userDataDir: app.getPath('userData') })
 
   const expressApp = bundle.createApp(staticDir, logPath)
 
@@ -78,6 +82,13 @@ async function createWindow(): Promise<void> {
 
   win.setMenu(null)
   Menu.setApplicationMenu(null)
+
+  // Open external links (e.g. the Google app-password setup links in Settings)
+  // in the system browser instead of a blank in-app window.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
 
   if (isDev) {
     await win.loadURL('http://localhost:3000')

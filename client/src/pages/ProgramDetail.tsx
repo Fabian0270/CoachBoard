@@ -11,8 +11,9 @@ import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle } from 'lucide-react'
+import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail } from 'lucide-react'
 import ImportDialog from '../components/ImportDialog'
+import SendProgramDialog from '../components/SendProgramDialog'
 import ExerciseEditor from '../components/program-detail/ExerciseEditor'
 import type { SuggestionGoal } from 'coachboard-shared'
 import {
@@ -36,6 +37,7 @@ export default function ProgramDetail() {
   const [cellStatus, setCellStatus] = useState<Record<string, 'saving' | 'saved' | 'error'>>({})
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [emailOpen, setEmailOpen] = useState(false)
   const [exportToast, setExportToast] = useState(false)
   const exportToastTimer = useRef<number | null>(null)
   const savedTimers = useRef<Record<string, number>>({})
@@ -225,6 +227,9 @@ export default function ProgramDetail() {
               </Button>
               <Button variant="outline" size="sm" onClick={handleExport}>
                 <Upload className="h-4 w-4 mr-1" />Export
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setEmailOpen(true)}>
+                <Mail className="h-4 w-4 mr-1" />Email
               </Button>
               <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
                 <Download className="h-4 w-4 mr-1" />Import
@@ -469,6 +474,16 @@ export default function ProgramDetail() {
               .then((data) => setProgram(data))
               .catch(() => {})
           }}
+        />
+      )}
+
+      {program.start_date && (
+        <SendProgramDialog
+          open={emailOpen}
+          onOpenChange={setEmailOpen}
+          programId={program.id}
+          programName={program.name}
+          athleteId={program.athlete_id ?? null}
         />
       )}
 
