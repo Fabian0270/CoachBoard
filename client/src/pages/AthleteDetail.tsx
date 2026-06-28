@@ -12,8 +12,8 @@ import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
 import AthleteMaxes from '../components/AthleteMaxes'
 import PaymentsSection from '../components/PaymentsSection'
 import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
-import { SuggestProgramDialog } from '../components/SuggestProgramDialog'
-import ImportProgramsDialog from '../components/ImportProgramsDialog'
+import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
+import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
 
 interface Athlete {
   id: string
