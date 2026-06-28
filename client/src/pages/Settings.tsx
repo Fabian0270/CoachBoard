@@ -7,7 +7,7 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
-import { Mail, Send, ExternalLink, AlertTriangle } from 'lucide-react'
+import { Mail, Send, ExternalLink, AlertTriangle, Lock } from 'lucide-react'
 
 type Provider = 'gmail' | 'outlook' | 'custom'
 
@@ -67,6 +67,9 @@ export default function Settings() {
   const [user, setUser] = useState('')
   const [fromName, setFromName] = useState('')
   const [password, setPassword] = useState('')
+  // When a code is already saved the field is locked (shown as 16 dots) until the
+  // coach explicitly unlocks it to enter a new one.
+  const [unlocked, setUnlocked] = useState(false)
 
   useEffect(() => {
     fetch('/api/settings/email')
@@ -123,6 +126,7 @@ export default function Settings() {
       if (!res.ok) { toast.error(data.error ?? 'Failed to save email settings'); return false }
       setConfigured(true)
       setPassword('')
+      setUnlocked(false)
       toast.success('Email settings saved')
       return true
     } finally {
@@ -201,12 +205,35 @@ export default function Settings() {
 
           <div className="space-y-1.5">
             <Label htmlFor="password">App password</Label>
-            <Input
-              id="password" type="password" value={password}
-              placeholder={configured ? '•••••••• (saved — leave blank to keep)' : 'Paste the 16-character code here'}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            {provider === 'gmail' && !configured && (
+            {configured && !unlocked ? (
+              <div className="flex items-center gap-2">
+                <Input
+                  id="password" type="password" value="0000000000000000"
+                  readOnly disabled className="flex-1"
+                />
+                <Button type="button" variant="outline" onClick={() => { setUnlocked(true); setPassword('') }}>
+                  <Lock className="h-4 w-4" />Unlock to change
+                </Button>
+              </div>
+            ) : (
+              <>
+                <Input
+                  id="password" type="password" value={password}
+                  placeholder={configured ? 'Paste the new 16-character code' : 'Paste the 16-character code here'}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                {configured && (
+                  <button
+                    type="button"
+                    onClick={() => { setUnlocked(false); setPassword('') }}
+                    className="text-xs text-muted-foreground underline"
+                  >
+                    Cancel — keep the saved code
+                  </button>
+                )}
+              </>
+            )}
+            {provider === 'gmail' && (!configured || unlocked) && (
               <p className="text-xs text-muted-foreground">
                 This is the code from step 2 — <strong>not</strong> your normal Gmail password. Spaces are fine.
               </p>
