@@ -4,7 +4,6 @@ import { z } from 'zod'
 import {
   findAllPrograms,
   findProgramById,
-  findProgramForExport,
   createProgram,
   updateProgram,
   deleteProgram,
@@ -22,9 +21,10 @@ import {
 } from '../services/programService.js'
 import { parseImportFile, commitImport } from '../services/importService.js'
 import { parseExternalFile, commitExternalProgram } from '../services/externalImportService.js'
-import { renderProgramWorkbook } from '../services/exportService.js'
-import { renderScaffold } from '../services/templateScaffoldService.js'
+import { buildProgramWorkbook, ProgramExportError } from '../services/programExport.js'
+import { buildProgramPreviewHtml } from '../services/programPreview.js'
 import { createExportStyle } from '../services/exportStyleService.js'
+import { sendProgramEmail } from '../services/emailService.js'
 import { getProgramReport } from '../services/analysisService.js'
 import { generateDraftProgram } from '../services/suggestionService.js'
 import type { ExternalParseOverrides } from 'coachboard-shared'
@@ -290,40 +290,81 @@ router.post('/:id/suggest', async (req: Request, res: Response): Promise<void> =
 })
 
 // ---------------------------------------------------------------------------
-// Export — workbook rendering lives in services/exportService.ts
+// Export — workbook rendering lives in services/programExport.ts (shared with
+// the email route below so the saved and emailed files can never drift).
 // ---------------------------------------------------------------------------
 
 router.get('/:id/export', async (req: Request, res: Response): Promise<void> => {
   try {
-    const data = await findProgramForExport(String(req.params.id))
-    if (!data) { res.status(404).json({ error: 'Program not found' }); return }
-    const { program, workouts, exercises } = data
-
-    if (!program.start_date || !program.end_date) {
-      res.status(400).json({ error: 'Program needs a date range before export' })
-      return
-    }
-
-    // Prefer rebuilding the coach's style as a scaffold around THIS program's
-    // content (chrome + form link copied once, week-block styling re-stamped per
-    // program week, no source remnants); fall back to the descriptor/generic
-    // renderer when there's no stored original or its layout isn't supported.
-    let buffer: Buffer | null = null
-    if (program.export_template_xlsx) {
-      try {
-        buffer = await renderScaffold(program.export_template_xlsx, program, workouts, exercises)
-      } catch {
-        buffer = null // any scaffold failure → fall back to the renderer below
-      }
-    }
-    if (!buffer) buffer = await renderProgramWorkbook(program, workouts, exercises)
-    const safeName = (program.name || 'program').replace(/[^\w\s-]/g, '_').replace(/\s+/g, '_').slice(0, 60) || 'program'
+    const { buffer, safeName } = await buildProgramWorkbook(String(req.params.id))
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     res.setHeader('Content-Disposition', `attachment; filename="${safeName}.xlsx"`)
     res.send(buffer)
-  } catch {
+  } catch (err) {
+    if (err instanceof ProgramExportError) {
+      res.status(err.status).json({ error: err.message })
+      return
+    }
     res.status(500).json({ error: 'Failed to export program' })
   }
+})
+
+// HTML preview of the exact workbook that Download/Email would produce, so the
+// coach can sanity-check styling in-app before sending. Reads back the real
+// generated buffer (see services/programPreview.ts) — never re-derives layout.
+router.get('/:id/export/preview', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const html = await buildProgramPreviewHtml(String(req.params.id))
+    res.json({ html })
+  } catch (err) {
+    if (err instanceof ProgramExportError) {
+      res.status(err.status).json({ error: err.message })
+      return
+    }
+    res.status(500).json({ error: 'Failed to build the program preview' })
+  }
+})
+
+// Email the same .xlsx straight to the athlete (Feature 6a). The workbook is
+// regenerated through the exact same code path as Save to PC.
+const sendEmailSchema = z.object({
+  to: z.string().trim().email('A valid recipient email is required'),
+  subject: z.string().trim().min(1, 'Subject is required').max(200),
+  body: z.string().max(5000).optional().default(''),
+})
+
+router.post('/:id/send-email', async (req: Request, res: Response): Promise<void> => {
+  const parsed = sendEmailSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request' })
+    return
+  }
+  const { to, subject, body } = parsed.data
+
+  let workbook
+  try {
+    workbook = await buildProgramWorkbook(String(req.params.id))
+  } catch (err) {
+    if (err instanceof ProgramExportError) {
+      res.status(err.status).json({ error: err.message })
+      return
+    }
+    res.status(500).json({ error: 'Failed to build the program file' })
+    return
+  }
+
+  const result = await sendProgramEmail({
+    to,
+    subject,
+    body,
+    attachmentName: `${workbook.safeName}.xlsx`,
+    attachment: workbook.buffer,
+  })
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error, code: result.code })
+    return
+  }
+  res.json({ ok: true })
 })
 
 // ---------------------------------------------------------------------------
