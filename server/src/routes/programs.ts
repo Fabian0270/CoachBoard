@@ -22,6 +22,7 @@ import {
 import { parseImportFile, commitImport } from '../services/importService.js'
 import { parseExternalFile, commitExternalProgram } from '../services/externalImportService.js'
 import { buildProgramWorkbook, ProgramExportError } from '../services/programExport.js'
+import { buildProgramPreviewHtml } from '../services/programPreview.js'
 import { createExportStyle } from '../services/exportStyleService.js'
 import { sendProgramEmail } from '../services/emailService.js'
 import { getProgramReport } from '../services/analysisService.js'
@@ -305,6 +306,22 @@ router.get('/:id/export', async (req: Request, res: Response): Promise<void> => 
       return
     }
     res.status(500).json({ error: 'Failed to export program' })
+  }
+})
+
+// HTML preview of the exact workbook that Download/Email would produce, so the
+// coach can sanity-check styling in-app before sending. Reads back the real
+// generated buffer (see services/programPreview.ts) — never re-derives layout.
+router.get('/:id/export/preview', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const html = await buildProgramPreviewHtml(String(req.params.id))
+    res.json({ html })
+  } catch (err) {
+    if (err instanceof ProgramExportError) {
+      res.status(err.status).json({ error: err.message })
+      return
+    }
+    res.status(500).json({ error: 'Failed to build the program preview' })
   }
 })
 

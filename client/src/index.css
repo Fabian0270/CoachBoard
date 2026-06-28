@@ -58,3 +58,24 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Server-rendered .xlsx preview table (see components/ExcelPreview.tsx). The
+   cells carry their own inline fills/fonts pulled from the workbook, so this
+   only supplies the grid + sizing. Always light, to match the real sheet. */
+.xlsx-preview {
+  border-collapse: collapse;
+  table-layout: fixed;
+  background: #ffffff;
+  color: #111111;
+  font-size: 12px;
+  font-family: Calibri, Arial, sans-serif;
+}
+.xlsx-preview td {
+  border: 1px solid #d4d4d4;
+  padding: 2px 6px;
+  height: 22px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}

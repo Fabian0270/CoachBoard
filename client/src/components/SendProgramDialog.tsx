@@ -6,7 +6,8 @@ import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { Textarea } from './ui/textarea'
 import { useToast } from './ui/toast'
-import { Send, AlertTriangle } from 'lucide-react'
+import { Send, AlertTriangle, Eye, EyeOff } from 'lucide-react'
+import ExcelPreview from './ExcelPreview'
 
 interface Props {
   programId: string
@@ -25,10 +26,12 @@ export default function SendProgramDialog({ programId, programName, athleteId, o
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [sending, setSending] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setLoadingMeta(true)
+    setShowPreview(false)
     setAthleteMissingEmail(false)
     setSubject(`Your CoachBoard program: ${programName}`)
     setBody(
@@ -79,7 +82,7 @@ export default function SendProgramDialog({ programId, programName, athleteId, o
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className={showPreview ? 'max-w-5xl' : undefined}>
         <DialogHeader>
           <DialogTitle>Email program to athlete</DialogTitle>
           <DialogDescription>
@@ -119,7 +122,18 @@ export default function SendProgramDialog({ programId, programName, athleteId, o
               <Label htmlFor="body">Message</Label>
               <Textarea id="body" rows={6} value={body} onChange={(e) => setBody(e.target.value)} />
             </div>
-            <p className="text-xs text-muted-foreground">📎 {programName}.xlsx will be attached.</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">📎 {programName}.xlsx will be attached.</p>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setShowPreview((v) => !v)}>
+                {showPreview ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showPreview ? 'Hide preview' : 'Preview attachment'}
+              </Button>
+            </div>
+            {showPreview && (
+              <div className="max-h-[50vh] overflow-auto">
+                <ExcelPreview programId={programId} />
+              </div>
+            )}
           </div>
         )}
 

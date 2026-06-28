@@ -11,9 +11,10 @@ import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown } from 'lucide-react'
+import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, Eye } from 'lucide-react'
 import ImportDialog from '../components/ImportDialog'
 import SendProgramDialog from '../components/SendProgramDialog'
+import PreviewProgramDialog from '../components/PreviewProgramDialog'
 import ExerciseEditor from '../components/program-detail/ExerciseEditor'
 import type { SuggestionGoal } from 'coachboard-shared'
 import {
@@ -38,6 +39,7 @@ export default function ProgramDetail() {
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [emailOpen, setEmailOpen] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const [exportToast, setExportToast] = useState(false)
   const exportToastTimer = useRef<number | null>(null)
@@ -240,6 +242,13 @@ export default function ProgramDetail() {
                 </Button>
                 {exportMenuOpen && (
                   <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-md border bg-card shadow-lg py-1" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => { setExportMenuOpen(false); setPreviewOpen(true) }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+                    >
+                      <Eye className="h-4 w-4" />Preview Excel
+                    </button>
                     <button
                       type="button"
                       onClick={() => { setExportMenuOpen(false); handleExport() }}
@@ -510,6 +519,16 @@ export default function ProgramDetail() {
           programId={program.id}
           programName={program.name}
           athleteId={program.athlete_id ?? null}
+        />
+      )}
+
+      {program.start_date && (
+        <PreviewProgramDialog
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          programId={program.id}
+          programName={program.name}
+          onDownload={handleExport}
         />
       )}
 
