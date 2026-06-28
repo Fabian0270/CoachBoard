@@ -241,7 +241,10 @@ export interface ExternalExerciseRow {
     name: number | null
     sets: number | null
     reps: number | null
-    load: number | null
+    load: number | null      // "Load Used" column when the template splits cap/used
+    loadCap?: number | null   // separate "Load Cap" (prescribed) column, when present
+    intensity?: number | null // "Intensity/Weight" (prescribed %/load) column
+    restTime?: number | null  // "Rest Time" column
     rpe: number | null
     erpe: number | null
   }

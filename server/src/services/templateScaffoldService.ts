@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import { parseExternalFile } from './externalImportService.js'
+import { weekdayOffset } from './external-import/valueNormalizers.js'
 import type { ExternalExerciseRow } from 'coachboard-shared'
 
 // ---------------------------------------------------------------------------
@@ -27,7 +28,9 @@ type ExerciseRow = {
   weight: number | null
   intensity: string | null
   load_used: string | null
+  rest_time: string | null
   rpe: string | null
+  group_id: string | null
   order_index: number
   workout_id: string
 }
@@ -53,11 +56,25 @@ function mondayIso(iso: string): string {
 }
 function loadValue(ex: ExerciseRow): number | string | null {
   if (ex.weight !== null && ex.weight !== undefined) return ex.weight
-  if (ex.load_used) {
-    const n = parseFloat(ex.load_used.replace(',', '.'))
-    return isNaN(n) ? ex.load_used : n
-  }
-  return null
+  return usedLoad(ex)
+}
+/** The athlete's actual "Load Used" value (string load_used → number when numeric). */
+function usedLoad(ex: ExerciseRow): number | string | null {
+  if (!ex.load_used) return null
+  const n = parseFloat(ex.load_used.replace(',', '.'))
+  return isNaN(n) ? ex.load_used : n
+}
+/** True when this exercise is a further set of the same grouped movement as the
+ *  previous one in the day — its name cell is left blank so multi-set movements
+ *  read once, matching the coach's sheet and the generic renderer. */
+function isSubSetOf(ex: ExerciseRow | null, prev: ExerciseRow | null): boolean {
+  return !!(ex && prev && ex.group_id && ex.group_id === prev.group_id)
+}
+/** Movement names are never bold: the template bolds some rows (e.g. a day's first
+ *  lift) but not the multi-set/spacer rows, so refilling positionally would bold
+ *  some movements and not others. Clear bold while keeping the rest of the font. */
+function clearBold(cell: ExcelJS.Cell): void {
+  if (cell.font?.bold) cell.font = { ...cell.font, bold: false }
 }
 function rpeValue(ex: ExerciseRow): string | null {
   if (ex.rpe !== null && ex.rpe !== '') return String(ex.rpe)
@@ -73,6 +90,27 @@ function colNum(letters: string): number {
   let n = 0
   for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64)
   return n
+}
+
+/**
+ * Convert every shared-formula cell into a standalone formula carrying its own
+ * (already-translated) A1 expression + cached result. Coach sheets commonly use
+ * shared formulas (e1RM columns etc.); once we insert/duplicate/copy rows below,
+ * the shared master can end up below/right of a clone, and ExcelJS then throws
+ * "Shared Formula master must exist…" on write — which silently drops the whole
+ * styled export to the generic fallback (losing the coach's form link, merges
+ * and per-movement layout). De-sharing up front keeps the live formulas while
+ * removing the fragile master/slave links. Must run before any row/column edits.
+ */
+function detachSharedFormulas(ws: ExcelJS.Worksheet): void {
+  ws.eachRow({ includeEmpty: true }, (row) => {
+    row.eachCell({ includeEmpty: false }, (cell) => {
+      if (cell.type !== ExcelJS.ValueType.Formula) return
+      const formula = cell.formula
+      if (!formula) return
+      cell.value = { formula, result: cell.result as ExcelJS.CellFormulaValue['result'] }
+    })
+  })
 }
 
 /**
@@ -144,7 +182,7 @@ function copyRowPrefix(src: ExcelJS.Worksheet, lastRow: number, lastCol: number)
   return dst
 }
 
-interface RelCols { name: number | null; sets: number | null; reps: number | null; load: number | null; rpe: number | null; erpe: number | null }
+interface RelCols { name: number | null; sets: number | null; reps: number | null; load: number | null; loadCap: number | null; intensity: number | null; restTime: number | null; rpe: number | null; erpe: number | null }
 
 // ---------------------------------------------------------------------------
 // Row axis (vertical layout): weeks stacked top-to-bottom, sharing columns.
@@ -187,7 +225,7 @@ function deriveRowGeometry(tEx: ExternalExerciseRow[], ws: ExcelJS.Worksheet): R
   const days: RowDay[] = []
   for (const e of week0) {
     const c = e.refillCols!
-    const slot: RowSlot = { relRow: e.sheetRow - top, cols: { name: c.name, sets: c.sets, reps: c.reps, load: c.load, rpe: c.rpe, erpe: c.erpe } }
+    const slot: RowSlot = { relRow: e.sheetRow - top, cols: { name: c.name, sets: c.sets, reps: c.reps, load: c.load, loadCap: c.loadCap ?? null, intensity: c.intensity ?? null, restTime: c.restTime ?? null, rpe: c.rpe, erpe: c.erpe } }
     let d = days.find((x) => x.dayIndex === e.dayIndex)
     if (!d) { d = { dayIndex: e.dayIndex, slots: [] }; days.push(d) }
     d.slots.push(slot)
@@ -199,12 +237,13 @@ function deriveRowGeometry(tEx: ExternalExerciseRow[], ws: ExcelJS.Worksheet): R
 async function renderRowAxis(
   buffer: Buffer,
   tEx: ExternalExerciseRow[],
-  prog: { weekCount: number; content: ExerciseRow[][][] },
+  prog: { weekCount: number; byWeekday: Array<Map<number, ExerciseRow[]>>; seqWeekdays: number[] },
 ): Promise<Buffer | null> {
   const wb = new ExcelJS.Workbook()
   await wb.xlsx.load(buffer as unknown as ArrayBuffer)
   let ws = wb.worksheets[0]
   if (!ws) return null
+  detachSharedFormulas(ws)
 
   const geom = deriveRowGeometry(tEx, ws)
   if (!geom) return null
@@ -242,15 +281,31 @@ async function renderRowAxis(
   for (let w = 0; w < newWeeks; w++) {
     const blockTop = top + w * rowStride
     geom.days.forEach((day, dSeq) => {
-      const dayExs = prog.content[w]?.[dSeq] ?? []
+      // Vertical templates fall back to the program's days in order (their day
+      // labels aren't reliably real weekdays); the column-axis path does the
+      // weekday match. Either way the template's labels are left untouched.
+      const dayExs = prog.byWeekday[w]?.get(prog.seqWeekdays[dSeq]) ?? []
       day.slots.forEach((slot, i) => {
         const ex = dayExs[i] ?? null
+        const subSet = isSubSetOf(ex, i > 0 ? dayExs[i - 1] ?? null : null)
         const r = blockTop + slot.relRow
         const set = (col: number | null, value: ExcelJS.CellValue) => { if (col !== null) ws.getCell(r, col).value = value }
-        set(slot.cols.name, ex ? ex.name : null)
+        if (slot.cols.name !== null) {
+          const cell = ws.getCell(r, slot.cols.name)
+          cell.value = ex ? (subSet ? '' : ex.name) : null
+          clearBold(cell)
+        }
         set(slot.cols.sets, ex ? ex.sets ?? null : null)
         set(slot.cols.reps, ex ? ex.reps ?? null : null)
-        set(slot.cols.load, ex ? (loadValue(ex) ?? null) : null)
+        set(slot.cols.intensity, ex ? ex.intensity ?? null : null)
+        set(slot.cols.restTime, ex ? ex.rest_time ?? null : null)
+        if (slot.cols.loadCap !== null) {
+          // Template splits prescribed (cap) from actual (used) — route each.
+          set(slot.cols.loadCap, ex ? (ex.weight ?? null) : null)
+          set(slot.cols.load, ex ? (usedLoad(ex) ?? null) : null)
+        } else {
+          set(slot.cols.load, ex ? (loadValue(ex) ?? null) : null)
+        }
         set(slot.cols.rpe, ex ? fmtRpe(rpeValue(ex)) : null)
         set(slot.cols.erpe, null)
       })
@@ -332,6 +387,9 @@ function deriveColumnGeometry(tEx: ExternalExerciseRow[]): ColumnGeometry | null
       sets: c.sets !== null ? c.sets - start0 : null,
       reps: c.reps !== null ? c.reps - start0 : null,
       load: c.load !== null ? c.load - start0 : null,
+      loadCap: c.loadCap !== null && c.loadCap !== undefined ? c.loadCap - start0 : null,
+      intensity: c.intensity !== null && c.intensity !== undefined ? c.intensity - start0 : null,
+      restTime: c.restTime !== null && c.restTime !== undefined ? c.restTime - start0 : null,
       rpe: c.rpe !== null ? c.rpe - start0 : null,
       erpe: c.erpe !== null ? c.erpe - start0 : null,
     }
@@ -353,7 +411,65 @@ function deriveColumnGeometry(tEx: ExternalExerciseRow[]): ColumnGeometry | null
   }
 }
 
-/** Group the new program's exercises into weeks → sequential days → ordered movements. */
+/**
+ * Add day-sections for weekdays the program trains but the parser skipped because
+ * the template leaves them empty (a label + blank "notes:" row the coach uses as a
+ * rest day). Without this a session moved onto such a day would have nowhere to go.
+ * Slots are synthesised from the blank rows under the day's own label, reusing the
+ * shared column layout, and grown later by the row-insertion pass if needed. Only
+ * meaningful in weekday-mode (the template labels its days by real weekday).
+ */
+function injectEmptyTrainedSections(ws: ExcelJS.Worksheet, geom: ColumnGeometry, trainedDays: Set<number>): void {
+  const donor = geom.days[0]
+  if (!donor || donor.slots.length === 0) return
+  const present = new Set(geom.days.map((d) => d.dayIndex))
+  const missing = [...trainedDays].filter((d) => !present.has(d))
+  if (missing.length === 0) return
+
+  // Every day-label row in the lead area (cols 1..blockStart0) with the weekday it
+  // denotes — a real weekday word (Monday/Tisdag) OR "DAY n" (→ weekday n-1, the
+  // Monday..Sunday = DAY 1..7 convention).
+  const labelRows: Array<{ row: number; weekday: number }> = []
+  for (let r = 1; r <= ws.rowCount; r++) {
+    for (let c = 1; c <= geom.blockStart0; c++) {
+      const v = ws.getCell(r, c).value
+      if (typeof v !== 'string') continue
+      const t = v.trim()
+      let wd: number | null = null
+      if (t.length <= 10 && !/\d/.test(t) && WEEKDAY.test(t)) wd = weekdayOffset(t)
+      else { const m = t.match(/^day\s*(\d+)/i); if (m) wd = parseInt(m[1], 10) - 1 }
+      if (wd !== null && wd >= 0 && wd <= 6) { labelRows.push({ row: r, weekday: wd }); break }
+    }
+  }
+
+  // Rows from a section's label down to its first movement (1 when the label row also
+  // carries the column headers, as horizontal; 2 when "DAY n" has a separate header
+  // row, as block-grid) — measured from the donor so it fits this template's shape.
+  const donorLabel = labelRows.filter((l) => l.row <= donor.slots[0].row).map((l) => l.row)
+  const headerOffset = donorLabel.length ? Math.max(1, donor.slots[0].row - Math.max(...donorLabel)) : 1
+  const { rel, sharedNameCol } = donor.slots[0]
+  for (const wd of missing) {
+    const label = labelRows.find((l) => l.weekday === wd)
+    if (!label) continue // template has no row for this weekday → can't place it
+    const below = labelRows.filter((l) => l.row > label.row).map((l) => l.row)
+    const start = label.row + headerOffset
+    const end = below.length ? Math.min(...below) - 1 : start + donor.slots.length - 1
+    const slots: Slot[] = []
+    for (let r = start; r <= Math.max(start, end); r++) slots.push({ row: r, rel, sharedNameCol })
+    geom.days.push({ dayIndex: wd, slots })
+    geom.lastRow = Math.max(geom.lastRow, slots[slots.length - 1].row)
+  }
+  geom.days.sort((a, b) => a.slots[0].row - b.slots[0].row)
+}
+
+/**
+ * Group the new program's exercises by week and WEEKDAY (0=Mon..6=Sun, taken
+ * straight from each workout's scheduled date — i.e. the day editor). The exporter
+ * places a weekday's movements into the template's matching-weekday section, so the
+ * sheet always reflects the day editor exactly. `seqWeekdays` is the sorted set of
+ * trained weekdays, used as the positional fallback for "Day n" templates that
+ * carry no real weekday.
+ */
 function buildProgramContent(program: ProgramRow, workouts: WorkoutRow[], exercises: ExerciseRow[]) {
   const startMonday = mondayIso(program.start_date!)
   const dateByWorkout = new Map<string, string>()
@@ -371,21 +487,18 @@ function buildProgramContent(program: ProgramRow, workouts: WorkoutRow[], exerci
   if (located.length === 0) return null
 
   const weeks = [...new Set(located.map((l) => l.week))].sort((a, b) => a - b)
-  const seqByWeek = new Map<number, Map<number, number>>()
-  for (const w of weeks) {
-    const days = [...new Set(located.filter((l) => l.week === w).map((l) => l.day))].sort((a, b) => a - b)
-    seqByWeek.set(w, new Map(days.map((d, i) => [d, i])))
-  }
+  const seqWeekdays = [...new Set(located.map((l) => l.day))].sort((a, b) => a - b)
 
-  // content[weekSeq][daySeq] = ordered exercises
-  const content: ExerciseRow[][][] = weeks.map(() => [])
+  // byWeekday[weekSeq].get(weekday) = that day's ordered movements.
+  const byWeekday: Array<Map<number, ExerciseRow[]>> = weeks.map(() => new Map())
   located.forEach((l) => {
     const wSeq = weeks.indexOf(l.week)
-    const dSeq = seqByWeek.get(l.week)!.get(l.day)!
-    ;(content[wSeq][dSeq] ??= []).push(l.ex)
+    const m = byWeekday[wSeq]
+    if (!m.has(l.day)) m.set(l.day, [])
+    m.get(l.day)!.push(l.ex)
   })
-  for (const week of content) for (const day of week) day?.sort((a, b) => a.order_index - b.order_index)
-  return { weekCount: weeks.length, content }
+  for (const m of byWeekday) for (const list of m.values()) list.sort((a, b) => a.order_index - b.order_index)
+  return { weekCount: weeks.length, byWeekday, seqWeekdays }
 }
 
 export async function renderScaffold(
@@ -408,11 +521,34 @@ export async function renderScaffold(
   const geom = deriveColumnGeometry(tEx)
   if (!geom) return renderRowAxis(buffer, tEx, prog) // vertical (weeks stacked); null ⇒ descriptor fallback
 
+  // Each section is filled with the program's movements for ITS weekday — the parser
+  // sets geom.days[k].dayIndex from a real weekday label (Monday, Tisdag, …) OR from
+  // a "DAY n" label as n-1, and coaches use "DAY 1..7" to mean Monday..Sunday — so in
+  // both cases the section's dayIndex IS its weekday and the sheet mirrors the day
+  // editor. The coach's labels are never renamed. (A non-weekday/non-"DAY n" template
+  // falls back to the program's days in order.)
+  const weekdayMode = tEx.some((e) => { const l = (e.dayLabel ?? '').trim(); return WEEKDAY.test(l) || DAY_N.test(l) })
+  const dayExsFor = (w: number, dSeq: number, dayIndex: number): ExerciseRow[] =>
+    prog.byWeekday[w]?.get(weekdayMode ? dayIndex : prog.seqWeekdays[dSeq]) ?? []
+  // Movements for naming a shared (write-once) name column: take them from the first
+  // week that actually trains the day, since week 0 may not (e.g. a day added later).
+  const firstNonEmptyDayExs = (dSeq: number, dayIndex: number): ExerciseRow[] => {
+    for (let w = 0; w < newWeeks; w++) { const e = dayExsFor(w, dSeq, dayIndex); if (e.length) return e }
+    return []
+  }
+
   // Clone the original (keeps chrome, form link, merges, styles intact).
   const wb = new ExcelJS.Workbook()
   await wb.xlsx.load(buffer as unknown as ArrayBuffer)
   let ws = wb.worksheets[0]
   if (!ws) return null
+  detachSharedFormulas(ws)
+
+  // Give weekdays the program trains but the template left empty a real section to
+  // fill (e.g. a session moved onto the coach's blank Thursday row).
+  if (weekdayMode) {
+    injectEmptyTrainedSections(ws, geom, new Set(prog.byWeekday.flatMap((m) => [...m.keys()])))
+  }
 
   const { blockStart0, stride, templateWeeks } = geom
   let lastRow = geom.lastRow
@@ -429,7 +565,7 @@ export async function renderScaffold(
       day.slots = day.slots.map((s) => ({ ...s, row: s.row + shift }))
       const capacity = day.slots.length
       if (capacity === 0) continue
-      const needed = Math.max(0, ...Array.from({ length: newWeeks }, (_, w) => prog.content[w]?.[dSeq]?.length ?? 0))
+      const needed = Math.max(0, ...Array.from({ length: newWeeks }, (_, w) => dayExsFor(w, dSeq, day.dayIndex).length))
       const extra = needed - capacity
       if (extra <= 0) continue
       const proto = day.slots[capacity - 1]
@@ -499,7 +635,8 @@ export async function renderScaffold(
   const allSlots = geom.days.flatMap((d) => d.slots)
   const firstMovementRow = Math.min(...allSlots.map((s) => s.row))
   const dataWidth = Math.max(...allSlots.flatMap((s) =>
-    [s.rel.name, s.rel.sets, s.rel.reps, s.rel.load, s.rel.rpe, s.rel.erpe].filter((n): n is number => n !== null))) + 1
+    [s.rel.name, s.rel.sets, s.rel.reps, s.rel.load, s.rel.loadCap, s.rel.intensity, s.rel.rpe, s.rel.erpe]
+      .filter((n): n is number => n !== null && n >= 0))) + 1
   const slotRows = new Set(allSlots.map((s) => s.row))
   const isStructuralRow = (r: number): boolean => {
     // A movement row that holds parsed exercises is never structural — it gets
@@ -520,22 +657,21 @@ export async function renderScaffold(
     return hasSet && hasRep
   }
   const clearableRows: number[] = []
-  // Day-section label rows (weekday or "Day n" in the block's lead column) — used
-  // to normalise the label across every week (templates are sometimes inconsistent,
-  // e.g. week 1 says "Tisdag" but weeks 2-3 say "Day 1").
-  const dayLabelRows: number[] = []
+  for (let r = firstMovementRow; r <= lastRow; r++) {
+    if (!isStructuralRow(r)) clearableRows.push(r)
+  }
+  // Day-label cells in the lead area (cols 1..blockStart0). A label sitting AT/right
+  // of the block start repeats per week-block (block-grid / week-grid) and is later
+  // normalised across weeks; a label LEFT of it (a weekday in column 1, horizontal)
+  // is a single shared label and left alone.
   const isDayLabel = (v: ExcelJS.CellValue): boolean => {
     if (typeof v !== 'string') return false
     const t = v.trim()
     return DAY_N.test(t) || (WEEKDAY.test(t) && t.length <= 10 && !/\d/.test(t))
   }
-  for (let r = firstMovementRow; r <= lastRow; r++) {
-    if (!isStructuralRow(r)) clearableRows.push(r)
-  }
-  // Day labels can sit on the first day's header row (above the first movement),
-  // so scan the whole region from its top.
+  const leadLabelRows: number[] = []
   for (let r = regionTop; r <= lastRow; r++) {
-    if (isStructuralRow(r) && isDayLabel(ws.getCell(r, blockStart0).value)) dayLabelRows.push(r)
+    if (isStructuralRow(r) && isDayLabel(ws.getCell(r, blockStart0).value)) leadLabelRows.push(r)
   }
   // Shared movement-name column (when present) is cleared once across all weeks.
   if (geom.sharedNameCol !== null) {
@@ -550,21 +686,49 @@ export async function renderScaffold(
       for (let off = 0; off < dataWidth; off++) ws.getCell(r, base + off).value = null
     }
     geom.days.forEach((day, dSeq) => {
-      const dayExs = prog.content[w]?.[dSeq] ?? []
+      const dayExs = dayExsFor(w, dSeq, day.dayIndex)
       day.slots.forEach((slot, i) => {
         const ex = dayExs[i] ?? null
+        const subSet = isSubSetOf(ex, i > 0 ? dayExs[i - 1] ?? null : null)
+        const nameVal = ex ? (subSet ? '' : ex.name) : null
+        // A column offset < 0 is a SHARED column left of the week-block (e.g. a
+        // single Rest-Time / name column serving every week); it must be written
+        // once (on week 0) at its absolute position, never per week-block — doing
+        // the latter would land in the previous block and corrupt it.
         const set = (col: number | null, value: ExcelJS.CellValue) => {
-          if (col !== null) ws.getCell(slot.row, base + col).value = value
+          if (col === null) return
+          if (col < 0 && w !== 0) return
+          ws.getCell(slot.row, base + col).value = value
         }
         // Name: per-block column, or a single shared column (written once, on week 0).
+        // Further sets of a grouped movement leave the name blank (read once). The
+        // shared column names from the first week that trains the day so a day absent
+        // in week 0 (but present later) still shows its movement names.
         if (slot.sharedNameCol !== null) {
-          if (w === 0) ws.getCell(slot.row, slot.sharedNameCol).value = ex ? ex.name : null
-        } else {
-          set(slot.rel.name, ex ? ex.name : null)
+          if (w === 0) {
+            const rep = firstNonEmptyDayExs(dSeq, day.dayIndex)
+            const repEx = rep[i] ?? null
+            const repSub = isSubSetOf(repEx, i > 0 ? rep[i - 1] ?? null : null)
+            const cell = ws.getCell(slot.row, slot.sharedNameCol)
+            cell.value = repEx ? (repSub ? '' : repEx.name) : null
+            clearBold(cell)
+          }
+        } else if (slot.rel.name !== null && (slot.rel.name >= 0 || w === 0)) {
+          const cell = ws.getCell(slot.row, base + slot.rel.name)
+          cell.value = nameVal
+          clearBold(cell)
         }
         set(slot.rel.sets, ex ? ex.sets ?? null : null)
         set(slot.rel.reps, ex ? ex.reps ?? null : null)
-        set(slot.rel.load, ex ? (loadValue(ex) ?? null) : null)
+        set(slot.rel.intensity, ex ? ex.intensity ?? null : null)
+        set(slot.rel.restTime, ex ? ex.rest_time ?? null : null)
+        if (slot.rel.loadCap !== null) {
+          // Template splits prescribed (cap) from actual (used) — route each.
+          set(slot.rel.loadCap, ex ? (ex.weight ?? null) : null)
+          set(slot.rel.load, ex ? (usedLoad(ex) ?? null) : null)
+        } else {
+          set(slot.rel.load, ex ? (loadValue(ex) ?? null) : null)
+        }
         set(slot.rel.rpe, ex ? fmtRpe(rpeValue(ex)) : null)
         set(slot.rel.erpe, null) // executed RPE always blank in a fresh block
       })
@@ -581,8 +745,15 @@ export async function renderScaffold(
     }
   }
 
-  // Normalise day-section labels to the first week's wording across every week.
-  for (const r of dayLabelRows) {
+  // Day-section labels are the coach's own (Monday, Tisdag, "DAY 1", …) and are
+  // never rewritten — movements are routed to the section that already carries their
+  // weekday, so the sheet matches the day editor without touching a single label
+  // (the v1.9.0 behaviour). Empty template days likewise just stay empty.
+  //
+  // The one exception: per-week-block lead labels (block-grid / week-grid repeat the
+  // day label in each week's block) are normalised to week 1's wording, since some
+  // templates are inconsistent (week 1 "Tisdag", week 2 "Day 1").
+  for (const r of leadLabelRows) {
     const canonical = ws.getCell(r, blockStart0).value
     for (let w = 1; w < newWeeks; w++) ws.getCell(r, blockStart0 + w * stride).value = canonical
   }
