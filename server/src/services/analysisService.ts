@@ -59,6 +59,84 @@ export function buildWorkoutWeekMap(
   return map
 }
 
+type E1RMExercise = {
+  name: string
+  reps: string | null
+  load_used: string | null
+  rpe: string | null
+  workout_id: string
+}
+
+/**
+ * Per-main-lift e1RM trend: for each lift keyword, the BEST e1RM per week index,
+ * estimated from logged sets (load_used + reps + RPE). Shared by the program
+ * report and the Modern export badge so both estimate e1RM identically.
+ */
+export function computeE1RMTrends(
+  exercises: E1RMExercise[],
+  workoutWeekMap: Map<string, { weekIndex: number; dayOfWeek: number }>,
+): Map<string, { displayName: string; pointsMap: Map<number, E1RMDataPoint> }> {
+  const trendsByKeyword = new Map<
+    string,
+    { displayName: string; pointsMap: Map<number, E1RMDataPoint> }
+  >()
+
+  for (const ex of exercises) {
+    if (!ex.load_used || !ex.rpe || !ex.reps) continue
+
+    const liftLower = ex.name.toLowerCase()
+    const keyword = MAIN_LIFT_KEYWORDS.find((k) => liftLower.includes(k))
+    if (!keyword) continue
+
+    const repsMatch = ex.reps.match(/\d+/)
+    if (!repsMatch) continue
+
+    const weight = parseFloat(ex.load_used.replace(',', '.'))
+    const rpe = parseFloat(ex.rpe.replace(',', '.'))
+    const reps = parseInt(repsMatch[0], 10)
+    if (isNaN(weight) || isNaN(rpe) || isNaN(reps)) continue
+
+    const e1rmVal = estimate1RM(weight, reps, rpe)
+    if (e1rmVal === null) continue
+
+    const loc = workoutWeekMap.get(ex.workout_id)
+    const weekIndex = loc?.weekIndex ?? 0
+    const rounded = Math.round(e1rmVal * 10) / 10
+    const point: E1RMDataPoint = { weekIndex, e1rm: rounded, weight, reps, rpe, exerciseName: ex.name }
+
+    if (!trendsByKeyword.has(keyword)) {
+      trendsByKeyword.set(keyword, { displayName: ex.name, pointsMap: new Map() })
+    }
+    const entry = trendsByKeyword.get(keyword)!
+    const existing = entry.pointsMap.get(weekIndex)
+    if (!existing || rounded > existing.e1rm) {
+      entry.pointsMap.set(weekIndex, point)
+    }
+  }
+
+  return trendsByKeyword
+}
+
+/**
+ * Current e1RM per main-lift keyword (the latest week's best estimate), computed
+ * exactly as the program report does. Empty when a lift has no logged sets — there
+ * is no stored-max fallback, so the Modern badge mirrors the report.
+ */
+export function latestE1RMByLift(
+  program: { start_date: string | null },
+  workouts: Array<{ id: string; scheduled_date: string | null }>,
+  exercises: E1RMExercise[],
+): Record<string, number> {
+  const workoutWeekMap = buildWorkoutWeekMap(program, workouts)
+  const trends = computeE1RMTrends(exercises, workoutWeekMap)
+  const out: Record<string, number> = {}
+  for (const [keyword, { pointsMap }] of trends) {
+    const points = [...pointsMap.values()].sort((a, b) => a.weekIndex - b.weekIndex)
+    if (points.length > 0) out[keyword] = points[points.length - 1].e1rm
+  }
+  return out
+}
+
 // Parse the prescribed RPE out of the free-text Intensity/Weight field. Coaches
 // write the target effort several ways, so accept them all:
 //   "RPE 8", "@ 8", "@8", "rpe8.5"  — explicit marker (also alongside a load, e.g. "100kg @8")
@@ -109,44 +187,9 @@ export async function getProgramReport(programId: string): Promise<ProgramReport
   ).length
   const completionRate = exercisesTotal > 0 ? exercisesCompleted / exercisesTotal : 0
 
-  // e1RM trends — per main lift keyword, best e1RM per week
-  const trendsByKeyword = new Map<
-    string,
-    { displayName: string; pointsMap: Map<number, E1RMDataPoint> }
-  >()
-
-  for (const ex of exercises) {
-    if (!ex.load_used || !ex.rpe || !ex.reps) continue
-
-    const liftLower = ex.name.toLowerCase()
-    const keyword = MAIN_LIFT_KEYWORDS.find((k) => liftLower.includes(k))
-    if (!keyword) continue
-
-    const repsMatch = ex.reps.match(/\d+/)
-    if (!repsMatch) continue
-
-    const weight = parseFloat(ex.load_used.replace(',', '.'))
-    const rpe = parseFloat(ex.rpe.replace(',', '.'))
-    const reps = parseInt(repsMatch[0], 10)
-    if (isNaN(weight) || isNaN(rpe) || isNaN(reps)) continue
-
-    const e1rmVal = estimate1RM(weight, reps, rpe)
-    if (e1rmVal === null) continue
-
-    const loc = workoutWeekMap.get(ex.workout_id)
-    const weekIndex = loc?.weekIndex ?? 0
-    const rounded = Math.round(e1rmVal * 10) / 10
-    const point: E1RMDataPoint = { weekIndex, e1rm: rounded, weight, reps, rpe, exerciseName: ex.name }
-
-    if (!trendsByKeyword.has(keyword)) {
-      trendsByKeyword.set(keyword, { displayName: ex.name, pointsMap: new Map() })
-    }
-    const entry = trendsByKeyword.get(keyword)!
-    const existing = entry.pointsMap.get(weekIndex)
-    if (!existing || rounded > existing.e1rm) {
-      entry.pointsMap.set(weekIndex, point)
-    }
-  }
+  // e1RM trends — per main lift keyword, best e1RM per week (shared with the
+  // Modern export badge so both estimate identically).
+  const trendsByKeyword = computeE1RMTrends(exercises, workoutWeekMap)
 
   const e1rmTrends: LiftE1RMTrend[] = []
   for (const [liftKey, { displayName, pointsMap }] of trendsByKeyword) {

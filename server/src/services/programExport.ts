@@ -1,7 +1,7 @@
 import { findProgramForExport } from './programService.js'
 import { renderProgramWorkbook } from './exportService.js'
 import { renderScaffold } from './templateScaffoldService.js'
-import { getE1RMReference } from './exportE1RM.js'
+import { latestE1RMByLift } from './analysisService.js'
 import { MINIMAL_DESCRIPTOR } from 'coachboard-shared/exportLayout'
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ export async function buildProgramWorkbook(programId: string): Promise<BuiltWork
     // descriptor (export_layout) still takes precedence over the built-in default.
     const builtin = program.builtin_template ?? 'coachboard'
     if (!program.export_layout && builtin === 'modern') {
-      const e1rmRef = await getE1RMReference(program.athlete_id, exercises)
+      const e1rmRef = latestE1RMByLift(program, workouts, exercises)
       buffer = await renderProgramWorkbook(program, workouts, exercises, { modern: { e1rmRef } })
     } else if (!program.export_layout && builtin === 'minimal') {
       buffer = await renderProgramWorkbook(program, workouts, exercises, { templateOverride: MINIMAL_DESCRIPTOR })

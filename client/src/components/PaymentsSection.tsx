@@ -154,44 +154,46 @@ export default function PaymentsSection({ athleteId }: { athleteId: string }) {
                 <div className="space-y-1">
                   <span className="block text-xs text-muted-foreground">Start date</span>
                   <Input
-                    id="pay-start" type="date" value={form.startDate}
+                    id="pay-start" type="date" className="w-40" value={form.startDate}
                     onChange={(e) => setForm({ ...form, startDate: e.target.value })}
                   />
                 </div>
                 <div className="space-y-1">
-                  <div className="flex gap-1">
-                    <Button
-                      type="button" size="sm"
-                      variant={form.dateMode === 'date' ? 'default' : 'outline'}
-                      onClick={() => setForm({ ...form, dateMode: 'date' })}
-                    >
-                      Pick end date
-                    </Button>
-                    <Button
-                      type="button" size="sm"
-                      variant={form.dateMode === 'weeks' ? 'default' : 'outline'}
-                      onClick={() => setForm({ ...form, dateMode: 'weeks' })}
-                    >
-                      By weeks
-                    </Button>
+                  <span className="block text-xs text-muted-foreground">
+                    {form.dateMode === 'date' ? 'End date' : 'Weeks'}
+                  </span>
+                  <div className="flex items-end gap-1.5">
+                    {form.dateMode === 'date' ? (
+                      <Input
+                        id="pay-through" type="date" className="w-40" value={form.paid_through}
+                        onChange={(e) => setForm({ ...form, paid_through: e.target.value })}
+                      />
+                    ) : (
+                      <Input
+                        id="pay-weeks" type="number" min="1" step="1" className="w-28" placeholder="weeks"
+                        value={form.weeks}
+                        onChange={(e) => setForm({ ...form, weeks: e.target.value })}
+                      />
+                    )}
+                    <div className="flex gap-1">
+                      <Button
+                        type="button" size="sm"
+                        variant={form.dateMode === 'date' ? 'default' : 'outline'}
+                        onClick={() => setForm({ ...form, dateMode: 'date' })}
+                      >
+                        Date
+                      </Button>
+                      <Button
+                        type="button" size="sm"
+                        variant={form.dateMode === 'weeks' ? 'default' : 'outline'}
+                        onClick={() => setForm({ ...form, dateMode: 'weeks' })}
+                      >
+                        Weeks
+                      </Button>
+                    </div>
                   </div>
-                  {form.dateMode === 'date' ? (
-                    <Input
-                      id="pay-through" type="date" value={form.paid_through}
-                      onChange={(e) => setForm({ ...form, paid_through: e.target.value })}
-                    />
-                  ) : (
-                    <Input
-                      id="pay-weeks" type="number" min="1" step="1" className="w-28" placeholder="weeks"
-                      value={form.weeks}
-                      onChange={(e) => setForm({ ...form, weeks: e.target.value })}
-                    />
-                  )}
                 </div>
               </div>
-              {resolvedPaidThrough && (
-                <p className="text-xs text-muted-foreground">→ paid through {resolvedPaidThrough}</p>
-              )}
             </div>
             <label className="flex items-center gap-2 text-sm h-9">
               <input

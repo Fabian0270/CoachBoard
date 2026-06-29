@@ -207,8 +207,8 @@ export default function ProgramDetail() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Link to="/programs"><ArrowLeft className="h-5 w-5 text-muted-foreground" /></Link>
           <h1 className="text-3xl font-bold">{program.name}</h1>
           <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
@@ -230,7 +230,7 @@ export default function ProgramDetail() {
             </Button>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {program.start_date && (
             <>
               <Button variant="outline" size="sm" onClick={() => setColumnsOpen(true)}>

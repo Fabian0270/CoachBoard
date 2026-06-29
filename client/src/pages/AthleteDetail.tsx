@@ -216,7 +216,7 @@ export default function AthleteDetail() {
             {programs.length === 0 ? (
               <Card><CardContent className="py-8 text-center text-muted-foreground">No programs yet.</CardContent></Card>
             ) : programs.map((program) => (
-              <Link key={program.id} to={`/programs/${program.id}`}>
+              <Link key={program.id} to={`/programs/${program.id}`} className="block">
                 <Card className="hover:shadow-md transition-shadow cursor-pointer">
                   <CardHeader className="py-4">
                     <CardTitle className="text-base">{program.name}</CardTitle>

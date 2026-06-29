@@ -79,3 +79,30 @@
   text-overflow: ellipsis;
   vertical-align: middle;
 }
+
+/* Modern, theme-aware scrollbars. Colours come from the CSS vars above, so they
+   follow the active light/dark theme automatically. Firefox uses scrollbar-color;
+   WebKit/Chromium (incl. the Electron shell) uses the ::-webkit pseudo-elements. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted-foreground) / 0.35);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / 0.55);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

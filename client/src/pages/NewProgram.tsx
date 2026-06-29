@@ -74,70 +74,82 @@ export default function NewProgram() {
   }
 
   return (
-    <div className="max-w-lg space-y-6">
+    <div className="max-w-5xl space-y-6">
       <div className="flex items-center gap-3">
         <Link to="/programs"><ArrowLeft className="h-5 w-5 text-muted-foreground" /></Link>
         <h1 className="text-3xl font-bold">New Program</h1>
       </div>
-      <Card>
-        <CardHeader><CardTitle>Program Details</CardTitle></CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1">
-              <Label>Athlete *</Label>
-              <Select value={form.athlete_id} onValueChange={(v) => setForm({ ...form, athlete_id: v })}>
-                <SelectTrigger><SelectValue placeholder="Select athlete" /></SelectTrigger>
-                <SelectContent>
-                  {athletes.map((athlete) => <SelectItem key={athlete.id} value={athlete.id}>{athlete.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="name">Program Name *</Label>
-              <Input id="name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="description">Description</Label>
-              <Textarea id="description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-            </div>
-            {styles.length > 0 && (
+      <form onSubmit={handleSubmit} className="grid items-start gap-6 md:grid-cols-2">
+        <Card>
+          <CardHeader><CardTitle>Program Details</CardTitle></CardHeader>
+          <CardContent>
+            <div className="space-y-4">
               <div className="space-y-1">
-                <Label>Excel style</Label>
-                <Select value={styleSourceId} onValueChange={setStyleSourceId}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Label>Athlete *</Label>
+                <Select value={form.athlete_id} onValueChange={(v) => setForm({ ...form, athlete_id: v })}>
+                  <SelectTrigger><SelectValue placeholder="Select athlete" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={NO_STYLE}>CoachBoard default</SelectItem>
-                    {styles.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                    {athletes.map((athlete) => <SelectItem key={athlete.id} value={athlete.id}>{athlete.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  Export this program in a saved coach layout instead of a built-in template.
-                </p>
               </div>
-            )}
-            {styleSourceId === NO_STYLE && (
+              <div className="space-y-1">
+                <Label htmlFor="name">Program Name *</Label>
+                <Input id="name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="description">Description</Label>
+                <Textarea id="description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              </div>
+              {styles.length > 0 && (
+                <div className="space-y-1">
+                  <Label>Excel style</Label>
+                  <Select value={styleSourceId} onValueChange={setStyleSourceId}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_STYLE}>CoachBoard default</SelectItem>
+                      {styles.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Export this program in a saved coach layout instead of a built-in template.
+                  </p>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="start">Start Date</Label>
+                  <Input id="start" type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="end">End Date</Label>
+                  <Input id="end" type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} />
+                </div>
+              </div>
+              <Button type="submit" disabled={saving || !form.athlete_id}>{saving ? 'Saving...' : 'Create Program'}</Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>Excel template</CardTitle></CardHeader>
+          <CardContent>
+            {styleSourceId === NO_STYLE ? (
               <div className="space-y-2">
-                <Label>Excel template</Label>
                 <p className="text-xs text-muted-foreground">
-                  Pick the look your athlete’s exported program will have. You can preview each one below.
+                  Pick the look your athlete’s exported program will have — preview each below.
                 </p>
                 <TemplatePicker value={builtinTemplate} onChange={setBuiltinTemplate} />
               </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                This program will export in the selected saved coach style. You can preview it on the
+                program page after creating it.
+              </p>
             )}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label htmlFor="start">Start Date</Label>
-                <Input id="start" type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="end">End Date</Label>
-                <Input id="end" type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} />
-              </div>
-            </div>
-            <Button type="submit" disabled={saving || !form.athlete_id}>{saving ? 'Saving...' : 'Create Program'}</Button>
-          </form>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </form>
     </div>
   )
 }
