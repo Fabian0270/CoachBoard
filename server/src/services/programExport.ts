@@ -1,6 +1,8 @@
 import { findProgramForExport } from './programService.js'
 import { renderProgramWorkbook } from './exportService.js'
 import { renderScaffold } from './templateScaffoldService.js'
+import { getE1RMReference } from './exportE1RM.js'
+import { MINIMAL_DESCRIPTOR } from 'coachboard-shared/exportLayout'
 
 // ---------------------------------------------------------------------------
 // Single source of truth for "turn a program into its .xlsx buffer", shared by
@@ -58,7 +60,19 @@ export async function buildProgramWorkbook(programId: string): Promise<BuiltWork
       )
     }
   }
-  if (!buffer) buffer = await renderProgramWorkbook(program, workouts, exercises)
+  if (!buffer) {
+    // No imported coach style → render the program's chosen built-in look. A coach
+    // descriptor (export_layout) still takes precedence over the built-in default.
+    const builtin = program.builtin_template ?? 'coachboard'
+    if (!program.export_layout && builtin === 'modern') {
+      const e1rmRef = await getE1RMReference(program.athlete_id, exercises)
+      buffer = await renderProgramWorkbook(program, workouts, exercises, { modern: { e1rmRef } })
+    } else if (!program.export_layout && builtin === 'minimal') {
+      buffer = await renderProgramWorkbook(program, workouts, exercises, { templateOverride: MINIMAL_DESCRIPTOR })
+    } else {
+      buffer = await renderProgramWorkbook(program, workouts, exercises)
+    }
+  }
 
   const programName = program.name || 'program'
   const safeName =

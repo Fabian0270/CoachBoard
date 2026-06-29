@@ -8,6 +8,7 @@ import { Textarea } from '../components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { ArrowLeft } from 'lucide-react'
+import TemplatePicker from '../components/TemplatePicker'
 
 interface Athlete { id: string; name: string }
 interface ExportStyle { id: string; name: string }
@@ -22,6 +23,7 @@ export default function NewProgram() {
   const [athletes, setAthletes] = useState<Athlete[]>([])
   const [styles, setStyles] = useState<ExportStyle[]>([])
   const [styleSourceId, setStyleSourceId] = useState<string>(NO_STYLE)
+  const [builtinTemplate, setBuiltinTemplate] = useState<string>('coachboard')
   const [form, setForm] = useState({
     athlete_id: searchParams.get('athlete_id') ?? '',
     name: '',
@@ -53,6 +55,8 @@ export default function NewProgram() {
         body: JSON.stringify({
           ...form,
           export_style_id: styleSourceId === NO_STYLE ? undefined : styleSourceId,
+          // The built-in look only applies when no saved coach style is chosen.
+          builtin_template: styleSourceId === NO_STYLE ? builtinTemplate : undefined,
         }),
       })
       if (!res.ok) {
@@ -107,8 +111,17 @@ export default function NewProgram() {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Export this program in a saved coach layout instead of the default style.
+                  Export this program in a saved coach layout instead of a built-in template.
                 </p>
+              </div>
+            )}
+            {styleSourceId === NO_STYLE && (
+              <div className="space-y-2">
+                <Label>Excel template</Label>
+                <p className="text-xs text-muted-foreground">
+                  Pick the look your athlete’s exported program will have. You can preview each one below.
+                </p>
+                <TemplatePicker value={builtinTemplate} onChange={setBuiltinTemplate} />
               </div>
             )}
             <div className="grid grid-cols-2 gap-3">

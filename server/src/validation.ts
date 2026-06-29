@@ -54,6 +54,8 @@ export const schemas = {
       style_source_program_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
       // … or apply a saved style from the export-style library (takes precedence).
       export_style_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
+      // Built-in starter look for programs that don't reuse an imported coach style.
+      builtin_template: z.enum(['coachboard', 'minimal', 'modern']).optional(),
     }).refine(dateRangeValid, dateRangeIssue),
     update: z.object({
       name: z.string().min(1).max(200).optional(),
@@ -66,6 +68,8 @@ export const schemas = {
       // Reassign an unassigned (or any) program to an athlete. Only a real athlete
       // id — detaching to NULL happens through the athlete-delete "keep programs" path.
       athlete_id: z.uuid().optional(),
+      // Switch the built-in starter look on an existing program.
+      builtin_template: z.enum(['coachboard', 'minimal', 'modern']).optional(),
     }).refine(dateRangeValid, dateRangeIssue),
     duration: z.object({
       start_date: isoDate,
@@ -151,6 +155,7 @@ export const schemas = {
     startDate: isoDate,
     layout: z.enum(['source', 'split']).optional(),
     enrichAccessories: z.boolean().optional(),
+    builtin_template: z.enum(['coachboard', 'minimal', 'modern']).optional(),
     // Optional style nudges from the coach's profile (Feature 5c).
     style: z.object({
       startRpe: z.number().min(5).max(10).optional(),

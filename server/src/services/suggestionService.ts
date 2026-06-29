@@ -368,6 +368,9 @@ export async function generateDraftProgram(
       // exports in the coach's own style (Feature: export style templates).
       export_layout: source.export_layout ? JSON.stringify(source.export_layout) : null,
       export_template_xlsx: source.export_template_xlsx ?? null,
+      // Override > inherit the source's built-in look > CoachBoard default. (Moot
+      // when the draft inherits an imported coach style, which wins at export.)
+      builtin_template: body.builtin_template ?? source.builtin_template ?? 'coachboard',
       focus: draftFocus,
       created_at: now,
       updated_at: now,

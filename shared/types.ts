@@ -431,6 +431,9 @@ export interface SuggestProgramBody {
   // accessories carried over from the source program — see the knowledge.ts
   // "support, never override" contract.
   enrichAccessories?: boolean
+  // Built-in starter look for the generated draft. When omitted, the draft inherits
+  // the source program's template (or the CoachBoard default).
+  builtin_template?: 'coachboard' | 'minimal' | 'modern'
 }
 
 export interface SuggestionStyleAdjust {

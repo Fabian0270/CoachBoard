@@ -118,6 +118,9 @@ export async function createProgram(data: {
   // Apply a saved style from the export-style library. Takes precedence over
   // style_source_program_id. Silently ignored if the style no longer exists.
   export_style_id?: string | null
+  // Built-in starter look ('coachboard' | 'minimal' | 'modern') for programs that
+  // don't reuse an imported coach style. Defaults to the classic CoachBoard look.
+  builtin_template?: string | null
 }) {
   const now = new Date().toISOString()
 
@@ -161,6 +164,7 @@ export async function createProgram(data: {
       focus: data.focus ?? null,
       export_layout: exportLayout,
       export_template_xlsx: exportTemplateXlsx,
+      builtin_template: data.builtin_template ?? 'coachboard',
       created_at: now,
       updated_at: now,
     })
@@ -180,6 +184,7 @@ export async function updateProgram(
     enabled_columns?: unknown
     focus?: string | null
     athlete_id?: string
+    builtin_template?: string
   },
 ) {
   const row = await getDb()
@@ -195,6 +200,7 @@ export async function updateProgram(
         : {}),
       ...(data.focus !== undefined ? { focus: data.focus ?? null } : {}),
       ...(data.athlete_id !== undefined ? { athlete_id: data.athlete_id } : {}),
+      ...(data.builtin_template !== undefined ? { builtin_template: data.builtin_template } : {}),
       updated_at: new Date().toISOString(),
     })
     .where('id', '=', id)

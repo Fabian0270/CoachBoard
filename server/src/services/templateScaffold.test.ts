@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import ExcelJS from 'exceljs'
 import { renderScaffold } from './templateScaffoldService.js'
-import { buildHorizontalSheet } from './external-import/__testutils__/buildSheet.js'
+import { buildHorizontalSheet, buildGridSheet } from './external-import/__testutils__/buildSheet.js'
 
 const FORM_URL = 'https://docs.google.com/forms/d/e/EXAMPLE/viewform'
 
@@ -228,6 +228,40 @@ describe('renderScaffold — movements follow the day editor by weekday', () => 
     expect(ws.getCell(3, 2).value).toBe('MonLift')
     expect(ws.getCell(6, 2).value || '').toBe('')
     expect(ws.getCell(9, 2).value).toBe('WedLift')
+  })
+})
+
+describe('renderScaffold — partial "DAY 1..N" split places days in order', () => {
+  it('routes a Tue/Thu/Sun program onto DAY 1/2/3 in training-day order (not by weekday)', async () => {
+    // A 3-section "DAY 1..3" block-grid template. Because it does NOT span a full
+    // week (no DAY 7), its sections are sequential — the program's training days
+    // fill DAY 1/2/3 in order, regardless of which weekday they fall on.
+    const wk = { sets: 3, reps: 5, load: 100, rpe: '@7', erpe: 7 }
+    const template = (await buildGridSheet(2, [
+      { day: 'DAY 1', rows: [{ name: 'A', weeks: [wk, wk] }] },
+      { day: 'DAY 2', rows: [{ name: 'B', weeks: [wk, wk] }] },
+      { day: 'DAY 3', rows: [{ name: 'C', weeks: [wk, wk] }] },
+    ])).toString('base64')
+
+    // Program trains Tue, Thu, Sun (gapped weekdays) in week 0 — start is a Monday.
+    const ex = (name: string, wid: string) => ({ name, sets: '3', reps: '5', weight: 100, intensity: null, load_used: null, rest_time: null, rpe: '7', group_id: null, order_index: 0, workout_id: wid })
+    const workouts = [
+      { id: 'tue', scheduled_date: '2026-01-06' },
+      { id: 'thu', scheduled_date: '2026-01-08' },
+      { id: 'sun', scheduled_date: '2026-01-11' },
+    ]
+    const ws = await load((await renderScaffold(template, program, workouts,
+      [ex('TueLift', 'tue'), ex('ThuLift', 'thu'), ex('SunLift', 'sun')]))!)
+
+    // Coach's DAY labels preserved.
+    expect(ws.getCell(1, 2).value).toBe('DAY 1')
+    expect(ws.getCell(4, 2).value).toBe('DAY 2')
+    expect(ws.getCell(7, 2).value).toBe('DAY 3')
+    // The three sessions fill DAY 1/2/3 sequentially — none dropped, none on the
+    // wrong section (the bug: Tue→DAY 2, Thu/Sun lost when routed by weekday).
+    expect(ws.getCell(3, 2).value).toBe('TueLift') // DAY 1 ← first trained day
+    expect(ws.getCell(6, 2).value).toBe('ThuLift') // DAY 2 ← second
+    expect(ws.getCell(9, 2).value).toBe('SunLift') // DAY 3 ← third
   })
 })
 

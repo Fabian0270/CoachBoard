@@ -29,6 +29,7 @@ export interface ProgramTable {
   focus: string | null
   export_layout: string | null         // JSON ExportLayoutTemplate, or null = generic export
   export_template_xlsx: string | null  // base64 of the original imported .xlsx, for high-fidelity re-fill export
+  builtin_template: string | null      // chosen starter look ('coachboard' | 'minimal' | 'modern') when no imported style
 }
 
 // Opt-in reusable saved styles (the import step's "save this style" toggle).
@@ -215,6 +216,7 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await addColumnIfMissing('programs', 'focus', 'TEXT')
   await addColumnIfMissing('programs', 'export_layout', 'TEXT')
   await addColumnIfMissing('programs', 'export_template_xlsx', 'TEXT')
+  await addColumnIfMissing('programs', 'builtin_template', "TEXT DEFAULT 'coachboard'")
 
   // Databases created before the "keep programs on athlete delete" feature made
   // `programs.athlete_id` NOT NULL. Dropping a NOT NULL constraint in SQLite requires
@@ -243,16 +245,17 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
           focus TEXT,
           export_layout TEXT,
           export_template_xlsx TEXT,
+          builtin_template TEXT DEFAULT 'coachboard',
           FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
         )
       `.execute(trx)
       await sql`
         INSERT INTO programs_new
           (id, athlete_id, name, description, start_date, end_date, status,
-           created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx)
+           created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx, builtin_template)
         SELECT
           id, athlete_id, name, description, start_date, end_date, status,
-          created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx
+          created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx, builtin_template
         FROM programs
       `.execute(trx)
       await sql`DROP TABLE programs`.execute(trx)
