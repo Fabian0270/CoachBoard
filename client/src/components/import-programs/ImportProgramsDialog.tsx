@@ -9,7 +9,7 @@ import { isImportable, overrideParams, todayIso } from './helpers'
 import SingleImportForm from './SingleImportForm'
 import BulkImportReview from './BulkImportReview'
 
-export default function ImportProgramsDialog({ open, onOpenChange, onCreated, onImported }: Props) {
+export default function ImportProgramsDialog({ open, onOpenChange, onCreated, onImported, defaultAthleteId }: Props) {
   const folderRef = useRef<HTMLInputElement>(null)
   const filesRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>('pick')
@@ -23,7 +23,7 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
   const [summary, setSummary] = useState<CommitSummary | null>(null)
 
   // single-mode finalize state
-  const [athleteId, setAthleteId] = useState('')
+  const [athleteId, setAthleteId] = useState(defaultAthleteId ?? '')
   const [status, setStatus] = useState('active')
   // single-mode manual column/header overrides (the remap recovery path)
   const [overrides, setOverrides] = useState<ExternalParseOverrides>({})
@@ -36,12 +36,13 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
 
   useEffect(() => {
     if (!open) return
+    setAthleteId(defaultAthleteId ?? '')
     // Include archived so they can be assigned an additional historical program.
     fetch('/api/athletes?include_archived=1')
       .then((r) => r.json())
       .then((data) => setAthletes(Array.isArray(data) ? data : []))
       .catch(() => setAthletes([]))
-  }, [open])
+  }, [open, defaultAthleteId])
 
   function reset() {
     setStep('pick')
@@ -50,7 +51,7 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
     setProgress(0)
     setSummary(null)
     setError(null)
-    setAthleteId('')
+    setAthleteId(defaultAthleteId ?? '')
     setStatus('active')
     setStartDate(todayIso())
     setOverrides({})

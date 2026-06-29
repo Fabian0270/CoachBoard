@@ -7,6 +7,7 @@ export interface Props {
   onOpenChange: (open: boolean) => void
   onCreated: (programId: string) => void   // single import → open the new program
   onImported: () => void                    // bulk import → refresh the list
+  defaultAthleteId?: string                 // pre-select this athlete in single import
 }
 
 export type Step = 'pick' | 'parsing' | 'single' | 'bulk' | 'committing' | 'done'

@@ -11,8 +11,9 @@ import { useToast } from '../components/ui/toast'
 import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
 import AthleteMaxes from '../components/AthleteMaxes'
 import PaymentsSection from '../components/PaymentsSection'
-import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles } from 'lucide-react'
+import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
+import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
 
 interface Athlete {
   id: string
@@ -44,6 +45,7 @@ export default function AthleteDetail() {
   const [saving, setSaving] = useState(false)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const newMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -201,6 +203,13 @@ export default function AthleteDetail() {
                   >
                     <Sparkles className="h-4 w-4" />Generate next program
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => { setNewMenuOpen(false); setImportOpen(true) }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+                  >
+                    <FileUp className="h-4 w-4" />Import program
+                  </button>
                 </div>
               )}
             </div>
@@ -234,6 +243,20 @@ export default function AthleteDetail() {
           onOpenChange={setSuggestOpen}
           athleteId={id}
           onCreated={(draftId) => navigate(`/programs/${draftId}`)}
+        />
+      )}
+      {id && (
+        <ImportProgramsDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          defaultAthleteId={id}
+          onCreated={(programId) => navigate(`/programs/${programId}`)}
+          onImported={() => {
+            fetch(`/api/programs?athlete_id=${id}`)
+              .then((r) => (r.ok ? r.json() : []))
+              .then((data) => setPrograms(Array.isArray(data) ? data : []))
+              .catch(() => {})
+          }}
         />
       )}
       <DeleteAthleteDialog
