@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import ExcelJS from 'exceljs'
 import { renderScaffold } from './templateScaffoldService.js'
+import { buildHorizontalSheet } from './external-import/__testutils__/buildSheet.js'
 
 const FORM_URL = 'https://docs.google.com/forms/d/e/EXAMPLE/viewform'
 
@@ -39,8 +40,8 @@ describe('renderScaffold', () => {
     const template = await buildTemplate()
     const workouts = [{ id: 'd1', scheduled_date: '2026-01-05' }]
     const exercises = [
-      { name: 'Front Squat', sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rpe: '7', order_index: 0, workout_id: 'd1' },
-      { name: 'Pull-ups', sets: '3', reps: '10', weight: null, intensity: null, load_used: null, rpe: null, order_index: 1, workout_id: 'd1' },
+      { name: 'Front Squat', sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rest_time: null, group_id: null, rpe: '7', order_index: 0, workout_id: 'd1' },
+      { name: 'Pull-ups', sets: '3', reps: '10', weight: null, intensity: null, load_used: null, rest_time: null, group_id: null, rpe: null, order_index: 1, workout_id: 'd1' },
     ]
     const out = await renderScaffold(template, program, workouts, exercises)
     expect(out).not.toBeNull()
@@ -76,7 +77,7 @@ describe('renderScaffold', () => {
       { id: 'w2', scheduled_date: '2026-01-12' }, // week 1
       { id: 'w3', scheduled_date: '2026-01-19' }, // week 2
     ]
-    const mk = (id: string) => ({ name: 'Bench', sets: '3', reps: '5', weight: 100, intensity: null, load_used: null, rpe: '8', order_index: 0, workout_id: id })
+    const mk = (id: string) => ({ name: 'Bench', sets: '3', reps: '5', weight: 100, intensity: null, load_used: null, rest_time: null, group_id: null, rpe: '8', order_index: 0, workout_id: id })
     const out = await renderScaffold(template, program, workouts, [mk('w1'), mk('w2'), mk('w3')])
     const ws = await load(out!)
     const banners: string[] = []
@@ -94,7 +95,7 @@ describe('renderScaffold', () => {
     const workouts = [{ id: 'd1', scheduled_date: '2026-01-05' }]
     const names = ['A', 'B', 'C', 'D', 'E'] // five movements into a 2-row template
     const exercises = names.map((n, i) => ({
-      name: n, sets: '3', reps: '5', weight: 100, intensity: null, load_used: null, rpe: '8', order_index: i, workout_id: 'd1',
+      name: n, sets: '3', reps: '5', weight: 100, intensity: null, load_used: null, rest_time: null, group_id: null, rpe: '8', order_index: i, workout_id: 'd1',
     }))
     const ws = await load((await renderScaffold(template, program, workouts, exercises))!)
     const seen = new Set<string>()
@@ -142,7 +143,7 @@ async function buildWeekdaySheet(): Promise<string> {
 describe('renderScaffold — weekday day-section labels', () => {
   it('keeps weekday section labels (Tisdag/Torsdag) instead of wiping them', async () => {
     const mv = (wid: string, name: string) =>
-      ({ name, sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rpe: '7', order_index: 0, workout_id: wid })
+      ({ name, sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rest_time: null, group_id: null, rpe: '7', order_index: 0, workout_id: wid })
     const out = await renderScaffold(await buildWeekdaySheet(), program,
       [ // two weeks, two days each (Tue + Thu)
         { id: 'a1', scheduled_date: '2026-01-06' }, { id: 'a2', scheduled_date: '2026-01-08' },
@@ -166,11 +167,75 @@ describe('renderScaffold — weekday day-section labels', () => {
   })
 })
 
+describe('renderScaffold — horizontal cap/used/intensity + multi-set names', () => {
+  it('routes Load Cap vs Load Used, refills Intensity, and prints a multi-set name once', async () => {
+    // Horizontal template with separate Load Cap / Load Used / Intensity columns
+    // and two movement rows in the day (placeholder values get refilled). Two
+    // weeks so layout auto-detection lands on horizontal (a single week reads as
+    // a plain vertical table); the 1-week program below collapses it to one block.
+    const wk = { sets: 3, reps: 5, intensity: '9', loadCap: 9, loadUsed: 9, rpe: 9 }
+    const template = (await buildHorizontalSheet(2, [{
+      day: 'Monday',
+      rows: [
+        { name: 'Squat', weeks: [wk, wk] },
+        { name: 'Squat', weeks: [wk, wk] },
+      ],
+    }])).toString('base64')
+
+    const workouts = [{ id: 'd1', scheduled_date: '2026-01-05' }] // Monday
+    const g = 'grp-1' // both sets share one movement group
+    const exercises = [
+      { name: 'Squat', sets: '3', reps: '5', weight: 150, intensity: '6', load_used: null, rest_time: null, rpe: '7', group_id: g, order_index: 0, workout_id: 'd1' },
+      { name: 'Squat', sets: '3', reps: '5', weight: null, intensity: '-5%', load_used: '142', rest_time: null, rpe: '6', group_id: g, order_index: 1, workout_id: 'd1' },
+    ]
+    const ws = await load((await renderScaffold(template, program, workouts, exercises))!)
+
+    // Week-0 block cols: name=2 restTime=3 sets=4 reps=5 intensity=6 loadCap=7 loadUsed=8 rpe=9.
+    // First set (template row 3): name once, cap=prescribed weight, used empty, intensity refilled.
+    expect(ws.getCell(3, 2).value).toBe('Squat')
+    expect(ws.getCell(3, 6).value).toBe('6')   // Intensity
+    expect(ws.getCell(3, 7).value).toBe(150)   // Load Cap (= weight)
+    expect(ws.getCell(3, 8).value).toBeNull()  // Load Used empty
+    // Second set (row 4): same group → name blank; cap empty (no weight), used filled.
+    expect(ws.getCell(4, 2).value || '').toBe('')
+    expect(ws.getCell(4, 6).value).toBe('-5%')
+    expect(ws.getCell(4, 7).value).toBeNull()
+    expect(ws.getCell(4, 8).value).toBe(142)   // Load Used (= load_used)
+  })
+})
+
+describe('renderScaffold — movements follow the day editor by weekday', () => {
+  it('routes each weekday\'s movements to that weekday\'s template section, leaving untrained days empty and labels untouched', async () => {
+    const wk = { sets: 3, reps: 5, intensity: '7', loadCap: 100, loadUsed: 100, rpe: 7 }
+    const template = (await buildHorizontalSheet(2, [
+      { day: 'Monday', rows: [{ name: 'Squat', weeks: [wk, wk] }] },
+      { day: 'Tuesday', rows: [{ name: 'Bench', weeks: [wk, wk] }] },
+      { day: 'Wednesday', rows: [{ name: 'Dead', weeks: [wk, wk] }] },
+    ])).toString('base64')
+    // Program trains Monday + Wednesday (Tuesday is a rest day).
+    const ex = (name: string, wid: string) => ({ name, sets: '3', reps: '5', weight: 100, intensity: '7', load_used: null, rest_time: null, rpe: '7', group_id: null, order_index: 0, workout_id: wid })
+    const workouts = [
+      { id: 'mon', scheduled_date: '2026-01-05' }, // Monday
+      { id: 'wed', scheduled_date: '2026-01-07' }, // Wednesday
+    ]
+    const ws = await load((await renderScaffold(template, program, workouts, [ex('MonLift', 'mon'), ex('WedLift', 'wed')]))!)
+
+    // Coach labels are preserved exactly (no relabel, no removal).
+    expect(ws.getCell(2, 1).value).toBe('Monday')
+    expect(ws.getCell(5, 1).value).toBe('Tuesday')
+    expect(ws.getCell(8, 1).value).toBe('Wednesday')
+    // Each weekday's movement lands in ITS section; the untrained Tuesday is empty.
+    expect(ws.getCell(3, 2).value).toBe('MonLift')
+    expect(ws.getCell(6, 2).value || '').toBe('')
+    expect(ws.getCell(9, 2).value).toBe('WedLift')
+  })
+})
+
 describe('renderScaffold — vertical (row-axis)', () => {
   it('rebuilds a vertical template: own movement, chrome + link, one week, no remnants', async () => {
     const out = await renderScaffold(await buildVertical(), program,
       [{ id: 'd1', scheduled_date: '2026-01-05' }],
-      [{ name: 'Front Squat', sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rpe: '7', order_index: 0, workout_id: 'd1' }])
+      [{ name: 'Front Squat', sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rest_time: null, group_id: null, rpe: '7', order_index: 0, workout_id: 'd1' }])
     expect(out).not.toBeNull()
     const ws = await load(out!)
     expect((ws.getCell('B1').value as { hyperlink?: string }).hyperlink).toBe(FORM_URL)

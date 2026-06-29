@@ -45,8 +45,17 @@ export async function buildProgramWorkbook(programId: string): Promise<BuiltWork
   if (program.export_template_xlsx) {
     try {
       buffer = await renderScaffold(program.export_template_xlsx, program, workouts, exercises)
-    } catch {
-      buffer = null // any scaffold failure → fall back to the renderer below
+    } catch (err) {
+      // Any scaffold failure → fall back to the generic renderer below. This used
+      // to be swallowed silently, which let a broken styled export (lost form
+      // link, merges, per-movement layout) masquerade as a normal one. Surface it
+      // so the degradation is visible in the logs instead of going unnoticed.
+      buffer = null
+      console.error(
+        `[programExport] scaffold render failed for program ${programId} ("${program.name ?? ''}"); ` +
+          `falling back to the generic renderer. Reason:`,
+        err instanceof Error ? err.message : err,
+      )
     }
   }
   if (!buffer) buffer = await renderProgramWorkbook(program, workouts, exercises)
