@@ -11,7 +11,9 @@ import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, Eye } from 'lucide-react'
+import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, Eye, Film } from 'lucide-react'
+import DayAttachments from '../components/discord/DayAttachments'
+import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import ImportDialog from '../components/ImportDialog'
 import SendProgramDialog from '../components/SendProgramDialog'
 import PreviewProgramDialog from '../components/PreviewProgramDialog'
@@ -51,6 +53,31 @@ export default function ProgramDetail() {
 
   const grid = useProgramCalendar(program)
   const workoutByDate = useWorkoutByDate(program)
+
+  // Discord form-check videos confirmed onto this program's days.
+  const [discordMedia, setDiscordMedia] = useState<DiscordMediaItem[]>([])
+  const loadDiscordMedia = async () => {
+    if (!id) return
+    try {
+      const res = await fetch(`/api/discord/media?programId=${id}&limit=500`)
+      if (res.ok) {
+        const data = await res.json()
+        setDiscordMedia(data.items ?? [])
+      }
+    } catch { /* offline — attachments simply don't render */ }
+  }
+  useEffect(() => { void loadDiscordMedia() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const mediaByWorkoutId = useMemo(() => {
+    const map = new Map<string, DiscordMediaItem[]>()
+    for (const m of discordMedia) {
+      if (!m.workoutId) continue
+      const list = map.get(m.workoutId) ?? []
+      list.push(m)
+      map.set(m.workoutId, list)
+    }
+    return map
+  }, [discordMedia])
 
   useEffect(() => {
     if (!exportMenuOpen) return
@@ -385,6 +412,15 @@ export default function ProgramDetail() {
                             <div className="flex items-center justify-between text-[10px] text-muted-foreground">
                               <span>{cell.label}</span>
                               <span className="flex items-center gap-0.5">
+                                {workout && (mediaByWorkoutId.get(workout.id)?.length ?? 0) > 0 && (
+                                  <span
+                                    className="inline-flex items-center gap-0.5 rounded bg-primary/10 px-1 text-[9px] font-semibold text-primary"
+                                    title="Form-check videos from Discord"
+                                  >
+                                    <Film className="h-2.5 w-2.5" />
+                                    {mediaByWorkoutId.get(workout.id)!.length}
+                                  </span>
+                                )}
                                 {exercises.length > 0 && !dayDragSource && (
                                   <GripVertical className="h-2.5 w-2.5 text-muted-foreground/30" />
                                 )}
@@ -463,6 +499,12 @@ export default function ProgramDetail() {
                 })
                 await reloadProgram()
               }}
+            />
+          )}
+          {openWorkout && (
+            <DayAttachments
+              items={mediaByWorkoutId.get(openWorkout.id) ?? []}
+              onDetached={() => void loadDiscordMedia()}
             />
           )}
         </DialogContent>

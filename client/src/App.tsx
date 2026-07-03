@@ -15,6 +15,7 @@ import Calculators from './pages/Calculators'
 import Payments from './pages/Payments'
 import ExportStyles from './pages/ExportStyles'
 import Settings from './pages/Settings'
+import DiscordInbox from './pages/DiscordInbox'
 
 export default function App() {
   return (
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="/calculators" element={<Calculators />} />
             <Route path="/payments" element={<Payments />} />
             <Route path="/styles" element={<ExportStyles />} />
+            <Route path="/discord-inbox" element={<DiscordInbox />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </Layout>

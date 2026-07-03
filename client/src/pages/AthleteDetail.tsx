@@ -11,6 +11,7 @@ import { useToast } from '../components/ui/toast'
 import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
 import AthleteMaxes from '../components/AthleteMaxes'
 import PaymentsSection from '../components/PaymentsSection'
+import AthleteMediaSection from '../components/discord/AthleteMediaSection'
 import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
@@ -132,6 +133,7 @@ export default function AthleteDetail() {
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="programs">Programs ({programs.length})</TabsTrigger>
           <TabsTrigger value="maxes">Maxes &amp; RPE</TabsTrigger>
+          <TabsTrigger value="videos">Videos</TabsTrigger>
           <TabsTrigger value="payments">Payments</TabsTrigger>
         </TabsList>
         <TabsContent value="info">
@@ -232,6 +234,9 @@ export default function AthleteDetail() {
         </TabsContent>
         <TabsContent value="maxes">
           {id && <AthleteMaxes athleteId={id} />}
+        </TabsContent>
+        <TabsContent value="videos">
+          {id && <AthleteMediaSection athleteId={id} />}
         </TabsContent>
         <TabsContent value="payments">
           {id && <PaymentsSection athleteId={id} />}

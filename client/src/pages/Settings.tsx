@@ -8,6 +8,7 @@ import {
 } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { Mail, Send, ExternalLink, AlertTriangle, Lock } from 'lucide-react'
+import DiscordSettingsCard from '../components/discord/DiscordSettingsCard'
 
 type Provider = 'gmail' | 'outlook' | 'custom'
 
@@ -285,6 +286,8 @@ export default function Settings() {
           </div>
         </CardContent>
       </Card>
+
+      <DiscordSettingsCard />
     </div>
   )
 }
