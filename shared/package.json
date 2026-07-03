@@ -10,6 +10,7 @@
     "./knowledge": "./knowledge.ts",
     "./exercises": "./exercises.ts",
     "./payments": "./payments.ts",
+    "./discord": "./discord.ts",
     "./scoring": "./scoring.ts",
     "./warmup": "./warmup.ts"
   }
