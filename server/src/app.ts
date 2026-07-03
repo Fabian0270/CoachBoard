@@ -10,6 +10,7 @@ import paymentsRouter from './routes/payments.js'
 import exportStylesRouter from './routes/exportStyles.js'
 import exportTemplatesRouter from './routes/exportTemplates.js'
 import settingsRouter from './routes/settings.js'
+import discordRouter from './routes/discord.js'
 
 export function createApp(staticDir?: string, logPath?: string) {
   const app = express()
@@ -32,6 +33,7 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api/export-styles', exportStylesRouter)
   app.use('/api/export-templates', exportTemplatesRouter)
   app.use('/api/settings', settingsRouter)
+  app.use('/api/discord', discordRouter)
 
   // Unknown API routes must 404 as JSON, not fall through to the static catch-all
   app.use('/api', (_req, res) => {
