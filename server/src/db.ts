@@ -29,6 +29,7 @@ export interface ProgramTable {
   focus: string | null
   export_layout: string | null         // JSON ExportLayoutTemplate, or null = generic export
   export_template_xlsx: string | null  // base64 of the original imported .xlsx, for high-fidelity re-fill export
+  builtin_template: string | null      // chosen starter look ('coachboard' | 'minimal' | 'modern') when no imported style
 }
 
 // Opt-in reusable saved styles (the import step's "save this style" toggle).
@@ -103,6 +104,93 @@ export interface PaymentTable {
   updated_at: string
 }
 
+// ---------------------------------------------------------------------------
+// Discord integration (two-way sync). Discord snowflake ids are stored as TEXT
+// natural keys; app-created rows use UUID v4 like the rest of the schema.
+// The bot token itself is NOT in SQLite — see discordSettingsService.
+// ---------------------------------------------------------------------------
+
+export interface DiscordChannelTable {
+  id: string                    // Discord channel snowflake
+  kind: string                  // 'guild' | 'dm'
+  guild_id: string | null       // null for DM channels
+  name: string                  // '#form-checks' or 'DM · username'
+  guild_name: string | null
+  dm_user_id: string | null     // set when kind='dm' — the linked athlete's Discord user
+  enabled: number               // 0/1 coach toggle
+  last_message_id: string | null // sync cursor (snowflake); pre-seeded by history window
+  last_synced_at: string | null
+  sync_error: string | null     // 'forbidden' | 'not_found' | null
+  created_at: string
+}
+
+export interface DiscordUserTable {
+  id: string                    // Discord user snowflake
+  username: string
+  display_name: string | null
+  avatar_url: string | null
+  athlete_id: string | null     // null = unlinked; several users may map to one athlete
+  linked_at: string | null
+  first_seen_at: string
+}
+
+export interface DiscordMediaTable {
+  id: string                    // uuid v4
+  channel_id: string            // opaque reference — no FK, media outlives channel config
+  channel_name: string | null   // cached at sync time for display
+  message_id: string
+  attachment_id: string
+  discord_user_id: string
+  athlete_id: string | null            // denormalized from user link; null = unmatched
+  workout_id: string | null            // CONFIRMED attach (coach clicked confirm)
+  suggested_workout_id: string | null  // suggestion only, never shown as attached
+  filename: string
+  content_type: string | null
+  size_bytes: number
+  width: number | null
+  height: number | null
+  message_content: string | null       // caption
+  posted_at: string                    // ISO timestamp from Discord
+  posted_date: string                  // YYYY-MM-DD (UTC) for date matching
+  source_url: string | null            // CDN URL at fetch time (expires ~24h)
+  local_path: string | null            // relative to userData, forward slashes
+  sha256: string | null
+  download_status: string              // 'pending' | 'downloaded' | 'failed' | 'skipped_too_large'
+  download_error: string | null        // 'network' | 'expired' | 'message_deleted' | 'http_4xx'
+  duplicate_of_id: string | null       // informational sha256-dup marker (both files kept)
+  reviewed: number                     // 0/1
+  created_at: string
+}
+
+export interface DiscordSentMessageTable {
+  id: string                    // uuid v4
+  channel_id: string
+  kind: string                  // 'channel' | 'dm'
+  discord_user_id: string | null // recipient (DM) or original poster (reply)
+  related_media_id: string | null
+  reply_to_message_id: string | null
+  content: string
+  status: string                // 'sent' | 'failed'
+  error: string | null
+  discord_message_id: string | null // Discord's id for the sent message
+  created_at: string
+}
+
+// Inbound text messages athletes DM to the bot (the athlete side of the
+// conversation). Outbound lives in discord_sent_messages; the two are unioned
+// per athlete for the Messages view. DM-only by design.
+export interface DiscordInboundMessageTable {
+  id: string                    // uuid v4
+  discord_message_id: string    // Discord snowflake — UNIQUE for idempotent re-sync
+  channel_id: string            // the DM channel
+  discord_user_id: string       // the athlete's Discord account
+  athlete_id: string | null     // denormalized from the user link; ON DELETE SET NULL
+  content: string
+  posted_at: string             // Discord message timestamp
+  read: number                  // 0/1 — cleared when the coach opens the thread
+  created_at: string
+}
+
 export interface DB {
   athletes: AthleteTable
   programs: ProgramTable
@@ -112,6 +200,11 @@ export interface DB {
   athlete_maxes: AthleteMaxTable
   payments: PaymentTable
   export_styles: ExportStyleTable
+  discord_channels: DiscordChannelTable
+  discord_users: DiscordUserTable
+  discord_media: DiscordMediaTable
+  discord_sent_messages: DiscordSentMessageTable
+  discord_inbound_messages: DiscordInboundMessageTable
 }
 
 let _db: Kysely<DB> | null = null
@@ -215,6 +308,7 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await addColumnIfMissing('programs', 'focus', 'TEXT')
   await addColumnIfMissing('programs', 'export_layout', 'TEXT')
   await addColumnIfMissing('programs', 'export_template_xlsx', 'TEXT')
+  await addColumnIfMissing('programs', 'builtin_template', "TEXT DEFAULT 'coachboard'")
 
   // Databases created before the "keep programs on athlete delete" feature made
   // `programs.athlete_id` NOT NULL. Dropping a NOT NULL constraint in SQLite requires
@@ -243,16 +337,17 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
           focus TEXT,
           export_layout TEXT,
           export_template_xlsx TEXT,
+          builtin_template TEXT DEFAULT 'coachboard',
           FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
         )
       `.execute(trx)
       await sql`
         INSERT INTO programs_new
           (id, athlete_id, name, description, start_date, end_date, status,
-           created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx)
+           created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx, builtin_template)
         SELECT
           id, athlete_id, name, description, start_date, end_date, status,
-          created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx
+          created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx, builtin_template
         FROM programs
       `.execute(trx)
       await sql`DROP TABLE programs`.execute(trx)
@@ -356,4 +451,119 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
     )
   `.execute(_db)
   await addColumnIfMissing('export_styles', 'template_xlsx', 'TEXT')
+
+  // --- Discord integration -------------------------------------------------
+  // ON DELETE SET NULL throughout: deleting an athlete returns their Discord
+  // media to the unmatched queue instead of destroying it.
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS discord_channels (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL DEFAULT 'guild',
+      guild_id TEXT,
+      name TEXT NOT NULL,
+      guild_name TEXT,
+      dm_user_id TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_message_id TEXT,
+      last_synced_at TEXT,
+      sync_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `.execute(_db)
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS discord_users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      display_name TEXT,
+      avatar_url TEXT,
+      athlete_id TEXT,
+      linked_at TEXT,
+      first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE SET NULL
+    )
+  `.execute(_db)
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS discord_media (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL,
+      channel_name TEXT,
+      message_id TEXT NOT NULL,
+      attachment_id TEXT NOT NULL,
+      discord_user_id TEXT NOT NULL,
+      athlete_id TEXT,
+      workout_id TEXT,
+      suggested_workout_id TEXT,
+      filename TEXT NOT NULL,
+      content_type TEXT,
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      width INTEGER,
+      height INTEGER,
+      message_content TEXT,
+      posted_at TEXT NOT NULL,
+      posted_date TEXT NOT NULL,
+      source_url TEXT,
+      local_path TEXT,
+      sha256 TEXT,
+      download_status TEXT NOT NULL DEFAULT 'pending',
+      download_error TEXT,
+      duplicate_of_id TEXT,
+      reviewed INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (message_id, attachment_id),
+      FOREIGN KEY (discord_user_id) REFERENCES discord_users(id),
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE SET NULL,
+      FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE SET NULL,
+      FOREIGN KEY (suggested_workout_id) REFERENCES workouts(id) ON DELETE SET NULL
+    )
+  `.execute(_db)
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS discord_sent_messages (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      discord_user_id TEXT,
+      related_media_id TEXT,
+      reply_to_message_id TEXT,
+      content TEXT NOT NULL,
+      status TEXT NOT NULL,
+      error TEXT,
+      discord_message_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (related_media_id) REFERENCES discord_media(id) ON DELETE SET NULL
+    )
+  `.execute(_db)
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS discord_inbound_messages (
+      id TEXT PRIMARY KEY,
+      discord_message_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      discord_user_id TEXT NOT NULL,
+      athlete_id TEXT,
+      content TEXT NOT NULL,
+      posted_at TEXT NOT NULL,
+      read INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (discord_message_id),
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE SET NULL
+    )
+  `.execute(_db)
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_athlete ON discord_media(athlete_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_user ON discord_media(discord_user_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_reviewed ON discord_media(reviewed)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_status ON discord_media(download_status)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_sha256 ON discord_media(sha256)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_posted ON discord_media(posted_at)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_workout ON discord_media(workout_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_users_athlete ON discord_users(athlete_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_sent_media ON discord_sent_messages(related_media_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_sent_user ON discord_sent_messages(discord_user_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_inbound_athlete ON discord_inbound_messages(athlete_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_inbound_read ON discord_inbound_messages(read)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_inbound_user ON discord_inbound_messages(discord_user_id)`.execute(_db)
 }

@@ -44,6 +44,8 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
   const [enrichAccessories, setEnrichAccessories] = useState(false)
   const [weeks, setWeeks] = useState(4)
   const [startDate, setStartDate] = useState(todayIso)
+  // '' = inherit the source program's template; otherwise a built-in id.
+  const [builtinTemplate, setBuiltinTemplate] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [useStyle, setUseStyle] = useState(true)
@@ -76,6 +78,7 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
     setEnrichAccessories(false)
     setWeeks(4)
     setStartDate(todayIso())
+    setBuiltinTemplate('')
     setLoading(false)
     setError(null)
     setStyleProfile(null)
@@ -232,6 +235,7 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
           layout,
           enrichAccessories,
           ...(style ? { style } : {}),
+          ...(builtinTemplate ? { builtin_template: builtinTemplate } : {}),
         }),
       })
       const data = await res.json()
@@ -254,7 +258,7 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-muted-foreground" />
@@ -339,6 +343,8 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
             setStartDate={setStartDate}
             enrichAccessories={enrichAccessories}
             setEnrichAccessories={setEnrichAccessories}
+            builtinTemplate={builtinTemplate}
+            setBuiltinTemplate={setBuiltinTemplate}
             loading={loading}
             error={error}
             onToggleStyle={toggleStyle}

@@ -158,3 +158,72 @@ export function parseExportLayout(raw: string | null | undefined): ExportLayoutT
   } catch { /* fall through */ }
   return null
 }
+
+// ---------------------------------------------------------------------------
+// Built-in starter templates — the three looks a coach can pick from on the New
+// Program page and in the Generate-program wizard (for programs that don't reuse
+// an imported coach style). The choice is stored on the program as
+// `builtin_template`; the exporter routes the render off it.
+//   • coachboard — the classic CoachBoard look (the existing default renderer).
+//   • minimal    — a monochrome, essentials-only descriptor (the descriptor path).
+//   • modern      — a card-style layout with an e1RM reference badge (own renderer).
+// ---------------------------------------------------------------------------
+
+export const BUILTIN_EXPORT_TEMPLATES = [
+  {
+    id: 'coachboard',
+    name: 'CoachBoard',
+    description:
+      'The classic CoachBoard look — colour-coded week blocks with every tracking column.',
+  },
+  {
+    id: 'minimal',
+    name: 'Minimalistic',
+    description:
+      'Clean monochrome layout with just the essentials: exercise, sets, reps, load, RPE.',
+  },
+  {
+    id: 'modern',
+    name: 'Modern',
+    description:
+      'Card-style layout that highlights each lift and shows the athlete’s current e1RM.',
+  },
+] as const
+
+export type BuiltinTemplateId = typeof BUILTIN_EXPORT_TEMPLATES[number]['id']
+
+export const BUILTIN_TEMPLATE_IDS = BUILTIN_EXPORT_TEMPLATES.map((t) => t.id) as BuiltinTemplateId[]
+
+export const DEFAULT_BUILTIN_TEMPLATE: BuiltinTemplateId = 'coachboard'
+
+export function isBuiltinTemplateId(value: unknown): value is BuiltinTemplateId {
+  return typeof value === 'string' && BUILTIN_EXPORT_TEMPLATES.some((t) => t.id === value)
+}
+
+/**
+ * The "Minimalistic" built-in as an ExportLayoutTemplate descriptor — replayed by
+ * the existing descriptor renderer. Dark-grey banners/day-headers (white text) with
+ * light column headers and no body fill give a clean monochrome look; the column set
+ * is trimmed to the essentials. Exercise names are not bolded.
+ */
+export const MINIMAL_DESCRIPTOR: ExportLayoutTemplate = {
+  version: 1,
+  orientation: 'horizontal',
+  columns: [
+    { key: 'name', label: 'Exercise' },
+    { key: 'sets', label: 'Sets' },
+    { key: 'reps', label: 'Reps' },
+    { key: 'load_used', label: 'Load' },
+    { key: 'rpe', label: 'RPE' },
+  ],
+  dayLabels: { style: 'weekday', language: 'en' },
+  rpeNotation: 'plain',
+  colors: {
+    weekBanner: 'FF555555',
+    dayHeader: 'FF555555',
+    columnHeader: 'FFF0F0F0',
+    trackingHeader: 'FFF0F0F0',
+    body: null,
+  },
+  fonts: { headerBold: true, headerItalic: false, nameBold: false },
+}

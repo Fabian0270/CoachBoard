@@ -7,6 +7,7 @@ import type { CoachStyleProfile, DetectedPattern, SuggestionGoal, SuggestionTemp
 import { GOAL_LABELS } from './constants'
 import { clampDays, repBiasFor } from './helpers'
 import BackButton from './BackButton'
+import TemplatePicker from '../TemplatePicker'
 
 interface OptionsStepProps {
   template: SuggestionTemplateInfo
@@ -21,6 +22,8 @@ interface OptionsStepProps {
   setStartDate: Dispatch<SetStateAction<string>>
   enrichAccessories: boolean
   setEnrichAccessories: Dispatch<SetStateAction<boolean>>
+  builtinTemplate: string
+  setBuiltinTemplate: Dispatch<SetStateAction<string>>
   loading: boolean
   error: string | null
   onToggleStyle: () => void
@@ -31,6 +34,7 @@ interface OptionsStepProps {
 export default function OptionsStep({
   template, trainingDays, selectedPattern, styleProfile, useStyle, goal,
   weeks, setWeeks, startDate, setStartDate, enrichAccessories, setEnrichAccessories,
+  builtinTemplate, setBuiltinTemplate,
   loading, error, onToggleStyle, onBack, onGenerate,
 }: OptionsStepProps) {
   return (
@@ -141,6 +145,18 @@ export default function OptionsStep({
           </span>
         </span>
       </label>
+
+      <div className="space-y-1.5">
+        <Label>Excel template</Label>
+        <TemplatePicker
+          value={builtinTemplate}
+          onChange={setBuiltinTemplate}
+          inheritOption={{
+            label: 'Same as source program',
+            description: 'Keep the look of the program this draft is based on.',
+          }}
+        />
+      </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 

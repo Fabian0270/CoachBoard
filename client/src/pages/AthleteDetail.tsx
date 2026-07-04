@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -11,6 +11,10 @@ import { useToast } from '../components/ui/toast'
 import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
 import AthleteMaxes from '../components/AthleteMaxes'
 import PaymentsSection from '../components/PaymentsSection'
+import AthleteMediaSection from '../components/discord/AthleteMediaSection'
+import AthleteMessagesSection from '../components/discord/AthleteMessagesSection'
+import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
+import type { DiscordUserItem } from 'coachboard-shared/discord'
 import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
@@ -43,6 +47,10 @@ export default function AthleteDetail() {
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState({ name: '', email: '', sport: '', date_of_birth: '', notes: '' })
   const [saving, setSaving] = useState(false)
+  const { configured: discordConfigured } = useDiscordConfigured()
+  const [discordUsernames, setDiscordUsernames] = useState<string[]>([])
+  const [searchParams] = useSearchParams()
+  const initialTab = searchParams.get('tab') ?? 'info'
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -67,6 +75,26 @@ export default function AthleteDetail() {
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [newMenuOpen])
+
+  // Linked Discord account(s) for this athlete — shown read-only in Info.
+  useEffect(() => {
+    if (!id || !discordConfigured) {
+      setDiscordUsernames([])
+      return
+    }
+    let cancelled = false
+    fetch('/api/discord/users')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((users: DiscordUserItem[]) => {
+        if (!cancelled) {
+          setDiscordUsernames(users.filter((u) => u.athleteId === id).map((u) => u.username))
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [id, discordConfigured])
 
   const handleDelete = () => setDeleteOpen(true)
 
@@ -127,11 +155,13 @@ export default function AthleteDetail() {
         </div>
         <Button variant="destructive" size="sm" onClick={handleDelete}><Trash2 className="h-4 w-4" /></Button>
       </div>
-      <Tabs defaultValue="info">
+      <Tabs defaultValue={initialTab}>
         <TabsList>
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="programs">Programs ({programs.length})</TabsTrigger>
           <TabsTrigger value="maxes">Maxes &amp; RPE</TabsTrigger>
+          {discordConfigured && <TabsTrigger value="videos">Videos</TabsTrigger>}
+          {discordConfigured && <TabsTrigger value="messages">Messages</TabsTrigger>}
           <TabsTrigger value="payments">Payments</TabsTrigger>
         </TabsList>
         <TabsContent value="info">
@@ -175,8 +205,11 @@ export default function AthleteDetail() {
                 {athlete.email && <div><span className="font-medium">Email:</span> {athlete.email}</div>}
                 {athlete.sport && <div><span className="font-medium">Sport:</span> {athlete.sport}</div>}
                 {athlete.date_of_birth && <div><span className="font-medium">Date of Birth:</span> {athlete.date_of_birth}</div>}
+                {discordUsernames.length > 0 && (
+                  <div><span className="font-medium">Discord:</span> {discordUsernames.map((u) => `@${u}`).join(', ')}</div>
+                )}
                 {athlete.notes && <div><span className="font-medium">Notes:</span> {athlete.notes}</div>}
-                {!athlete.email && !athlete.sport && !athlete.date_of_birth && !athlete.notes && (
+                {!athlete.email && !athlete.sport && !athlete.date_of_birth && !athlete.notes && discordUsernames.length === 0 && (
                   <p className="text-muted-foreground text-sm">No details yet.</p>
                 )}
               </CardContent>
@@ -216,7 +249,7 @@ export default function AthleteDetail() {
             {programs.length === 0 ? (
               <Card><CardContent className="py-8 text-center text-muted-foreground">No programs yet.</CardContent></Card>
             ) : programs.map((program) => (
-              <Link key={program.id} to={`/programs/${program.id}`}>
+              <Link key={program.id} to={`/programs/${program.id}`} className="block">
                 <Card className="hover:shadow-md transition-shadow cursor-pointer">
                   <CardHeader className="py-4">
                     <CardTitle className="text-base">{program.name}</CardTitle>
@@ -233,6 +266,16 @@ export default function AthleteDetail() {
         <TabsContent value="maxes">
           {id && <AthleteMaxes athleteId={id} />}
         </TabsContent>
+        {discordConfigured && (
+          <TabsContent value="videos">
+            {id && <AthleteMediaSection athleteId={id} />}
+          </TabsContent>
+        )}
+        {discordConfigured && (
+          <TabsContent value="messages">
+            {id && <AthleteMessagesSection athleteId={id} />}
+          </TabsContent>
+        )}
         <TabsContent value="payments">
           {id && <PaymentsSection athleteId={id} />}
         </TabsContent>

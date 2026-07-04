@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from './ui/card'
 import { Button } from './ui/button'
-import { UserPlus, Mail, FileUp, Sparkles, Repeat, Check, RotateCcw } from 'lucide-react'
+import { UserPlus, Mail, FileUp, Sparkles, Repeat, Check, RotateCcw, MessageSquare } from 'lucide-react'
 
 // Guided first-run walkthrough shown on the dashboard. Each step that needs an
 // action drops the coach straight onto the right screen; the explain-only steps
@@ -38,6 +38,14 @@ const STEPS: Step[] = [
     action: { label: 'Set up email', to: '/settings' },
   },
   {
+    id: 'discord',
+    icon: MessageSquare,
+    title: 'Connect Discord',
+    optional: true,
+    body: "Optional. If your athletes send form-check videos in Discord, CoachBoard pulls them in automatically, files them by athlete and training day, and lets you reply — video and DM — without leaving the app. A short guided setup walks you through every click; the one step that matters (turning on Message Content Intent) is called out so it can't be missed.",
+    action: { label: 'Set up Discord', to: '/settings' },
+  },
+  {
     id: 'import',
     icon: FileUp,
     title: 'Import your existing programs',
@@ -58,7 +66,9 @@ const STEPS: Step[] = [
   },
 ]
 
-const STORAGE_KEY = 'coachboard.onboarding.v1'
+// Bumped to v2 when the Discord step was added so coaches who finished the
+// earlier checklist see it again (with the new optional step).
+const STORAGE_KEY = 'coachboard.onboarding.v2'
 
 interface Persisted {
   completed: string[]

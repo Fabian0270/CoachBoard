@@ -53,6 +53,11 @@ async function startServer(): Promise<void> {
       reject(err)
     })
   })
+
+  // Discord sync-on-launch (delayed so startup isn't blocked; no-op when the
+  // integration isn't configured). Optional-chained so a stale bundle without
+  // the export can't crash startup.
+  bundle.initDiscordSync?.({ launchDelayMs: 8000 })
 }
 
 async function createWindow(): Promise<void> {
@@ -61,7 +66,9 @@ async function createWindow(): Promise<void> {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* blob: data:",
+          "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* blob: data:; " +
+            // Discord user avatars in the inbox come straight from Discord's CDN.
+            "img-src 'self' http://localhost:* blob: data: https://cdn.discordapp.com",
         ],
       },
     })

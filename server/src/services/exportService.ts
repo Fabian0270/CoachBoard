@@ -7,6 +7,7 @@ import {
   type ExportLayoutTemplate,
 } from 'coachboard-shared/exportLayout'
 import { TOGGLEABLE_COLUMNS, type ToggleableColumn } from 'coachboard-shared'
+import { e1rmForExerciseName } from './exportE1RM.js'
 
 // ---------------------------------------------------------------------------
 // Program → .xlsx renderer.
@@ -184,25 +185,39 @@ function buildDayData(program: ProgramRow, workouts: WorkoutRow[], exercises: Ex
   return { dayData, numWeeks }
 }
 
+export interface RenderOptions {
+  /** Override the descriptor that would otherwise be parsed from program.export_layout
+   *  (used to replay a built-in look like "Minimalistic" without persisting its JSON). */
+  templateOverride?: ExportLayoutTemplate | null
+  /** Render the "Modern" card layout with a per-lift e1RM reference badge. */
+  modern?: { e1rmRef: Record<string, number> }
+}
+
 export async function renderProgramWorkbook(
   program: ProgramRow,
   workouts: WorkoutRow[],
   exercises: ExerciseRow[],
+  opts: RenderOptions = {},
 ): Promise<Buffer> {
-  const template = parseExportLayout(program.export_layout)
+  const template =
+    opts.templateOverride !== undefined ? opts.templateOverride : parseExportLayout(program.export_layout)
   const wb = new ExcelJS.Workbook()
   const sheetName = (program.name || 'Program').replace(/[\\/?*[\]:]/g, '').slice(0, 31) || 'Program'
   const ws = wb.addWorksheet(sheetName)
 
-  const resolved = resolveColumns(program, template)
   const { dayData, numWeeks } = buildDayData(program, workouts, exercises)
-  const dayLabel = (dayOfWeek: number) =>
-    template ? dayLabelFor(template.dayLabels, dayOfWeek) : DAY_NAMES[dayOfWeek]
 
-  if (template && template.orientation === 'vertical') {
-    renderVertical(ws, resolved, dayData, numWeeks, dayLabel)
+  if (opts.modern) {
+    renderModern(ws, program, dayData, numWeeks, opts.modern.e1rmRef)
   } else {
-    renderHorizontal(ws, resolved, dayData, numWeeks, dayLabel)
+    const resolved = resolveColumns(program, template)
+    const dayLabel = (dayOfWeek: number) =>
+      template ? dayLabelFor(template.dayLabels, dayOfWeek) : DAY_NAMES[dayOfWeek]
+    if (template && template.orientation === 'vertical') {
+      renderVertical(ws, resolved, dayData, numWeeks, dayLabel)
+    } else {
+      renderHorizontal(ws, resolved, dayData, numWeeks, dayLabel)
+    }
   }
 
   const buffer = await wb.xlsx.writeBuffer()
@@ -373,5 +388,142 @@ function renderVertical(
       }
       row++ // blank separator between days
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Modern — a card-style, app-like layout. Weeks and days stack top-to-bottom;
+// each exercise is a two-row "card" (a bold name row + a prescription summary
+// row). Main lifts carry an inline e1RM reference badge. Empty days are omitted
+// to keep the sheet tight. Built-in "Modern" template only (not an import shape).
+// ---------------------------------------------------------------------------
+const MODERN = {
+  title: 'FF0F172A',        // slate-900
+  weekBanner: 'FF4F46E5',   // indigo-600
+  dayHeader: 'FFE0E7FF',    // indigo-100
+  dayHeaderText: 'FF3730A3',// indigo-800
+  cardName: 'FFFFFFFF',
+  cardDetail: 'FFF8FAFC',   // slate-50
+  badge: 'FF64748B',        // slate-500
+  detailText: 'FF475569',   // slate-600
+  border: 'FFE2E8F0',       // slate-200
+} as const
+const MODERN_WIDTH = 4
+
+function fmtKg(value: number): string {
+  return `${Math.round(value * 2) / 2}`
+}
+
+/** One-line prescription summary for a Modern card, e.g. "5 × 5   ·   100 kg   ·   RPE 8". */
+function prescriptionSummary(ex: ExerciseRow): string {
+  const parts: string[] = []
+  const sets = (ex.sets ?? '').trim()
+  const reps = (ex.reps ?? '').trim()
+  if (sets && reps) parts.push(`${sets} × ${reps}`)
+  else if (reps) parts.push(`${reps} reps`)
+  else if (sets) parts.push(`${sets} sets`)
+  const intensity = (ex.intensity ?? '').trim()
+  if (intensity) parts.push(intensity)
+  if (ex.weight != null) parts.push(`${ex.weight} kg`)
+  const used = (ex.load_used ?? '').trim()
+  if (used) parts.push(`→ ${used} kg`)
+  const rpe = (ex.rpe ?? '').trim()
+  if (rpe) parts.push(`RPE ${rpe.replace(/^@/, '')}`)
+  const rest = (ex.rest_time ?? '').trim()
+  if (rest) parts.push(`rest ${rest}`)
+  return parts.join('   ·   ')
+}
+
+function renderModern(
+  ws: ExcelJS.Worksheet,
+  program: ProgramRow,
+  dayData: Array<{ perWeek: ExerciseRow[][]; maxRows: number }>,
+  numWeeks: number,
+  e1rmRef: Record<string, number>,
+): void {
+  const border: ExcelJS.Border = { style: 'thin', color: { argb: MODERN.border } }
+  ws.getColumn(1).width = 30
+  for (let c = 2; c <= MODERN_WIDTH; c++) ws.getColumn(c).width = 12
+  const mergeRow = (r: number) => { if (MODERN_WIDTH > 1) ws.mergeCells(r, 1, r, MODERN_WIDTH) }
+  const sideBorders = (r: number, opts: { top?: boolean; bottom?: boolean }) => {
+    for (let c = 1; c <= MODERN_WIDTH; c++) {
+      ws.getCell(r, c).border = {
+        left: c === 1 ? border : undefined,
+        right: c === MODERN_WIDTH ? border : undefined,
+        top: opts.top ? border : undefined,
+        bottom: opts.bottom ? border : undefined,
+      }
+    }
+  }
+
+  let row = 1
+  const title = ws.getCell(row, 1)
+  title.value = program.name || 'Program'
+  title.font = { bold: true, size: 16, color: { argb: MODERN.title } }
+  title.alignment = { horizontal: 'left', vertical: 'middle' }
+  mergeRow(row); ws.getRow(row).height = 26
+  row += 2
+
+  for (let weekIndex = 0; weekIndex < numWeeks; weekIndex++) {
+    const wk = ws.getCell(row, 1)
+    wk.value = `Week ${weekIndex + 1}`
+    wk.fill = fill(MODERN.weekBanner)
+    wk.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } }
+    wk.alignment = { horizontal: 'left', vertical: 'middle' }
+    mergeRow(row); ws.getRow(row).height = 22
+    row++
+
+    for (let dayOfWeek = 0; dayOfWeek < 7; dayOfWeek++) {
+      const exList = dayData[dayOfWeek].perWeek[weekIndex]
+      if (!exList || exList.length === 0) continue // Modern omits empty days
+
+      const dh = ws.getCell(row, 1)
+      dh.value = DAY_NAMES[dayOfWeek]
+      dh.fill = fill(MODERN.dayHeader)
+      dh.font = { bold: true, color: { argb: MODERN.dayHeaderText } }
+      dh.alignment = { horizontal: 'left', vertical: 'middle' }
+      mergeRow(row)
+      row++
+
+      for (let r = 0; r < exList.length; r++) {
+        const ex = exList[r]
+        const prev = r > 0 ? exList[r - 1] : null
+        const isSubSet = !!(prev && ex.group_id && ex.group_id === prev.group_id)
+
+        // Card name row — bold name, plus an e1RM badge for main lifts.
+        const nameCell = ws.getCell(row, 1)
+        const e1 = isSubSet ? null : e1rmForExerciseName(ex.name, e1rmRef)
+        if (isSubSet) {
+          nameCell.value = ''
+        } else if (e1 != null) {
+          nameCell.value = {
+            richText: [
+              { text: ex.name, font: { bold: true, size: 12, color: { argb: MODERN.title } } },
+              { text: `      e1RM ${fmtKg(e1)} kg`, font: { size: 10, color: { argb: MODERN.badge } } },
+            ],
+          }
+        } else {
+          nameCell.value = ex.name
+          nameCell.font = { bold: true, size: 12, color: { argb: MODERN.title } }
+        }
+        nameCell.fill = fill(MODERN.cardName)
+        nameCell.alignment = { horizontal: 'left', vertical: 'middle' }
+        mergeRow(row)
+        sideBorders(row, { top: true })
+        row++
+
+        // Card detail row — prescription summary.
+        const detail = ws.getCell(row, 1)
+        detail.value = prescriptionSummary(ex)
+        detail.fill = fill(MODERN.cardDetail)
+        detail.font = { color: { argb: MODERN.detailText } }
+        detail.alignment = { horizontal: 'left', vertical: 'middle' }
+        mergeRow(row)
+        sideBorders(row, { bottom: true })
+        row++
+      }
+      row++ // spacer after each day
+    }
+    row++ // spacer after each week
   }
 }

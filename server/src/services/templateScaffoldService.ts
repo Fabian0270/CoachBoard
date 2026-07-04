@@ -523,11 +523,18 @@ export async function renderScaffold(
 
   // Each section is filled with the program's movements for ITS weekday — the parser
   // sets geom.days[k].dayIndex from a real weekday label (Monday, Tisdag, …) OR from
-  // a "DAY n" label as n-1, and coaches use "DAY 1..7" to mean Monday..Sunday — so in
-  // both cases the section's dayIndex IS its weekday and the sheet mirrors the day
-  // editor. The coach's labels are never renamed. (A non-weekday/non-"DAY n" template
-  // falls back to the program's days in order.)
-  const weekdayMode = tEx.some((e) => { const l = (e.dayLabel ?? '').trim(); return WEEKDAY.test(l) || DAY_N.test(l) })
+  // a "DAY n" label as n-1. Real weekday labels always map by weekday. "DAY n" is
+  // ambiguous: coaches use "DAY 1..7" to mean Monday..Sunday (a full-week calendar),
+  // but a PARTIAL "DAY 1..N" (N < 7) is a sequential split — its sections must take
+  // the program's training days IN ORDER, not by weekday, or a gapped week (e.g.
+  // Tue/Thu/Sun) would skip sections and drop sessions. So "DAY n" only maps by
+  // weekday when the template spans the whole week (DAY 7 present); otherwise it
+  // falls back to the program's days in order, like a non-weekday/non-"DAY n"
+  // template. The coach's labels are never renamed.
+  const hasWeekdayLabel = tEx.some((e) => WEEKDAY.test((e.dayLabel ?? '').trim()))
+  const hasDayN = tEx.some((e) => DAY_N.test((e.dayLabel ?? '').trim()))
+  const maxTemplateDay = Math.max(...geom.days.map((d) => d.dayIndex))
+  const weekdayMode = hasWeekdayLabel || (hasDayN && maxTemplateDay >= 6)
   const dayExsFor = (w: number, dSeq: number, dayIndex: number): ExerciseRow[] =>
     prog.byWeekday[w]?.get(weekdayMode ? dayIndex : prog.seqWeekdays[dSeq]) ?? []
   // Movements for naming a shared (write-once) name column: take them from the first
