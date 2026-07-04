@@ -30,10 +30,12 @@ Go to the [Releases page](https://github.com/Fabian0270/CoachBoard/releases) and
 2. Run the installer and follow the prompts
 3. Launch **CoachBoard** from the Start Menu or Desktop shortcut
 
-**macOS** (Apple Silicon and Intel)
-1. Download the matching **CoachBoard-x.x.x-arm64.dmg** (Apple Silicon: M1/M2/M3/M4) or **CoachBoard-x.x.x-x64.dmg** (Intel)
+**macOS** (Apple Silicon — M1/M2/M3/M4)
+1. Download **CoachBoard-x.x.x-arm64.dmg**
 2. Open the `.dmg` and drag **CoachBoard** into Applications
 3. The current builds are not yet notarized, so on first launch **right-click the app → Open → Open** to get past Gatekeeper (only needed once)
+
+> Intel Macs aren't supported yet — GitHub's free Intel build runners have been retired, so a native x64 build needs a paid runner or a self-hosted Intel Mac (tracked as a follow-up).
 
 The app stores all data locally in your user profile (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS). No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
 
@@ -131,11 +133,12 @@ Must run **on macOS** (native module compilation). Each machine builds its own C
 npm run package:mac   # run on a Mac
 ```
 
-Outputs `CoachBoard-x.x.x-<arch>.dmg` to `dist-electron/`. To build **both** arches
-without a Mac, push a version tag (`git tag vX.Y.Z && git push --tags`) and the
-[`Release (macOS)` workflow](.github/workflows/release-mac.yml) builds the Intel + Apple
-Silicon DMGs on GitHub's macOS runners and attaches them to the GitHub Release. Signing /
-notarization is not yet enabled — see [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md).
+Outputs `CoachBoard-x.x.x-<arch>.dmg` to `dist-electron/`. To build without a Mac, push a
+version tag (`git tag vX.Y.Z && git push --tags`) and the [`Release (macOS)` workflow](.github/workflows/release-mac.yml)
+builds the Apple Silicon DMG on a GitHub macOS runner and attaches it to the GitHub Release.
+Intel (x64) is not currently built — GitHub's free Intel runners were retired; see the note
+in [`release-mac.yml`](.github/workflows/release-mac.yml) for how to add it back. The builds
+are unsigned and not notarized, so Mac users right-click → Open on first launch.
 
 ---
 

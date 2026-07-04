@@ -1,16 +1,23 @@
 name: Release (macOS)
 
-# Builds the macOS .dmg installers. CoachBoard bundles better-sqlite3, a native
+# Builds the macOS .dmg installer. CoachBoard bundles better-sqlite3, a native
 # module that must be compiled ON macOS for macOS, so this cannot run on the
-# Windows dev machine — GitHub's macOS runners do it instead.
+# Windows dev machine — a GitHub macOS runner does it instead.
 #
-# Each arch is built on a runner of that arch (macos-13 = Intel x64,
-# macos-14 = Apple Silicon arm64) rather than cross-compiling, because the
-# native module copied into the app is only correct for the runner's own CPU.
+# Apple Silicon (arm64) ONLY. GitHub's free Intel (macos-13) runners are being
+# retired and in practice no longer pick up jobs on public repos (they queue
+# indefinitely), so the Intel leg was removed to unblock releases. arm64 covers
+# every Mac sold since late 2020 (M1/M2/M3/M4).
 #
-# Trigger: push a version tag (e.g. `git tag v1.13.0 && git push --tags`), or run
-# it manually from the Actions tab (workflow_dispatch) to get artifacts without
-# publishing a release.
+# To add Intel (x64) back later — note the copied better-sqlite3 binary is
+# per-arch and cannot be cross-compiled from an arm64 runner, so x64 must build
+# on a native-x64 machine — one of:
+#   - a `macos-13` job, if/when free Intel runners become available again;
+#   - a billable `macos-13-large` runner (not free even on public repos); or
+#   - a self-hosted Intel Mac runner.
+#
+# Trigger: push a version tag (e.g. `git tag v1.13.1 && git push --tags`), or run
+# it manually from the Actions tab (workflow_dispatch).
 
 on:
   push:
@@ -23,15 +30,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-13   # Intel
-            arch: x64
-          - runner: macos-14   # Apple Silicon
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14   # Apple Silicon (arm64)
 
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +45,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Package macOS ${{ matrix.arch }} build
+      - name: Package macOS arm64 build
         run: npm run package:mac
         env:
           # Force an unsigned build until an Apple Developer ID cert is wired in.
@@ -54,10 +53,10 @@ jobs:
           # env is still unsigned rather than failing on a missing identity.)
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
-      - name: Upload ${{ matrix.arch }} artifact
+      - name: Upload arm64 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: coachboard-mac-${{ matrix.arch }}
+          name: coachboard-mac-arm64
           path: dist-electron/*.dmg
           if-no-files-found: error
 
