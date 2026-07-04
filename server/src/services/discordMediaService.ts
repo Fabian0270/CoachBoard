@@ -9,6 +9,8 @@ import type {
   DiscordUserItem,
   InboxCounts,
   WorkoutCandidate,
+  ConversationMessage,
+  UnreadThread,
 } from 'coachboard-shared/discord'
 
 // ---------------------------------------------------------------------------
@@ -177,7 +179,7 @@ export async function getMediaItem(mediaId: string): Promise<DiscordMediaItem | 
 
 export async function getInboxCounts(): Promise<InboxCounts> {
   const db = getDb()
-  const [unmatched, unreviewed] = await Promise.all([
+  const [unmatched, unreviewed, unread] = await Promise.all([
     db
       .selectFrom('discord_media')
       .select((eb) => eb.fn.countAll<number>().as('n'))
@@ -190,8 +192,112 @@ export async function getInboxCounts(): Promise<InboxCounts> {
       .where('athlete_id', 'is not', null)
       .where('reviewed', '=', 0)
       .executeTakeFirst(),
+    db
+      .selectFrom('discord_inbound_messages')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('read', '=', 0)
+      .where('athlete_id', 'is not', null)
+      .executeTakeFirst(),
   ])
-  return { unmatched: Number(unmatched?.n ?? 0), unreviewed: Number(unreviewed?.n ?? 0) }
+  return {
+    unmatched: Number(unmatched?.n ?? 0),
+    unreviewed: Number(unreviewed?.n ?? 0),
+    unreadMessages: Number(unread?.n ?? 0),
+  }
+}
+
+/** Total on-disk usage of downloaded media (for the dashboard storage tile). */
+export async function getStorageUsage(): Promise<{ bytes: number; files: number }> {
+  const row = await getDb()
+    .selectFrom('discord_media')
+    .select((eb) => [
+      eb.fn.sum<number>('size_bytes').as('bytes'),
+      eb.fn.countAll<number>().as('files'),
+    ])
+    .where('download_status', '=', 'downloaded')
+    .executeTakeFirst()
+  return { bytes: Number(row?.bytes ?? 0), files: Number(row?.files ?? 0) }
+}
+
+/**
+ * Deletes a media item entirely — the file on disk (best-effort; a file open
+ * in the player may be locked on Windows) and the DB row. Sent-message replies
+ * survive via ON DELETE SET NULL. Returns false if the row didn't exist.
+ */
+export async function deleteMedia(mediaId: string): Promise<boolean> {
+  const db = getDb()
+  const row = await db
+    .selectFrom('discord_media')
+    .select('local_path')
+    .where('id', '=', mediaId)
+    .executeTakeFirst()
+  if (!row) return false
+  if (row.local_path) await deleteMediaFile(row.local_path)
+  await db.deleteFrom('discord_media').where('id', '=', mediaId).execute()
+  return true
+}
+
+/** Deletes media posted before the cutoff (file + row). Returns the count. */
+export async function deleteMediaBefore(cutoffIso: string): Promise<number> {
+  const db = getDb()
+  const expired = await db
+    .selectFrom('discord_media')
+    .select(['id', 'local_path'])
+    .where('posted_at', '<', cutoffIso)
+    .execute()
+  for (const row of expired) {
+    if (row.local_path) await deleteMediaFile(row.local_path)
+  }
+  if (expired.length > 0) {
+    await db
+      .deleteFrom('discord_media')
+      .where('id', 'in', expired.map((r) => r.id))
+      .execute()
+  }
+  return expired.length
+}
+
+/** Deletes DM messages (inbound + outbound) posted before the cutoff. */
+export async function deleteMessagesBefore(cutoffIso: string): Promise<number> {
+  const db = getDb()
+  const inbound = await db
+    .deleteFrom('discord_inbound_messages')
+    .where('posted_at', '<', cutoffIso)
+    .executeTakeFirst()
+  const outbound = await db
+    .deleteFrom('discord_sent_messages')
+    .where('created_at', '<', cutoffIso)
+    .executeTakeFirst()
+  return Number(inbound.numDeletedRows ?? 0n) + Number(outbound.numDeletedRows ?? 0n)
+}
+
+const daysAgoIso = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
+
+/**
+ * Video retention sweep: deletes media older than `retentionDays` (by post
+ * date), regardless of workout attachment — the coach chose the window.
+ * No-op when retentionDays <= 0 ("Never"). Returns the number removed.
+ */
+export async function applyRetention(retentionDays: number): Promise<number> {
+  if (!retentionDays || retentionDays <= 0) return 0
+  return deleteMediaBefore(daysAgoIso(retentionDays))
+}
+
+/** Message retention sweep: deletes DM messages older than `retentionDays`. */
+export async function applyMessageRetention(retentionDays: number): Promise<number> {
+  if (!retentionDays || retentionDays <= 0) return 0
+  return deleteMessagesBefore(daysAgoIso(retentionDays))
+}
+
+/**
+ * Manual "free up space" purge: deletes both videos and messages older than
+ * `days`, on demand (independent of the automatic retention settings).
+ */
+export async function clearCache(days: number): Promise<{ videosDeleted: number; messagesDeleted: number }> {
+  const cutoff = daysAgoIso(Math.max(0, days))
+  const videosDeleted = await deleteMediaBefore(cutoff)
+  const messagesDeleted = await deleteMessagesBefore(cutoff)
+  return { videosDeleted, messagesDeleted }
 }
 
 /**
@@ -211,6 +317,13 @@ export async function linkUser(
       .updateTable('discord_users')
       .set({ athlete_id: athleteId, linked_at: athleteId ? new Date().toISOString() : null })
       .where('id', '=', discordUserId)
+      .execute()
+
+    // Inbound DM messages follow the same athlete link (both directions).
+    await trx
+      .updateTable('discord_inbound_messages')
+      .set({ athlete_id: athleteId })
+      .where('discord_user_id', '=', discordUserId)
       .execute()
 
     if (athleteId === null) {
@@ -402,9 +515,110 @@ export async function disconnect(opts: { purge: boolean }): Promise<{ deletedFil
   }
 
   await db.deleteFrom('discord_sent_messages').execute()
+  await db.deleteFrom('discord_inbound_messages').execute()
   await db.deleteFrom('discord_media').execute()
   await db.deleteFrom('discord_users').execute()
   await db.deleteFrom('discord_channels').execute()
 
   return { deletedFiles: deleted }
+}
+
+// --- Conversations (per-athlete DM thread) ---------------------------------
+
+/** All linked Discord user ids for an athlete (an athlete may have several). */
+async function athleteUserIds(athleteId: string): Promise<string[]> {
+  const rows = await getDb()
+    .selectFrom('discord_users')
+    .select('id')
+    .where('athlete_id', '=', athleteId)
+    .execute()
+  return rows.map((r) => r.id)
+}
+
+/** Merged inbound + outbound DM conversation for an athlete, oldest first. */
+export async function getAthleteConversation(athleteId: string): Promise<ConversationMessage[]> {
+  const db = getDb()
+  const userIds = await athleteUserIds(athleteId)
+  if (userIds.length === 0) return []
+
+  const [inbound, outbound] = await Promise.all([
+    db
+      .selectFrom('discord_inbound_messages')
+      .select(['id', 'content', 'posted_at'])
+      .where('athlete_id', '=', athleteId)
+      .execute(),
+    db
+      .selectFrom('discord_sent_messages')
+      .select(['id', 'content', 'created_at', 'status', 'error'])
+      .where('kind', '=', 'dm')
+      .where('discord_user_id', 'in', userIds)
+      .execute(),
+  ])
+
+  const messages: ConversationMessage[] = [
+    ...inbound.map((m) => ({
+      id: m.id,
+      direction: 'in' as const,
+      content: m.content,
+      timestamp: m.posted_at,
+    })),
+    ...outbound.map((m) => ({
+      id: m.id,
+      direction: 'out' as const,
+      content: m.content,
+      timestamp: m.created_at,
+      status: m.status as 'sent' | 'failed',
+      error: m.error,
+    })),
+  ]
+  messages.sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0))
+  return messages
+}
+
+/** Marks all inbound messages for an athlete as read (clears the badge). */
+export async function markConversationRead(athleteId: string): Promise<void> {
+  await getDb()
+    .updateTable('discord_inbound_messages')
+    .set({ read: 1 })
+    .where('athlete_id', '=', athleteId)
+    .where('read', '=', 0)
+    .execute()
+}
+
+/** Athletes with unread inbound DMs, most recent first (Inbox → Messages tab). */
+export async function listUnreadThreads(): Promise<UnreadThread[]> {
+  const rows = await getDb()
+    .selectFrom('discord_inbound_messages')
+    .innerJoin('athletes', 'athletes.id', 'discord_inbound_messages.athlete_id')
+    .select((eb) => [
+      'athletes.id as athlete_id',
+      'athletes.name as athlete_name',
+      eb.fn.count<number>('discord_inbound_messages.id').as('unread'),
+      eb.fn.max('discord_inbound_messages.posted_at').as('last_at'),
+    ])
+    .where('discord_inbound_messages.read', '=', 0)
+    .where('discord_inbound_messages.athlete_id', 'is not', null)
+    .groupBy('athletes.id')
+    .execute()
+
+  // Fetch the latest message text per athlete for the preview line.
+  const threads = await Promise.all(
+    rows.map(async (r) => {
+      const latest = await getDb()
+        .selectFrom('discord_inbound_messages')
+        .select('content')
+        .where('athlete_id', '=', r.athlete_id)
+        .orderBy('posted_at', 'desc')
+        .limit(1)
+        .executeTakeFirst()
+      return {
+        athleteId: r.athlete_id,
+        athleteName: r.athlete_name,
+        unread: Number(r.unread),
+        lastMessage: latest?.content ?? '',
+        lastAt: String(r.last_at ?? ''),
+      }
+    }),
+  )
+  return threads.sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1))
 }

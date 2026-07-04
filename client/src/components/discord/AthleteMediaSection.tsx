@@ -6,7 +6,7 @@ import { Textarea } from '../ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { useToast } from '../ui/toast'
 import { Send, CalendarCheck2 } from 'lucide-react'
-import MediaTile from './MediaTile'
+import MediaThumb from './MediaThumb'
 import MediaPlayerDialog from './MediaPlayerDialog'
 import type { DiscordMediaItem, DiscordUserItem } from 'coachboard-shared/discord'
 
@@ -84,7 +84,7 @@ export default function AthleteMediaSection({ athleteId }: { athleteId: string }
               <div className="flex flex-wrap gap-3">
                 {monthItems.map((m) => (
                   <div key={m.id} className="w-32 space-y-1">
-                    <MediaTile item={m} onOpen={setPlaying} />
+                    <MediaThumb item={m} onOpen={setPlaying} onDeleted={load} />
                     <p className="truncate text-[10px] text-muted-foreground">
                       {m.postedAt.slice(0, 10)}
                     </p>
@@ -102,7 +102,7 @@ export default function AthleteMediaSection({ athleteId }: { athleteId: string }
         )}
       </CardContent>
 
-      <MediaPlayerDialog item={playing} onClose={() => setPlaying(null)} />
+      <MediaPlayerDialog item={playing} onClose={() => setPlaying(null)} onDeleted={load} />
       <DmComposerDialog athleteId={athleteId} open={dmOpen} onOpenChange={setDmOpen} />
     </Card>
   )

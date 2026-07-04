@@ -22,6 +22,10 @@ interface StoredDiscordSettings {
   botUsername: string | null
   autoSyncEnabled: boolean
   autoSyncMinutes: number
+  /** Auto-delete synced videos older than this many days; 0 = Never. Default 90. */
+  retentionDays: number
+  /** Auto-delete DM messages older than this many days; 0 = Never. Default 90. */
+  messageRetentionDays: number
   /** Set after a 401 from Discord — the coach must paste a fresh token. */
   tokenInvalid: boolean
 }
@@ -54,6 +58,8 @@ const DEFAULTS: StoredDiscordSettings = {
   botUsername: null,
   autoSyncEnabled: false,
   autoSyncMinutes: 30,
+  retentionDays: 90,
+  messageRetentionDays: 90,
   tokenInvalid: false,
 }
 
@@ -83,6 +89,8 @@ function toPublic(s: StoredDiscordSettings): PublicDiscordSettings {
     inviteUrl: s.applicationId ? buildInviteUrl(s.applicationId) : null,
     autoSyncEnabled: s.autoSyncEnabled,
     autoSyncMinutes: s.autoSyncMinutes,
+    retentionDays: s.retentionDays,
+    messageRetentionDays: s.messageRetentionDays,
     tokenInvalid: s.tokenInvalid,
   }
 }
@@ -137,6 +145,28 @@ export async function setAutoSync(opts: {
   }
   await writeStored(stored)
   return toPublic(stored)
+}
+
+export async function setRetentionDays(days: number): Promise<PublicDiscordSettings> {
+  const existing = await readStored()
+  const stored: StoredDiscordSettings = { ...existing, retentionDays: Math.max(0, Math.floor(days)) }
+  await writeStored(stored)
+  return toPublic(stored)
+}
+
+export async function getRetentionDays(): Promise<number> {
+  return (await readStored()).retentionDays
+}
+
+export async function setMessageRetentionDays(days: number): Promise<PublicDiscordSettings> {
+  const existing = await readStored()
+  const stored: StoredDiscordSettings = { ...existing, messageRetentionDays: Math.max(0, Math.floor(days)) }
+  await writeStored(stored)
+  return toPublic(stored)
+}
+
+export async function getMessageRetentionDays(): Promise<number> {
+  return (await readStored()).messageRetentionDays
 }
 
 export async function markTokenInvalid(invalid: boolean): Promise<void> {

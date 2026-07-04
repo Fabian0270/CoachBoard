@@ -8,7 +8,7 @@ import type { InboxCounts } from 'coachboard-shared/discord'
  * Discord isn't configured), so this is cheap even offline.
  */
 export function useDiscordInboxCounts(): InboxCounts {
-  const [counts, setCounts] = useState<InboxCounts>({ unmatched: 0, unreviewed: 0 })
+  const [counts, setCounts] = useState<InboxCounts>({ unmatched: 0, unreviewed: 0, unreadMessages: 0 })
   const location = useLocation()
 
   useEffect(() => {

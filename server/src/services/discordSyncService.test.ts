@@ -441,6 +441,32 @@ describe('discordSyncService', () => {
     expect(media.message_content).toBeNull()
   })
 
+  it('persists inbound text from DM channels (and not from guild channels)', async () => {
+    await addChannel('dm1', { kind: 'dm' })
+    await addChannel('c1') // guild
+    fake.messages.set('dm1', [
+      textMsg('900', 'dm1', 'hey coach, how did that look?', { timestamp: '2026-07-03T10:00:00.000Z' }),
+    ])
+    fake.messages.set('c1', [
+      textMsg('901', 'c1', 'just chatting in the channel', { timestamp: '2026-07-03T10:00:00.000Z' }),
+    ])
+
+    await runSyncToCompletion()
+
+    const inbound = await getDb().selectFrom('discord_inbound_messages').selectAll().execute()
+    expect(inbound).toHaveLength(1)
+    expect(inbound[0].content).toBe('hey coach, how did that look?')
+    expect(inbound[0].channel_id).toBe('dm1')
+  })
+
+  it('inbound DM persistence is idempotent across re-syncs', async () => {
+    await addChannel('dm1', { kind: 'dm' })
+    fake.messages.set('dm1', [textMsg('910', 'dm1', 'ping', { timestamp: '2026-07-03T10:00:00.000Z' })])
+    await runSyncToCompletion()
+    await runSyncToCompletion()
+    expect(await getDb().selectFrom('discord_inbound_messages').selectAll().execute()).toHaveLength(1)
+  })
+
   it('skips oversized attachments without fetching them', async () => {
     await addChannel('c1')
     const msg = videoMsg('501', 'c1', Buffer.from('tiny'))

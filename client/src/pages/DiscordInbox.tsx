@@ -9,11 +9,11 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '../components/ui/dialog'
 import { MessageSquare, Check, RefreshCw, CalendarCheck2 } from 'lucide-react'
-import MediaTile from '../components/discord/MediaTile'
+import MediaThumb from '../components/discord/MediaThumb'
 import MediaPlayerDialog from '../components/discord/MediaPlayerDialog'
 import LinkUserDialog from '../components/discord/LinkUserDialog'
 import type {
-  DiscordMediaItem, DiscordUserItem, WorkoutCandidate, PublicDiscordSettings,
+  DiscordMediaItem, DiscordUserItem, WorkoutCandidate, PublicDiscordSettings, UnreadThread,
 } from 'coachboard-shared/discord'
 
 /**
@@ -26,6 +26,7 @@ export default function DiscordInbox() {
   const [configured, setConfigured] = useState<boolean | null>(null)
   const [unmatched, setUnmatched] = useState<DiscordMediaItem[]>([])
   const [unreviewed, setUnreviewed] = useState<DiscordMediaItem[]>([])
+  const [unread, setUnread] = useState<UnreadThread[]>([])
   const [users, setUsers] = useState<DiscordUserItem[]>([])
   const [playing, setPlaying] = useState<DiscordMediaItem | null>(null)
   const [linking, setLinking] = useState<DiscordUserItem | null>(null)
@@ -33,16 +34,18 @@ export default function DiscordInbox() {
 
   const load = useCallback(async () => {
     try {
-      const [s, um, ur, us] = await Promise.all([
+      const [s, um, ur, us, un] = await Promise.all([
         fetch('/api/discord/settings').then((r) => r.json() as Promise<PublicDiscordSettings>),
         fetch('/api/discord/media?filter=unmatched').then((r) => r.json()),
         fetch('/api/discord/media?filter=unreviewed').then((r) => r.json()),
         fetch('/api/discord/users').then((r) => r.json() as Promise<DiscordUserItem[]>),
+        fetch('/api/discord/messages/unread').then((r) => r.json() as Promise<UnreadThread[]>),
       ])
       setConfigured(s.configured)
       setUnmatched(um.items ?? [])
       setUnreviewed(ur.items ?? [])
       setUsers(us)
+      setUnread(Array.isArray(un) ? un : [])
     } catch {
       setConfigured(false)
     }
@@ -120,6 +123,9 @@ export default function DiscordInbox() {
           <TabsTrigger value="review">
             Needs review{unreviewed.length > 0 ? ` (${unreviewed.length})` : ''}
           </TabsTrigger>
+          <TabsTrigger value="messages">
+            Messages{unread.length > 0 ? ` (${unread.length})` : ''}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="unmatched" className="space-y-4">
@@ -153,6 +159,7 @@ export default function DiscordInbox() {
                       items={items}
                       onOpen={setPlaying}
                       onRetry={retry}
+                      onDeleted={load}
                     />
                   </CardContent>
                 </Card>
@@ -168,7 +175,7 @@ export default function DiscordInbox() {
             unreviewed.map((item) => (
               <Card key={item.id}>
                 <CardContent className="flex flex-wrap items-center gap-4 pt-4">
-                  <MediaTile item={item} onOpen={setPlaying} />
+                  <MediaThumb item={item} onOpen={setPlaying} onDeleted={load} />
                   <div className="min-w-0 flex-1 space-y-1">
                     <p className="text-sm font-medium">
                       {item.athleteName}
@@ -224,9 +231,34 @@ export default function DiscordInbox() {
             ))
           )}
         </TabsContent>
+
+        <TabsContent value="messages" className="space-y-2">
+          {unread.length === 0 ? (
+            <EmptyState text="No unread messages. Athlete DMs show up here." />
+          ) : (
+            unread.map((t) => (
+              <Link key={t.athleteId} to={`/athletes/${t.athleteId}?tab=messages`} className="block">
+                <Card className="transition-shadow hover:shadow-md">
+                  <CardContent className="flex items-center justify-between gap-3 py-3">
+                    <div className="min-w-0">
+                      <p className="font-medium">{t.athleteName}</p>
+                      <p className="truncate text-sm text-muted-foreground">{t.lastMessage}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {t.lastAt.slice(0, 16).replace('T', ' ')}
+                      </span>
+                      <Badge className="bg-red-500 text-white hover:bg-red-500">{t.unread}</Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))
+          )}
+        </TabsContent>
       </Tabs>
 
-      <MediaPlayerDialog item={playing} onClose={() => setPlaying(null)} />
+      <MediaPlayerDialog item={playing} onClose={() => setPlaying(null)} onDeleted={load} />
       <LinkUserDialog user={linking} onClose={() => setLinking(null)} onLinked={load} />
       <WorkoutPickerDialog
         item={picking}
@@ -245,7 +277,7 @@ function Header({ unmatchedCount, unreviewedCount }: { unmatchedCount: number; u
   return (
     <div className="flex items-center gap-3">
       <MessageSquare className="h-6 w-6 text-muted-foreground" />
-      <h1 className="text-3xl font-bold">Discord Inbox</h1>
+      <h1 className="text-3xl font-bold">Inbox</h1>
       {total > 0 && <Badge>{total} new</Badge>}
     </div>
   )
@@ -263,16 +295,18 @@ function MediaRowList({
   items,
   onOpen,
   onRetry,
+  onDeleted,
 }: {
   items: DiscordMediaItem[]
   onOpen: (m: DiscordMediaItem) => void
   onRetry: (m: DiscordMediaItem) => void
+  onDeleted: () => void
 }) {
   return (
     <div className="flex flex-wrap gap-3">
       {items.map((m) => (
         <div key={m.id} className="w-32 space-y-1">
-          <MediaTile item={m} onOpen={onOpen} />
+          <MediaThumb item={m} onOpen={onOpen} onDeleted={onDeleted} />
           <p className="truncate text-[10px] text-muted-foreground">{m.postedAt.slice(0, 10)}</p>
           {m.caption && <p className="truncate text-[10px] text-muted-foreground">“{m.caption}”</p>}
           <StatusChips item={m} onRetry={onRetry} compact />

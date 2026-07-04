@@ -7,7 +7,8 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
-import { Mail, Send, ExternalLink, AlertTriangle, Lock } from 'lucide-react'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
+import { Mail, Send, ExternalLink, AlertTriangle, Lock, MessageSquare, Settings as SettingsIcon } from 'lucide-react'
 import DiscordSettingsCard from '../components/discord/DiscordSettingsCard'
 
 type Provider = 'gmail' | 'outlook' | 'custom'
@@ -154,12 +155,18 @@ export default function Settings() {
   }
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-3xl space-y-6">
       <div className="flex items-center gap-3">
-        <Mail className="h-6 w-6 text-muted-foreground" />
+        <SettingsIcon className="h-6 w-6 text-muted-foreground" />
         <h1 className="text-3xl font-bold">Settings</h1>
       </div>
 
+      <Tabs defaultValue="email">
+        <TabsList>
+          <TabsTrigger value="email"><Mail className="h-4 w-4 mr-2" />Email delivery</TabsTrigger>
+          <TabsTrigger value="discord"><MessageSquare className="h-4 w-4 mr-2" />Discord</TabsTrigger>
+        </TabsList>
+        <TabsContent value="email">
       <Card>
         <CardHeader>
           <CardTitle>Email delivery</CardTitle>
@@ -286,8 +293,11 @@ export default function Settings() {
           </div>
         </CardContent>
       </Card>
-
-      <DiscordSettingsCard />
+        </TabsContent>
+        <TabsContent value="discord">
+          <DiscordSettingsCard />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

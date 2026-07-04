@@ -3,7 +3,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Button } from '../ui/button'
 import { Textarea } from '../ui/textarea'
 import { useToast } from '../ui/toast'
-import { MessageSquareReply, Send } from 'lucide-react'
+import { useConfirm } from '../ui/confirm-dialog'
+import { MessageSquareReply, Send, Trash2 } from 'lucide-react'
 import type { DiscordMediaItem, SentMessageDto } from 'coachboard-shared/discord'
 
 /**
@@ -15,14 +16,37 @@ import type { DiscordMediaItem, SentMessageDto } from 'coachboard-shared/discord
 export default function MediaPlayerDialog({
   item,
   onClose,
+  onDeleted,
 }: {
   item: DiscordMediaItem | null
   onClose: () => void
+  /** Provide to show a Delete button; called after a successful delete. */
+  onDeleted?: () => void
 }) {
   const toast = useToast()
+  const confirm = useConfirm()
   const [reply, setReply] = useState('')
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState<SentMessageDto[]>([])
+
+  const del = async () => {
+    if (!item) return
+    const ok = await confirm({
+      title: 'Delete this video?',
+      description: 'This permanently removes the file and its record from CoachBoard to free up space. This cannot be undone.',
+      destructive: true,
+      confirmLabel: 'Delete',
+    })
+    if (!ok) return
+    const res = await fetch(`/api/discord/media/${item.id}`, { method: 'DELETE' })
+    if (res.ok) {
+      toast.success('Video deleted')
+      onClose()
+      onDeleted?.()
+    } else {
+      toast.error('Failed to delete the video')
+    }
+  }
 
   useEffect(() => {
     setReply('')
@@ -147,6 +171,11 @@ export default function MediaPlayerDialog({
                   <Send className="h-4 w-4" />
                   Send as DM
                 </Button>
+                {onDeleted && (
+                  <Button size="sm" variant="ghost" className="ml-auto text-destructive" onClick={del}>
+                    <Trash2 className="h-4 w-4" /> Delete
+                  </Button>
+                )}
               </div>
             </div>
           </>

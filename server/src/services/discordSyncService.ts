@@ -11,7 +11,15 @@ import {
   type DiscordClient,
   type DiscordMessagePayload,
 } from './discordApiClient.js'
-import { getToken, markTokenInvalid, getBotUserId, getPublicSettings } from './discordSettingsService.js'
+import {
+  getToken,
+  markTokenInvalid,
+  getBotUserId,
+  getPublicSettings,
+  getRetentionDays,
+  getMessageRetentionDays,
+} from './discordSettingsService.js'
+import { applyRetention, applyMessageRetention } from './discordMediaService.js'
 import {
   discordMediaRelPath,
   downloadToFile,
@@ -209,6 +217,12 @@ async function runSync(token: string): Promise<void> {
           for (const msg of page) {
             if (msg.author.bot || msg.author.id === botUserId) continue
 
+            // Persist inbound DM text as the athlete side of the conversation
+            // (DMs only, per product decision). Idempotent via UNIQUE.
+            if (channel.kind === 'dm' && msg.content) {
+              await persistInboundMessage(trx, channel.id, msg)
+            }
+
             const mediaAttachments = msg.attachments.filter(isMediaAttachment)
             if (mediaAttachments.length === 0) {
               // Text-only post: keep it as caption context, and retro-caption
@@ -310,6 +324,9 @@ async function runSync(token: string): Promise<void> {
     // Download phase — includes 'pending' leftovers from earlier crashed runs.
     if (resultCode === 'ok') {
       await downloadPendingMedia(client)
+      // Retention sweeps — delete videos and messages past the coach's cutoffs.
+      await applyRetention(await getRetentionDays()).catch(() => {})
+      await applyMessageRetention(await getMessageRetentionDays()).catch(() => {})
     }
   } catch (err) {
     resultCode = 'error'
@@ -386,6 +403,34 @@ async function adoptCaptionForRecentMedia(
       .where('id', '=', row.id)
       .execute()
   }
+}
+
+/** Stores one inbound DM text message (the athlete side of the conversation). */
+async function persistInboundMessage(
+  trx: DbLike,
+  channelId: string,
+  msg: DiscordMessagePayload,
+): Promise<void> {
+  const link = await trx
+    .selectFrom('discord_users')
+    .select('athlete_id')
+    .where('id', '=', msg.author.id)
+    .executeTakeFirst()
+  await trx
+    .insertInto('discord_inbound_messages')
+    .values({
+      id: uuidv4(),
+      discord_message_id: msg.id,
+      channel_id: channelId,
+      discord_user_id: msg.author.id,
+      athlete_id: link?.athlete_id ?? null,
+      content: msg.content,
+      posted_at: msg.timestamp,
+      read: 0,
+      created_at: new Date().toISOString(),
+    })
+    .onConflict((oc) => oc.column('discord_message_id').doNothing())
+    .execute()
 }
 
 async function upsertDiscordUser(

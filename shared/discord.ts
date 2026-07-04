@@ -11,8 +11,18 @@ export interface PublicDiscordSettings {
   inviteUrl: string | null
   autoSyncEnabled: boolean
   autoSyncMinutes: number
+  /** Auto-delete synced videos older than this many days; 0 = Never. */
+  retentionDays: number
+  /** Auto-delete DM messages older than this many days; 0 = Never. */
+  messageRetentionDays: number
   /** True after a 401 — the coach must paste a fresh token ("Reconnect"). */
   tokenInvalid: boolean
+  /**
+   * Whether the app has the Message Content Intent enabled. Populated only by
+   * the token-validation response (PUT /settings/token) so the wizard can warn
+   * immediately; undefined elsewhere.
+   */
+  messageContentIntent?: boolean
 }
 
 export interface DiscordGuildDto {
@@ -108,6 +118,28 @@ export interface DiscordUserItem {
 export interface InboxCounts {
   unmatched: number
   unreviewed: number
+  /** Unread inbound DM messages from athletes. */
+  unreadMessages: number
+}
+
+/** One message in a per-athlete DM conversation (inbound or outbound). */
+export interface ConversationMessage {
+  id: string
+  direction: 'in' | 'out'
+  content: string
+  timestamp: string
+  /** Outbound only: whether Discord accepted the send. */
+  status?: 'sent' | 'failed'
+  error?: string | null
+}
+
+/** An athlete with unread inbound DMs, for the Inbox → Messages tab. */
+export interface UnreadThread {
+  athleteId: string
+  athleteName: string
+  unread: number
+  lastMessage: string
+  lastAt: string
 }
 
 /** A nearby workout the coach can attach media to ("Pick other…"). */

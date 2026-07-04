@@ -139,15 +139,36 @@ function GuideLink({ href, children }: { href: string; children: React.ReactNode
   )
 }
 
-function NumberedSteps({ steps }: { steps: { text: React.ReactNode; link?: { href: string; label: string } }[] }) {
+function NumberedSteps({
+  steps,
+}: {
+  steps: { text: React.ReactNode; link?: { href: string; label: string }; highlight?: boolean }[]
+}) {
   return (
     <ol className="space-y-3 rounded-md border bg-muted/40 p-4">
       {steps.map((s, i) => (
-        <li key={i} className="flex gap-3">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+        <li
+          key={i}
+          className={cn(
+            'flex gap-3',
+            s.highlight &&
+              'rounded-md border border-amber-300 bg-amber-50 p-2 dark:border-amber-700 dark:bg-amber-950/60',
+          )}
+        >
+          <span
+            className={cn(
+              'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+              s.highlight ? 'bg-amber-500 text-white' : 'bg-primary/10 text-primary',
+            )}
+          >
             {i + 1}
           </span>
-          <div className="flex-1 text-sm text-muted-foreground">
+          <div
+            className={cn(
+              'flex-1 text-sm',
+              s.highlight ? 'text-amber-900 dark:text-amber-200' : 'text-muted-foreground',
+            )}
+          >
             {s.text}
             {s.link && <div><GuideLink href={s.link.href}>{s.link.label}</GuideLink></div>}
           </div>
@@ -180,7 +201,8 @@ function CreateAppStep({ onNext }: { onNext: () => void }) {
             text: <>In the left menu, open <strong>Bot</strong>. Turn <strong>OFF</strong> “Public Bot” (it’s your private helper).</>,
           },
           {
-            text: <>On the same page, under <strong>Privileged Gateway Intents</strong>, turn <strong>ON</strong> “Message Content Intent”. Without it, Discord hides your athletes’ messages from the bot.</>,
+            highlight: true,
+            text: <><strong>Most important step:</strong> on the same page, under <strong>Privileged Gateway Intents</strong>, turn <strong>ON</strong> “Message Content Intent” and <strong>save</strong>. Without it Discord hides your athletes’ messages and nothing syncs — CoachBoard will double-check this for you on the next screen.</>,
           },
           {
             text: <>Click <strong>Reset Token</strong> → <strong>Copy</strong>. That token is what you’ll paste in the next step. Treat it like a password.</>,
@@ -252,7 +274,10 @@ function TokenStep({
       footer={
         <>
           <Button variant="outline" onClick={onBack}>Back</Button>
-          <Button disabled={state !== 'ok' || !saved} onClick={() => saved && onValidated(saved)}>
+          <Button
+            disabled={state !== 'ok' || !saved || saved.messageContentIntent === false}
+            onClick={() => saved && onValidated(saved)}
+          >
             Continue
           </Button>
         </>
@@ -282,6 +307,22 @@ function TokenStep({
         <p className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
           <CheckCircle2 className="h-4 w-4" /> Connected as <strong>{botName}</strong>
         </p>
+      )}
+      {state === 'ok' && saved?.messageContentIntent === false && (
+        <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <strong>Almost there — one required toggle is off.</strong> Your bot doesn’t have{' '}
+            <strong>Message Content Intent</strong> enabled, so Discord hides your athletes’ messages
+            and nothing would sync. Fix it now: open the{' '}
+            <a href={DEV_PORTAL_URL} target="_blank" rel="noreferrer" className="underline">
+              Developer Portal
+            </a>{' '}
+            → your app → <strong>Bot</strong> → under <strong>Privileged Gateway Intents</strong>{' '}
+            turn on <strong>Message Content Intent</strong> → <strong>Save Changes</strong>. Then
+            re-paste your token above (or paste it again) to re-check.
+          </span>
+        </div>
       )}
       {state === 'error' && (
         <div className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">

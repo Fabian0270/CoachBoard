@@ -3,6 +3,7 @@ import { LayoutDashboard, Users, Dumbbell, Calculator, Wallet, Palette, Settings
 import { cn } from '../lib/utils'
 import ThemeToggle from './ThemeToggle'
 import { useDiscordInboxCounts } from '../hooks/useDiscordInboxCounts'
+import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -11,21 +12,24 @@ const navItems = [
   { to: '/calculators', label: 'Calculators', icon: Calculator },
   { to: '/payments', label: 'Payments', icon: Wallet },
   { to: '/styles', label: 'Excel Styles', icon: Palette },
-  { to: '/discord-inbox', label: 'Discord Inbox', icon: MessageSquare },
+  { to: '/discord-inbox', label: 'Inbox', icon: MessageSquare, discordOnly: true },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const inboxCounts = useDiscordInboxCounts()
-  const inboxBadge = inboxCounts.unmatched + inboxCounts.unreviewed
+  const { configured: discordConfigured } = useDiscordConfigured()
+  const inboxBadge = inboxCounts.unmatched + inboxCounts.unreviewed + inboxCounts.unreadMessages
+  // Hide the Inbox until Discord is connected — nothing to show otherwise.
+  const items = navItems.filter((n) => !n.discordOnly || discordConfigured)
 
   return (
     <div className="h-screen overflow-hidden flex flex-col md:flex-row">
       <nav className="bg-primary text-primary-foreground dark:bg-[#181818] dark:text-[#c8c8c8] dark:border-r dark:border-[#2b2b2b] shrink-0 w-full md:w-56 md:h-screen md:overflow-y-auto flex md:flex-col">
         <div className="p-4 font-bold text-xl border-b border-primary-foreground/20 dark:border-[#2b2b2b] dark:text-[#e0e0e0] hidden md:block">CoachBoard</div>
         <div className="flex md:flex-col flex-1 overflow-x-auto md:overflow-visible">
-          {navItems.map(({ to, label, icon: Icon }) => {
+          {items.map(({ to, label, icon: Icon }) => {
             const badge = to === '/discord-inbox' && inboxBadge > 0 ? inboxBadge : null
             return (
               <Link

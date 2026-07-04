@@ -14,7 +14,16 @@ import {
   listWorkoutCandidates,
   listUsers,
   disconnect,
+  deleteMedia,
+  applyRetention,
+  applyMessageRetention,
+  clearCache,
+  getStorageUsage,
+  getAthleteConversation,
+  markConversationRead,
+  listUnreadThreads,
 } from './discordMediaService.js'
+import { resolveMediaAbsPath } from './mediaStore.js'
 
 let tmpDir: string
 
@@ -93,6 +102,180 @@ async function createDiscordMedia(opts: {
   }).execute()
   return id
 }
+
+async function createDownloadedMedia(opts: {
+  userId: string
+  postedAt: string
+  bytes: number
+  relPath: string
+}) {
+  const db = getDb()
+  await db.insertInto('discord_users').values({
+    id: opts.userId, username: opts.userId, display_name: null, avatar_url: null,
+    athlete_id: null, linked_at: null, first_seen_at: now(),
+  }).onConflict((oc) => oc.column('id').doNothing()).execute()
+  const id = uuidv4()
+  await db.insertInto('discord_media').values({
+    id, channel_id: 'c1', channel_name: '#form-checks',
+    message_id: `m-${id}`, attachment_id: `a-${id}`, discord_user_id: opts.userId,
+    athlete_id: null, workout_id: null, suggested_workout_id: null,
+    filename: 'video.mp4', content_type: 'video/mp4', size_bytes: opts.bytes, width: null, height: null,
+    message_content: null, posted_at: opts.postedAt, posted_date: opts.postedAt.slice(0, 10),
+    source_url: null, local_path: opts.relPath, sha256: 'x'.repeat(64),
+    download_status: 'downloaded', download_error: null, duplicate_of_id: null,
+    reviewed: 0, created_at: now(),
+  }).execute()
+  return id
+}
+
+async function insertInbound(opts: {
+  userId: string
+  athleteId: string | null
+  content: string
+  postedAt: string
+  read?: number
+}) {
+  const id = uuidv4()
+  await getDb().insertInto('discord_inbound_messages').values({
+    id, discord_message_id: `dm-${id}`, channel_id: 'dm1', discord_user_id: opts.userId,
+    athlete_id: opts.athleteId, content: opts.content, posted_at: opts.postedAt,
+    read: opts.read ?? 0, created_at: now(),
+  }).execute()
+  return id
+}
+
+describe('deleteMedia', () => {
+  it('removes the row and the file on disk', async () => {
+    const rel = 'media/discord/2026-07/vid.mp4'
+    const abs = resolveMediaAbsPath(rel)
+    fs.mkdirSync(path.dirname(abs), { recursive: true })
+    fs.writeFileSync(abs, 'bytes')
+    const id = await createDownloadedMedia({ userId: 'u1', postedAt: now(), bytes: 5, relPath: rel })
+
+    expect(await deleteMedia(id)).toBe(true)
+    expect(await getDb().selectFrom('discord_media').selectAll().execute()).toHaveLength(0)
+    expect(fs.existsSync(abs)).toBe(false)
+  })
+
+  it('returns false for a missing id', async () => {
+    expect(await deleteMedia(uuidv4())).toBe(false)
+  })
+})
+
+describe('applyRetention', () => {
+  it('deletes media older than the window, keeps newer, and files too', async () => {
+    const oldRel = 'media/discord/2020-01/old.mp4'
+    const oldAbs = resolveMediaAbsPath(oldRel)
+    fs.mkdirSync(path.dirname(oldAbs), { recursive: true })
+    fs.writeFileSync(oldAbs, 'old')
+    await createDownloadedMedia({ userId: 'u1', postedAt: '2020-01-01T00:00:00.000Z', bytes: 3, relPath: oldRel })
+    await createDownloadedMedia({ userId: 'u1', postedAt: now(), bytes: 3, relPath: 'media/discord/2026-07/new.mp4' })
+
+    const removed = await applyRetention(90)
+    expect(removed).toBe(1)
+    expect(fs.existsSync(oldAbs)).toBe(false)
+    const remaining = await getDb().selectFrom('discord_media').selectAll().execute()
+    expect(remaining).toHaveLength(1)
+  })
+
+  it('is a no-op when retention is Never (0)', async () => {
+    await createDownloadedMedia({ userId: 'u1', postedAt: '2010-01-01T00:00:00.000Z', bytes: 3, relPath: 'media/discord/2010-01/x.mp4' })
+    expect(await applyRetention(0)).toBe(0)
+    expect(await getDb().selectFrom('discord_media').selectAll().execute()).toHaveLength(1)
+  })
+})
+
+describe('message retention + clear cache', () => {
+  const oldIso = '2020-01-01T00:00:00.000Z'
+  const seedOldAndNewMessages = async () => {
+    await insertInbound({ userId: 'u1', athleteId: null, content: 'old inbound', postedAt: oldIso })
+    await insertInbound({ userId: 'u1', athleteId: null, content: 'new inbound', postedAt: now() })
+    await getDb().insertInto('discord_sent_messages').values({
+      id: uuidv4(), channel_id: 'dm1', kind: 'dm', discord_user_id: 'u1',
+      related_media_id: null, reply_to_message_id: null, content: 'old outbound',
+      status: 'sent', error: null, discord_message_id: 'x', created_at: oldIso,
+    }).execute()
+  }
+
+  it('applyMessageRetention deletes messages older than the window', async () => {
+    await seedOldAndNewMessages()
+    const removed = await applyMessageRetention(90)
+    expect(removed).toBe(2) // 1 old inbound + 1 old outbound
+    expect(await getDb().selectFrom('discord_inbound_messages').selectAll().execute()).toHaveLength(1)
+    expect(await getDb().selectFrom('discord_sent_messages').selectAll().execute()).toHaveLength(0)
+  })
+
+  it('applyMessageRetention is a no-op at 0 (Never)', async () => {
+    await seedOldAndNewMessages()
+    expect(await applyMessageRetention(0)).toBe(0)
+    expect(await getDb().selectFrom('discord_inbound_messages').selectAll().execute()).toHaveLength(2)
+  })
+
+  it('clearCache deletes both videos and messages older than N days', async () => {
+    await createDownloadedMedia({ userId: 'u1', postedAt: oldIso, bytes: 5, relPath: 'media/discord/2020-01/old.mp4' })
+    await createDownloadedMedia({ userId: 'u1', postedAt: now(), bytes: 5, relPath: 'media/discord/2026-07/new.mp4' })
+    await seedOldAndNewMessages()
+
+    const result = await clearCache(90)
+    expect(result.videosDeleted).toBe(1)
+    expect(result.messagesDeleted).toBe(2)
+    expect(await getDb().selectFrom('discord_media').selectAll().execute()).toHaveLength(1)
+  })
+})
+
+describe('getStorageUsage', () => {
+  it('sums only downloaded rows', async () => {
+    await createDownloadedMedia({ userId: 'u1', postedAt: now(), bytes: 1000, relPath: 'media/discord/2026-07/a.mp4' })
+    await createDownloadedMedia({ userId: 'u1', postedAt: now(), bytes: 2000, relPath: 'media/discord/2026-07/b.mp4' })
+    await createDiscordMedia({ userId: 'u1', postedDate: '2026-07-03' }) // pending, no bytes on disk
+    const usage = await getStorageUsage()
+    expect(usage.bytes).toBe(3000)
+    expect(usage.files).toBe(2)
+  })
+})
+
+describe('conversation', () => {
+  it('merges inbound + outbound DMs ordered by time and counts unread', async () => {
+    const { athleteId } = await createAthleteWithWorkout({ name: 'Anna', scheduledDate: '2026-07-03' })
+    await getDb().insertInto('discord_users').values({
+      id: 'u1', username: 'anna', display_name: null, avatar_url: null,
+      athlete_id: athleteId, linked_at: now(), first_seen_at: now(),
+    }).execute()
+    await insertInbound({ userId: 'u1', athleteId, content: 'hi coach', postedAt: '2026-07-03T10:00:00.000Z' })
+    await getDb().insertInto('discord_sent_messages').values({
+      id: uuidv4(), channel_id: 'dm1', kind: 'dm', discord_user_id: 'u1',
+      related_media_id: null, reply_to_message_id: null, content: 'hi athlete',
+      status: 'sent', error: null, discord_message_id: 'x', created_at: '2026-07-03T10:05:00.000Z',
+    }).execute()
+
+    const convo = await getAthleteConversation(athleteId)
+    expect(convo.map((m) => m.direction)).toEqual(['in', 'out'])
+    expect(convo[0].content).toBe('hi coach')
+
+    expect((await getInboxCounts()).unreadMessages).toBe(1)
+    const threads = await listUnreadThreads()
+    expect(threads).toHaveLength(1)
+    expect(threads[0].unread).toBe(1)
+
+    await markConversationRead(athleteId)
+    expect((await getInboxCounts()).unreadMessages).toBe(0)
+  })
+
+  it('linkUser retro-attaches inbound messages to the athlete; unlink detaches', async () => {
+    const { athleteId } = await createAthleteWithWorkout({ name: 'Anna', scheduledDate: '2026-07-03' })
+    await getDb().insertInto('discord_users').values({
+      id: 'u1', username: 'anna', display_name: null, avatar_url: null,
+      athlete_id: null, linked_at: null, first_seen_at: now(),
+    }).execute()
+    await insertInbound({ userId: 'u1', athleteId: null, content: 'pre-link message', postedAt: now() })
+
+    await linkUser('u1', athleteId)
+    expect(await getAthleteConversation(athleteId)).toHaveLength(1)
+
+    await linkUser('u1', null)
+    expect(await getAthleteConversation(athleteId)).toHaveLength(0)
+  })
+})
 
 describe('linkUser', () => {
   it('retro-files ALL of the user’s media and computes workout suggestions', async () => {
@@ -214,7 +397,7 @@ describe('listMedia / counts / candidates', () => {
     expect(unreviewed.total).toBe(1)
     expect(unreviewed.items[0].athleteId).toBe(athleteId)
 
-    expect(await getInboxCounts()).toEqual({ unmatched: 1, unreviewed: 1 })
+    expect(await getInboxCounts()).toEqual({ unmatched: 1, unreviewed: 1, unreadMessages: 0 })
   })
 
   it('recomputes a missing suggestion on read (coach programmed after the video arrived)', async () => {

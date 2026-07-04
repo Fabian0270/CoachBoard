@@ -176,6 +176,21 @@ export interface DiscordSentMessageTable {
   created_at: string
 }
 
+// Inbound text messages athletes DM to the bot (the athlete side of the
+// conversation). Outbound lives in discord_sent_messages; the two are unioned
+// per athlete for the Messages view. DM-only by design.
+export interface DiscordInboundMessageTable {
+  id: string                    // uuid v4
+  discord_message_id: string    // Discord snowflake — UNIQUE for idempotent re-sync
+  channel_id: string            // the DM channel
+  discord_user_id: string       // the athlete's Discord account
+  athlete_id: string | null     // denormalized from the user link; ON DELETE SET NULL
+  content: string
+  posted_at: string             // Discord message timestamp
+  read: number                  // 0/1 — cleared when the coach opens the thread
+  created_at: string
+}
+
 export interface DB {
   athletes: AthleteTable
   programs: ProgramTable
@@ -189,6 +204,7 @@ export interface DB {
   discord_users: DiscordUserTable
   discord_media: DiscordMediaTable
   discord_sent_messages: DiscordSentMessageTable
+  discord_inbound_messages: DiscordInboundMessageTable
 }
 
 let _db: Kysely<DB> | null = null
@@ -521,6 +537,22 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
     )
   `.execute(_db)
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS discord_inbound_messages (
+      id TEXT PRIMARY KEY,
+      discord_message_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      discord_user_id TEXT NOT NULL,
+      athlete_id TEXT,
+      content TEXT NOT NULL,
+      posted_at TEXT NOT NULL,
+      read INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (discord_message_id),
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE SET NULL
+    )
+  `.execute(_db)
+
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_athlete ON discord_media(athlete_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_user ON discord_media(discord_user_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_reviewed ON discord_media(reviewed)`.execute(_db)
@@ -531,4 +563,7 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_users_athlete ON discord_users(athlete_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_sent_media ON discord_sent_messages(related_media_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_sent_user ON discord_sent_messages(discord_user_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_inbound_athlete ON discord_inbound_messages(athlete_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_inbound_read ON discord_inbound_messages(read)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_discord_inbound_user ON discord_inbound_messages(discord_user_id)`.execute(_db)
 }

@@ -4,8 +4,9 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { useToast } from '../ui/toast'
+import { useConfirm } from '../ui/confirm-dialog'
 import {
-  MessageSquare, RefreshCw, AlertTriangle, Unplug, Loader2,
+  MessageSquare, RefreshCw, AlertTriangle, Unplug, Loader2, Trash2,
 } from 'lucide-react'
 import DiscordSetupWizard from './DiscordSetupWizard'
 import DisconnectDiscordDialog from './DisconnectDiscordDialog'
@@ -20,11 +21,14 @@ import type {
  */
 export default function DiscordSettingsCard() {
   const toast = useToast()
+  const confirm = useConfirm()
   const [settings, setSettings] = useState<PublicDiscordSettings | null>(null)
   const [channels, setChannels] = useState<ConfiguredChannelDto[]>([])
   const [status, setStatus] = useState<SyncStatusDto | null>(null)
   const [wizardOpen, setWizardOpen] = useState(false)
   const [disconnectOpen, setDisconnectOpen] = useState(false)
+  const [clearDays, setClearDays] = useState(30)
+  const [clearing, setClearing] = useState(false)
   const wasRunning = useRef(false)
 
   const load = useCallback(async () => {
@@ -116,6 +120,51 @@ export default function DiscordSettingsCard() {
       body: JSON.stringify({ enabled, minutes }),
     })
     if (res.ok) setSettings(await res.json())
+  }
+
+  const saveRetention = async (days: number) => {
+    const res = await fetch('/api/discord/settings/retention', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days }),
+    })
+    if (res.ok) setSettings(await res.json())
+  }
+
+  const saveMessageRetention = async (days: number) => {
+    const res = await fetch('/api/discord/settings/message-retention', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days }),
+    })
+    if (res.ok) setSettings(await res.json())
+  }
+
+  const clearCache = async () => {
+    const ok = await confirm({
+      title: `Delete media older than ${clearDays} days?`,
+      description: `This permanently removes all synced videos AND messages older than ${clearDays} days to free up space. This cannot be undone.`,
+      destructive: true,
+      confirmLabel: 'Delete now',
+    })
+    if (!ok) return
+    setClearing(true)
+    try {
+      const res = await fetch('/api/discord/clear-cache', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: clearDays }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(data.error ?? 'Failed to clear cache')
+        return
+      }
+      toast.success(`Freed up space — deleted ${data.videosDeleted} video${data.videosDeleted === 1 ? '' : 's'} and ${data.messagesDeleted} message${data.messagesDeleted === 1 ? '' : 's'}`)
+      void load()
+    } finally {
+      setClearing(false)
+    }
   }
 
   const guildChannels = channels.filter((c) => c.kind === 'guild')
@@ -250,6 +299,59 @@ export default function DiscordSettingsCard() {
                   min
                 </span>
               )}
+            </div>
+
+            <div className="space-y-3 rounded-md border p-3">
+              <p className="text-sm font-medium">Storage &amp; cleanup</p>
+
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="w-40">Auto-delete videos</span>
+                <select
+                  className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                  value={settings.retentionDays}
+                  onChange={(e) => saveRetention(Number(e.target.value))}
+                >
+                  <option value={0}>Never</option>
+                  <option value={30}>after 30 days</option>
+                  <option value={60}>after 60 days</option>
+                  <option value={90}>after 90 days</option>
+                  <option value={180}>after 180 days</option>
+                </select>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="w-40">Auto-delete messages</span>
+                <select
+                  className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                  value={settings.messageRetentionDays}
+                  onChange={(e) => saveMessageRetention(Number(e.target.value))}
+                >
+                  <option value={0}>Never</option>
+                  <option value={30}>after 30 days</option>
+                  <option value={60}>after 60 days</option>
+                  <option value={90}>after 90 days</option>
+                  <option value={180}>after 180 days</option>
+                </select>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Old form-check videos and DM messages are removed automatically to free up space
+                (video deletion includes ones attached to program days).
+              </p>
+
+              <div className="flex flex-wrap items-center gap-2 border-t pt-3 text-sm">
+                <span>Clear now — delete videos &amp; messages older than</span>
+                <Input
+                  type="number"
+                  min={0}
+                  className="h-8 w-16"
+                  value={clearDays}
+                  onChange={(e) => setClearDays(Math.max(0, Number(e.target.value) || 0))}
+                />
+                <span>days</span>
+                <Button variant="outline" size="sm" onClick={clearCache} disabled={clearing}>
+                  <Trash2 className="h-4 w-4" /> {clearing ? 'Clearing…' : 'Free up space'}
+                </Button>
+              </div>
             </div>
 
             <div className="pt-1">

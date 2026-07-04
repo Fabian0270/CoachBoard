@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Button } from '../ui/button'
 import { useToast } from '../ui/toast'
 import { Paperclip } from 'lucide-react'
-import MediaTile from './MediaTile'
+import MediaThumb from './MediaThumb'
 import MediaPlayerDialog from './MediaPlayerDialog'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 
@@ -44,7 +44,7 @@ export default function DayAttachments({
       <div className="flex flex-wrap gap-3">
         {items.map((m) => (
           <div key={m.id} className="w-32 space-y-1">
-            <MediaTile item={m} onOpen={setPlaying} />
+            <MediaThumb item={m} onOpen={setPlaying} onDeleted={onDetached} />
             {m.caption && (
               <p className="truncate text-[10px] text-muted-foreground" title={m.caption}>
                 “{m.caption}”
@@ -61,7 +61,7 @@ export default function DayAttachments({
           </div>
         ))}
       </div>
-      <MediaPlayerDialog item={playing} onClose={() => setPlaying(null)} />
+      <MediaPlayerDialog item={playing} onClose={() => setPlaying(null)} onDeleted={onDetached} />
     </div>
   )
 }

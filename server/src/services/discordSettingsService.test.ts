@@ -8,6 +8,8 @@ import {
   saveToken,
   getToken,
   setAutoSync,
+  setRetentionDays,
+  getRetentionDays,
   markTokenInvalid,
   clearSettings,
   buildInviteUrl,
@@ -78,6 +80,17 @@ describe('discordSettingsService', () => {
     const pub = await setAutoSync({ enabled: true, minutes: 15 })
     expect(pub.autoSyncEnabled).toBe(true)
     expect(pub.autoSyncMinutes).toBe(15)
+  })
+
+  it('defaults retention to 90 days and persists changes', async () => {
+    const settings = await getPublicSettings()
+    expect(settings.retentionDays).toBe(90)
+    expect(settings.messageRetentionDays).toBe(90)
+    const pub = await setRetentionDays(30)
+    expect(pub.retentionDays).toBe(30)
+    expect(await getRetentionDays()).toBe(30)
+    await setRetentionDays(0) // Never
+    expect(await getRetentionDays()).toBe(0)
   })
 
   it('refuses to save when secure storage is unavailable', async () => {

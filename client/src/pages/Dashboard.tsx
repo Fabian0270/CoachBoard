@@ -4,10 +4,12 @@ import type { PaymentAlert } from 'coachboard-shared'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
-import { Users, Dumbbell, Plus, AlertTriangle } from 'lucide-react'
+import { Users, Dumbbell, Plus, AlertTriangle, HardDrive } from 'lucide-react'
 import MyStyleCard from '../components/MyStyleCard'
 import Onboarding, { isOnboardingComplete } from '../components/Onboarding'
 import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
+import { humanBytes } from '../lib/formatBytes'
+import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
 
 interface Stats {
   athletes: number
@@ -18,6 +20,8 @@ export default function Dashboard() {
   const [stats, setStats] = useState<Stats>({ athletes: 0, programs: 0 })
   const [paymentAlerts, setPaymentAlerts] = useState<PaymentAlert[]>([])
   const [onboardingDone, setOnboardingDone] = useState(isOnboardingComplete())
+  const { configured: discordConfigured } = useDiscordConfigured()
+  const [storage, setStorage] = useState<{ bytes: number; files: number } | null>(null)
 
   useEffect(() => {
     Promise.all([
@@ -35,6 +39,17 @@ export default function Dashboard() {
       .then((data) => setPaymentAlerts(Array.isArray(data) ? data : []))
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!discordConfigured) {
+      setStorage(null)
+      return
+    }
+    fetch('/api/discord/media/storage')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => setStorage(s))
+      .catch(() => {})
+  }, [discordConfigured])
 
   return (
     <div className="space-y-6">
@@ -71,7 +86,7 @@ export default function Dashboard() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className={`grid grid-cols-1 gap-4 ${storage ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Total Athletes</CardTitle>
@@ -90,6 +105,20 @@ export default function Dashboard() {
             <div className="text-2xl font-bold">{stats.programs}</div>
           </CardContent>
         </Card>
+        {storage && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Video storage used</CardTitle>
+              <HardDrive className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{humanBytes(storage.bytes)}</div>
+              <p className="text-xs text-muted-foreground">
+                {storage.files} file{storage.files === 1 ? '' : 's'} from Discord
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
       {/* Guided onboarding until the coach finishes (or skips) it; the style card after. */}
       {onboardingDone

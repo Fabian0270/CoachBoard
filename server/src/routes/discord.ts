@@ -4,6 +4,8 @@ import {
   getPublicSettings,
   saveToken,
   setAutoSync,
+  setRetentionDays,
+  setMessageRetentionDays,
   getToken,
   DiscordSettingsError,
 } from '../services/discordSettingsService.js'
@@ -12,6 +14,7 @@ import {
   DiscordApiError,
   snowflakeFromDate,
   avatarUrl,
+  hasMessageContentIntent,
 } from '../services/discordApiClient.js'
 import {
   getSyncStatus,
@@ -24,6 +27,8 @@ import {
   getMediaRow,
   getMediaItem,
   getInboxCounts,
+  getStorageUsage,
+  deleteMedia,
   linkUser,
   assignMediaToAthlete,
   setMediaWorkout,
@@ -31,6 +36,10 @@ import {
   listUsers,
   listWorkoutCandidates,
   disconnect,
+  clearCache,
+  getAthleteConversation,
+  markConversationRead,
+  listUnreadThreads,
 } from '../services/discordMediaService.js'
 import { replyToMedia, dmAthlete, listSentForMedia, DiscordSendError } from '../services/discordSendService.js'
 import { resolveMediaAbsPath } from '../services/mediaStore.js'
@@ -83,7 +92,9 @@ router.put('/settings/token', async (req, res) => {
       botUserId: me.id,
       botUsername: me.username,
     })
-    res.json(saved)
+    // Surface the intent state so the wizard can warn before the coach proceeds
+    // (this is the setup mistake that silently breaks syncing).
+    res.json({ ...saved, messageContentIntent: hasMessageContentIntent(app.flags) })
   } catch (err) {
     if (err instanceof DiscordSettingsError) {
       res.status(400).json({ error: err.message })
@@ -115,6 +126,36 @@ router.put('/settings/auto-sync', async (req, res) => {
   const saved = await setAutoSync(parsed.data)
   await applyAutoSyncInterval()
   res.json(saved)
+})
+
+const retentionSchema = z.object({ days: z.coerce.number().int().min(0).max(3650) })
+
+router.put('/settings/retention', async (req, res) => {
+  const parsed = retentionSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid retention setting' })
+    return
+  }
+  res.json(await setRetentionDays(parsed.data.days))
+})
+
+router.put('/settings/message-retention', async (req, res) => {
+  const parsed = retentionSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid retention setting' })
+    return
+  }
+  res.json(await setMessageRetentionDays(parsed.data.days))
+})
+
+// Manual "free up space" purge — deletes videos + messages older than N days.
+router.post('/clear-cache', async (req, res) => {
+  const parsed = retentionSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid age' })
+    return
+  }
+  res.json(await clearCache(parsed.data.days))
 })
 
 // --- Guild / channel discovery (live from Discord, for the wizard) ------------
@@ -333,6 +374,19 @@ router.get('/media/counts', async (_req, res) => {
   res.json(await getInboxCounts())
 })
 
+router.get('/media/storage', async (_req, res) => {
+  res.json(await getStorageUsage())
+})
+
+router.delete('/media/:id', async (req, res) => {
+  const deleted = await deleteMedia(req.params.id)
+  if (!deleted) {
+    res.status(404).json({ error: 'Media not found' })
+    return
+  }
+  res.json({ ok: true })
+})
+
 router.get('/media/:id/file', async (req, res) => {
   const row = await getMediaRow(req.params.id)
   if (!row || row.download_status !== 'downloaded' || !row.local_path) {
@@ -443,6 +497,21 @@ router.post('/athletes/:athleteId/dm', async (req, res) => {
     const mapped = discordErrorStatus(err)
     res.status(mapped.status).json({ error: mapped.error })
   }
+})
+
+// Per-athlete DM conversation (inbound + outbound, oldest first).
+router.get('/athletes/:athleteId/messages', async (req, res) => {
+  res.json(await getAthleteConversation(req.params.athleteId))
+})
+
+router.post('/athletes/:athleteId/messages/read', async (req, res) => {
+  await markConversationRead(req.params.athleteId)
+  res.json({ ok: true })
+})
+
+// Athletes with unread inbound DMs (Inbox → Messages tab).
+router.get('/messages/unread', async (_req, res) => {
+  res.json(await listUnreadThreads())
 })
 
 // --- Users / linking ---------------------------------------------------------------
