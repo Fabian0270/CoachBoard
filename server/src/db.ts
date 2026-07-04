@@ -1,5 +1,5 @@
 import BetterSqlite3 from 'better-sqlite3'
-import { Kysely, SqliteDialect, sql } from 'kysely'
+import { Kysely, SqliteDialect, sql, type Generated } from 'kysely'
 import { mkdirSync } from 'fs'
 import { dirname } from 'path'
 
@@ -31,6 +31,9 @@ export interface ProgramTable {
   export_layout: string | null         // JSON ExportLayoutTemplate, or null = generic export
   export_template_xlsx: string | null  // base64 of the original imported .xlsx, for high-fidelity re-fill export
   builtin_template: string | null      // chosen starter look ('coachboard' | 'minimal' | 'modern') when no imported style
+  // 0/1 — coach favorited this program for reuse. Generated: has a SQL default,
+  // so existing inserts that predate this column don't need to set it.
+  bookmarked: Generated<number>
 }
 
 // Opt-in reusable saved styles (the import step's "save this style" toggle).
@@ -358,6 +361,9 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
     })
     await sql`PRAGMA foreign_keys = ON`.execute(_db)
   }
+  // Added after the rebuild so it lands on the final programs table in both the
+  // new-DB and legacy-rebuild paths.
+  await addColumnIfMissing('programs', 'bookmarked', 'INTEGER NOT NULL DEFAULT 0')
   await addColumnIfMissing('exercises', 'rest_time', 'TEXT')
   await addColumnIfMissing('exercises', 'intensity', 'TEXT')
   await addColumnIfMissing('exercises', 'load_used', 'TEXT')

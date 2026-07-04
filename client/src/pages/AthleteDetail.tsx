@@ -13,6 +13,7 @@ import AthleteMaxes from '../components/AthleteMaxes'
 import PaymentsSection from '../components/PaymentsSection'
 import AthleteMediaSection from '../components/discord/AthleteMediaSection'
 import AthleteMessagesSection from '../components/discord/AthleteMessagesSection'
+import BookmarkStar from '../components/BookmarkStar'
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select'
@@ -39,6 +40,7 @@ interface Program {
   status: string
   start_date: string | null
   focus: string | null
+  bookmarked?: number
 }
 
 export default function AthleteDetail() {
@@ -102,6 +104,19 @@ export default function AthleteDetail() {
   }, [id, discordConfigured])
 
   const handleDelete = () => setDeleteOpen(true)
+
+  const toggleBookmark = async (program: Program, next: boolean) => {
+    setPrograms((prev) => prev.map((p) => (p.id === program.id ? { ...p, bookmarked: next ? 1 : 0 } : p)))
+    const res = await fetch(`/api/programs/${program.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookmarked: next }),
+    })
+    if (!res.ok) {
+      setPrograms((prev) => prev.map((p) => (p.id === program.id ? { ...p, bookmarked: next ? 0 : 1 } : p)))
+      toast.error('Failed to update bookmark')
+    }
+  }
 
   const startEdit = () => {
     if (!athlete) return
@@ -270,17 +285,31 @@ export default function AthleteDetail() {
             {programs.length === 0 ? (
               <Card><CardContent className="py-8 text-center text-muted-foreground">No programs yet.</CardContent></Card>
             ) : programs.map((program) => (
-              <Link key={program.id} to={`/programs/${program.id}`} className="block">
-                <Card className="hover:shadow-md transition-shadow cursor-pointer">
-                  <CardHeader className="py-4">
-                    <CardTitle className="text-base">{program.name}</CardTitle>
-                    <div className="flex gap-1.5">
-                      <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
-                      {program.focus && <Badge variant="outline" className="capitalize">{program.focus}</Badge>}
-                    </div>
-                  </CardHeader>
-                </Card>
-              </Link>
+              <div key={program.id} className="group relative">
+                <Link to={`/programs/${program.id}`} className="block">
+                  <Card className="hover:shadow-md transition-shadow cursor-pointer">
+                    <CardHeader className="py-4 pr-10">
+                      <CardTitle className="text-base">{program.name}</CardTitle>
+                      <div className="flex gap-1.5">
+                        <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
+                        {program.focus && <Badge variant="outline" className="capitalize">{program.focus}</Badge>}
+                      </div>
+                    </CardHeader>
+                  </Card>
+                </Link>
+                <div
+                  className={
+                    program.bookmarked === 1
+                      ? 'absolute top-3 right-3'
+                      : 'absolute top-3 right-3 opacity-0 transition-opacity group-hover:opacity-100'
+                  }
+                >
+                  <BookmarkStar
+                    bookmarked={program.bookmarked === 1}
+                    onToggle={(next) => toggleBookmark(program, next)}
+                  />
+                </div>
+              </div>
             ))}
           </div>
         </TabsContent>

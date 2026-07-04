@@ -72,6 +72,8 @@ export const schemas = {
       athlete_id: z.uuid().optional(),
       // Switch the built-in starter look on an existing program.
       builtin_template: z.enum(['coachboard', 'minimal', 'modern']).optional(),
+      // Favorite/unfavorite for reuse.
+      bookmarked: z.boolean().optional(),
     }).refine(dateRangeValid, dateRangeIssue),
     duration: z.object({
       start_date: isoDate,

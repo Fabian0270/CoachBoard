@@ -185,6 +185,7 @@ export async function updateProgram(
     focus?: string | null
     athlete_id?: string
     builtin_template?: string
+    bookmarked?: boolean
   },
 ) {
   const row = await getDb()
@@ -201,6 +202,7 @@ export async function updateProgram(
       ...(data.focus !== undefined ? { focus: data.focus ?? null } : {}),
       ...(data.athlete_id !== undefined ? { athlete_id: data.athlete_id } : {}),
       ...(data.builtin_template !== undefined ? { builtin_template: data.builtin_template } : {}),
+      ...(data.bookmarked !== undefined ? { bookmarked: data.bookmarked ? 1 : 0 } : {}),
       updated_at: new Date().toISOString(),
     })
     .where('id', '=', id)

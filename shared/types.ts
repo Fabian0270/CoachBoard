@@ -84,6 +84,7 @@ export interface Program {
   // Captured "fingerprint" of the coach's Excel layout (from an import), replayed
   // on export so this program looks like the coach's own sheet. null = generic.
   export_layout: ExportLayoutTemplate | null
+  bookmarked?: number   // 0/1 — coach favorited this program for reuse
   workouts?: Workout[]
 }
 
