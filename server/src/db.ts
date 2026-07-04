@@ -8,6 +8,7 @@ export interface AthleteTable {
   name: string
   email: string | null
   sport: string | null
+  weight_class: string | null   // powerlifting weight class, e.g. '83' (kg); free where not applicable
   date_of_birth: string | null
   notes: string | null
   archived: number   // 0/1 — archived athletes are hidden from the active roster
@@ -304,6 +305,7 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_exercises_workout_id ON exercises(workout_id)`.execute(_db)
 
   await addColumnIfMissing('athletes', 'archived', 'INTEGER NOT NULL DEFAULT 0')
+  await addColumnIfMissing('athletes', 'weight_class', 'TEXT')
   await addColumnIfMissing('programs', 'enabled_columns', 'TEXT')
   await addColumnIfMissing('programs', 'focus', 'TEXT')
   await addColumnIfMissing('programs', 'export_layout', 'TEXT')
