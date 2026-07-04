@@ -134,9 +134,13 @@ export default function TemplatePicker({ value, onChange, inheritOption }: Props
               <span className="font-medium">{t.name}</span>
             </div>
             <div className="ml-6 mt-0.5 text-xs text-muted-foreground">{t.description}</div>
-            <div className="ml-6 mt-2">
-              <TemplatePreview id={t.id} />
-            </div>
+            {/* Preview only the selected template — stacking a live full-program
+                render for every option overflowed the dialog. */}
+            {selected && (
+              <div className="ml-6 mt-2">
+                <TemplatePreview id={t.id} />
+              </div>
+            )}
           </div>
         )
       })}
