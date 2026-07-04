@@ -11,8 +11,10 @@ A desktop application for strength coaches to manage athletes, build and analyze
 - **Draft generation** — generate a starting draft program from an athlete's data and a built-in strength-training knowledge base (the coach always edits the final result).
 - **Program analysis & reports** — per-program reports with volume/intensity breakdowns and side-by-side program comparison.
 - **Excel import** — import existing programs from spreadsheets, including a tolerant parser for externally-formatted files.
-- **Excel export & style templates** — export programs to polished `.xlsx`, preview the exact sheet before saving, and capture a coach's spreadsheet layout as a reusable export style so new programs match their house format.
+- **Excel export & style templates** — export programs to polished `.xlsx` (choose CoachBoard, Minimalistic, or Modern built-in looks, or a coach's own imported style), preview the exact sheet before saving, and capture a coach's spreadsheet layout as a reusable export style so new programs match their house format.
 - **Email delivery** — send a program's Excel sheet straight to an athlete's email from inside the app over SMTP, with the app password stored encrypted via the OS keychain.
+- **Discord integration** — sync athlete video check-ins from a Discord server: parses lift captions, auto-suggests the matching programmed exercise, and lets the coach reply (channel or DM) from an in-app inbox. Bot token stored encrypted; fully optional.
+- **Program bookmarking** — star programs to favorite them for reuse, with a filter to show bookmarked-only.
 - **Calculators** — RPE cheat sheet, 1RM estimates, and warm-up set suggestions.
 - **Payments** — track athlete payments and balances.
 - **Dark mode** — Light / Dark / System theme toggle.
@@ -26,7 +28,7 @@ A desktop application for strength coaches to manage athletes, build and analyze
 3. Run the installer and follow the prompts
 4. Launch **CoachBoard** from the Start Menu or Desktop shortcut
 
-The app stores all data locally in your user profile (`%APPDATA%`). No account required and it runs fully offline — emailing a program to an athlete is the one optional feature that uses your internet connection.
+The app stores all data locally in your user profile (`%APPDATA%`). No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
 
 ---
 
@@ -42,6 +44,7 @@ The app stores all data locally in your user profile (`%APPDATA%`). No account r
 | Charts | Recharts |
 | Excel import/export | ExcelJS |
 | Email delivery | Nodemailer (SMTP) |
+| Discord sync | Plain-fetch REST v10 client (no SDK) |
 | Tests | Vitest |
 
 ---
@@ -122,12 +125,12 @@ CoachBoard/
 ├── client/          # React frontend (Vite)
 │   └── src/
 │       ├── components/
-│       ├── pages/    # Dashboard, Athletes, Programs, Calculators, Payments, Excel Styles, Settings
+│       ├── pages/    # Dashboard, Athletes, Programs, Calculators, Payments, Excel Styles, Settings, Discord Inbox
 │       └── lib/
 ├── server/          # Express backend
 │   └── src/
-│       ├── routes/    # athletes, programs, progress, payments, style, exportStyles, settings
-│       ├── services/  # program/import/export/analysis/suggestion/payment/email/preview logic
+│       ├── routes/    # athletes, programs, progress, payments, style, exportStyles, settings, discord
+│       ├── services/  # program/import/export/analysis/suggestion/payment/email/preview/discord logic
 │       ├── db.ts      # Kysely + SQLite setup
 │       └── app.ts     # Express app factory
 ├── shared/          # Code shared by client + server
