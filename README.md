@@ -115,22 +115,24 @@ Outputs:
 - `client/dist/` — Vite production build
 - `server/dist/electron-bundle.cjs` — esbuild bundle of the Express server
 
-### Cutting a release (recommended)
+### Cutting a release
 
-Both installers are built by CI on a version tag, then attached to one GitHub Release:
+From `main` (with your release work merged in), run one command:
 
 ```bash
-# 1. bump the version in the workspace package.json files to match the tag
-# 2. commit + merge to main, then:
-git tag v1.14.0
-git push --tags
+npm run release 1.14.0
 ```
 
-The [`Release` workflow](.github/workflows/release.yml) builds the Windows `.exe`
-(`windows-latest`) and the Apple Silicon `.dmg` (`macos-14`) in parallel and publishes a
-single `v1.14.0` Release with both attached. The installer filenames embed the package.json
-`version`, so **always bump the version to match the tag first.** Intel (x64) Macs aren't
-built — GitHub's free Intel runners were retired; see the header note in
+[`scripts/release.mjs`](scripts/release.mjs) bumps the version across every workspace, syncs
+the lockfile, commits (`Bump version to 1.14.0`), pushes, then tags `v1.14.0` and pushes the
+tag. It refuses to run (before changing anything) if the tree is dirty, you're not on `main`,
+the version is unchanged, or the tag already exists.
+
+Pushing the tag triggers the [`Release` workflow](.github/workflows/release.yml), which builds
+the Windows `.exe` (`windows-latest`) and the Apple Silicon `.dmg` (`macos-14`) in parallel and
+publishes a single `v1.14.0` Release with both attached. Because the script derives the tag,
+commit, and installer filenames from the same version, they always stay in sync. Intel (x64)
+Macs aren't built — GitHub's free Intel runners were retired; see the header note in
 [`release.yml`](.github/workflows/release.yml) for how to add them back. Builds are unsigned:
 Windows users click through SmartScreen, Mac users right-click → Open on first launch.
 
