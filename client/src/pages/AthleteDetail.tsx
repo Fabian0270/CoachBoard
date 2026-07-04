@@ -13,6 +13,7 @@ import AthleteMaxes from '../components/AthleteMaxes'
 import PaymentsSection from '../components/PaymentsSection'
 import AthleteMediaSection from '../components/discord/AthleteMediaSection'
 import AthleteMessagesSection from '../components/discord/AthleteMessagesSection'
+import SlideIn from '../components/SlideIn'
 import BookmarkStar from '../components/BookmarkStar'
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
@@ -186,6 +187,7 @@ export default function AthleteDetail() {
           <TabsTrigger value="payments">Payments</TabsTrigger>
         </TabsList>
         <TabsContent value="info">
+          <SlideIn>
           <Card>
             {editing ? (
               <CardContent className="p-6">
@@ -251,8 +253,10 @@ export default function AthleteDetail() {
               </CardContent>
             )}
           </Card>
+          </SlideIn>
         </TabsContent>
         <TabsContent value="programs">
+          <SlideIn>
           <div className="space-y-3">
             <div className="relative inline-block" ref={newMenuRef}>
               <Button size="sm" onClick={(e) => { e.stopPropagation(); setNewMenuOpen((v) => !v) }}>
@@ -312,22 +316,23 @@ export default function AthleteDetail() {
               </div>
             ))}
           </div>
+          </SlideIn>
         </TabsContent>
         <TabsContent value="maxes">
-          {id && <AthleteMaxes athleteId={id} />}
+          <SlideIn>{id && <AthleteMaxes athleteId={id} />}</SlideIn>
         </TabsContent>
         {discordConfigured && (
           <TabsContent value="videos">
-            {id && <AthleteMediaSection athleteId={id} />}
+            <SlideIn>{id && <AthleteMediaSection athleteId={id} />}</SlideIn>
           </TabsContent>
         )}
         {discordConfigured && (
           <TabsContent value="messages">
-            {id && <AthleteMessagesSection athleteId={id} />}
+            <SlideIn>{id && <AthleteMessagesSection athleteId={id} />}</SlideIn>
           </TabsContent>
         )}
         <TabsContent value="payments">
-          {id && <PaymentsSection athleteId={id} />}
+          <SlideIn>{id && <PaymentsSection athleteId={id} />}</SlideIn>
         </TabsContent>
       </Tabs>
       {id && (
