@@ -23,12 +23,19 @@ A desktop application for strength coaches to manage athletes, build and analyze
 
 ## Download & Install (End Users)
 
-1. Go to the [Releases page](https://github.com/Fabian0270/CoachBoard/releases)
-2. Download **CoachBoard Setup x.x.x.exe** from the latest release
-3. Run the installer and follow the prompts
-4. Launch **CoachBoard** from the Start Menu or Desktop shortcut
+Go to the [Releases page](https://github.com/Fabian0270/CoachBoard/releases) and download the build for your OS:
 
-The app stores all data locally in your user profile (`%APPDATA%`). No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
+**Windows**
+1. Download **CoachBoard Setup x.x.x.exe** from the latest release
+2. Run the installer and follow the prompts
+3. Launch **CoachBoard** from the Start Menu or Desktop shortcut
+
+**macOS** (Apple Silicon and Intel)
+1. Download the matching **CoachBoard-x.x.x-arm64.dmg** (Apple Silicon: M1/M2/M3/M4) or **CoachBoard-x.x.x-x64.dmg** (Intel)
+2. Open the `.dmg` and drag **CoachBoard** into Applications
+3. The current builds are not yet notarized, so on first launch **right-click the app → Open → Open** to get past Gatekeeper (only needed once)
+
+The app stores all data locally in your user profile (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS). No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
 
 ---
 
@@ -55,7 +62,7 @@ The app stores all data locally in your user profile (`%APPDATA%`). No account r
 
 - [Node.js](https://nodejs.org/) v20 or later
 - npm v10 or later (comes with Node.js)
-- Windows (the native SQLite build targets Win x64)
+- Windows or macOS. `better-sqlite3` is a native module compiled per-platform, so a packaged build must be produced **on** its target OS — a Windows installer on Windows, a macOS `.dmg` on macOS. The macOS builds are produced by the [`Release (macOS)` CI workflow](.github/workflows/release-mac.yml), so no Mac hardware is needed to ship them.
 
 ### 1. Clone the repo
 
@@ -109,12 +116,26 @@ Outputs:
 ### Package as a Windows installer
 
 ```bash
-npm run package
+npm run package   # run on Windows
 ```
 
 Outputs to `dist-electron/`:
 - `CoachBoard Setup x.x.x.exe` — NSIS installer
 - `win-unpacked/` — unpacked app directory
+
+### Package as a macOS app
+
+Must run **on macOS** (native module compilation). Each machine builds its own CPU arch:
+
+```bash
+npm run package:mac   # run on a Mac
+```
+
+Outputs `CoachBoard-x.x.x-<arch>.dmg` to `dist-electron/`. To build **both** arches
+without a Mac, push a version tag (`git tag vX.Y.Z && git push --tags`) and the
+[`Release (macOS)` workflow](.github/workflows/release-mac.yml) builds the Intel + Apple
+Silicon DMGs on GitHub's macOS runners and attaches them to the GitHub Release. Signing /
+notarization is not yet enabled — see [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md).
 
 ---
 

@@ -1,0 +1,89 @@
+name: Release (macOS)
+
+# Builds the macOS .dmg installers. CoachBoard bundles better-sqlite3, a native
+# module that must be compiled ON macOS for macOS, so this cannot run on the
+# Windows dev machine — GitHub's macOS runners do it instead.
+#
+# Each arch is built on a runner of that arch (macos-13 = Intel x64,
+# macos-14 = Apple Silicon arm64) rather than cross-compiling, because the
+# native module copied into the app is only correct for the runner's own CPU.
+#
+# Trigger: push a version tag (e.g. `git tag v1.13.0 && git push --tags`), or run
+# it manually from the Actions tab (workflow_dispatch) to get artifacts without
+# publishing a release.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create/update the GitHub Release on a tag
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13   # Intel
+            arch: x64
+          - runner: macos-14   # Apple Silicon
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # Install deps. postinstall runs electron-rebuild for the host arch, which
+      # is exactly the arch this runner is building for.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Package macOS ${{ matrix.arch }} build
+        run: npm run package:mac
+        env:
+          # Force an unsigned build until an Apple Developer ID cert is wired in.
+          # (Also set inside package:mac; kept here so a re-run without the script
+          # env is still unsigned rather than failing on a missing identity.)
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload ${{ matrix.arch }} artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coachboard-mac-${{ matrix.arch }}
+          path: dist-electron/*.dmg
+          if-no-files-found: error
+
+  release:
+    # Only publish a GitHub Release when triggered by a tag push.
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish DMGs to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # download-artifact v4 places each artifact in its own subdirectory,
+          # so the DMGs sit exactly one level down: artifacts/<name>/*.dmg
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            artifacts/*/*.dmg \
+          || gh release upload "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber \
+            artifacts/*/*.dmg

@@ -44,4 +44,30 @@ nsis:
   allowToChangeInstallationDirectory: true
   include: build/installer.nsh
 
+mac:
+  category: public.app-category.healthcare-fitness
+  # No arch is pinned here on purpose: electron-builder defaults to the arch of
+  # the build machine. better-sqlite3 is a native module copied from node_modules
+  # (see extraResources + npmRebuild:false), so it is only ever correct for the
+  # host arch — cross-compiling would ship a broken binary. The release workflow
+  # therefore builds each arch on a matching runner (macos-13 = Intel x64,
+  # macos-14 = Apple Silicon arm64) instead of pinning [arm64, x64] here.
+  target:
+    - target: dmg
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Signing is OPTIONAL until an Apple Developer ID cert is available, mirroring
+  # the Windows setup above. electron-builder signs automatically when a signing
+  # identity is present (CSC_LINK + CSC_KEY_PASSWORD, or a keychain identity);
+  # the build sets CSC_IDENTITY_AUTO_DISCOVERY=false to force an UNSIGNED build
+  # when no cert is configured, so CI and local Mac builds are never blocked.
+  # Notarization is off until signing is in place. See docs/CODE_SIGNING.md.
+
+dmg:
+  # Include the arch in the filename so the two per-arch runners never collide
+  # when their artifacts are attached to the same GitHub Release.
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
 npmRebuild: false
