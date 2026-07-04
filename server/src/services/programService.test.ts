@@ -20,6 +20,21 @@ beforeAll(async () => {
   athleteId = athlete.id
 })
 
+describe('bookmarked', () => {
+  it('defaults to 0 and toggles via updateProgram', async () => {
+    const p = await createProgram({ athlete_id: athleteId, name: 'Reusable block' })
+    expect(p.bookmarked).toBe(0)
+    const on = await updateProgram(p.id, { bookmarked: true })
+    expect(on?.bookmarked).toBe(1)
+    const off = await updateProgram(p.id, { bookmarked: false })
+    expect(off?.bookmarked).toBe(0)
+    // Omitting it leaves the value untouched.
+    await updateProgram(p.id, { bookmarked: true })
+    const renamed = await updateProgram(p.id, { name: 'Renamed' })
+    expect(renamed?.bookmarked).toBe(1)
+  })
+})
+
 describe('serializeEnabledColumns', () => {
   it('serializes a valid array', () => {
     expect(serializeEnabledColumns(['rest_time', 'rpe'])).toBe('["rest_time","rpe"]')

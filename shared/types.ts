@@ -10,11 +10,28 @@ export interface Athlete {
   name: string
   email: string | null
   sport: string | null
+  weight_class: string | null   // powerlifting weight class (kg), shown when sport is powerlifting
   date_of_birth: string | null
   notes: string | null
   archived: number   // 0/1 — archived athletes (e.g. historical back-catalogue imports) are hidden from the active roster
   created_at: string
   updated_at: string
+}
+
+/** IPF weight classes (kg). '120'/'84' etc. mean "up to"; '+' means super-heavyweight. */
+export const WEIGHT_CLASSES = {
+  men: ['53', '59', '66', '74', '83', '93', '105', '120', '120+'],
+  women: ['43', '47', '52', '57', '63', '69', '76', '84', '84+'],
+} as const
+
+export const ALL_WEIGHT_CLASSES: string[] = [
+  ...WEIGHT_CLASSES.men,
+  ...WEIGHT_CLASSES.women.filter((w) => !WEIGHT_CLASSES.men.includes(w as never)),
+]
+
+/** True when the athlete's (free-text) sport reads as powerlifting. */
+export function isPowerlifting(sport: string | null | undefined): boolean {
+  return !!sport && /power\s*lift/i.test(sport)
 }
 
 export interface Exercise {
@@ -67,6 +84,7 @@ export interface Program {
   // Captured "fingerprint" of the coach's Excel layout (from an import), replayed
   // on export so this program looks like the coach's own sheet. null = generic.
   export_layout: ExportLayoutTemplate | null
+  bookmarked?: number   // 0/1 — coach favorited this program for reuse
   workouts?: Workout[]
 }
 
@@ -559,6 +577,7 @@ export interface CreateAthleteBody {
   name: string
   email?: string | null
   sport?: string | null
+  weight_class?: string | null
   date_of_birth?: string | null
   notes?: string | null
 }

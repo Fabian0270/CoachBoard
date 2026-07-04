@@ -232,6 +232,9 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
     const failed: CommitSummary['failed'] = []
     const athleteIds = new Set<string>()
     let imported = 0
+    // Save the batch's style once — from the first file that carries a layout
+    // (a batch from one template shares one style; avoids duplicate entries).
+    let styleSaved = false
 
     for (const [groupKey, list] of byGroup) {
       const asg = assignments[groupKey]
@@ -262,6 +265,11 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
           // Bulk imports are historical → archived (no start date needed).
           const params = new URLSearchParams({ athlete_id: groupAthleteId, name: e.programName.trim(), status: 'archived' })
           if (e.focus) params.set('focus', e.focus)
+          if (saveStyle && !styleSaved && e.preview?.layoutTemplate) {
+            params.set('save_style', '1')
+            if (styleName.trim()) params.set('style_name', styleName.trim())
+            styleSaved = true
+          }
           const res = await fetch(`/api/programs/import-external?${params.toString()}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/octet-stream' },
@@ -386,18 +394,40 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
 
         {/* Step: bulk review */}
         {step === 'bulk' && (
-          <BulkImportReview
-            entries={entries}
-            groups={groups}
-            importableCount={importableCount}
-            canBulkConfirm={canBulkConfirm}
-            assignments={assignments}
-            athletes={athletes}
-            setAssignment={setAssignment}
-            setEntry={setEntry}
-            onReset={reset}
-            onConfirm={handleBulkConfirm}
-          />
+          <div className="space-y-3">
+            {entries.some((e) => e.include && isImportable(e) && e.preview?.layoutTemplate) && (
+              <div className="space-y-2 rounded-md border p-3">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input type="checkbox" checked={saveStyle} onChange={(e) => setSaveStyle(e.target.checked)} />
+                  Save this program style for future programs
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  Adds these sheets’ layout (colors, columns, day labels) to your style library so new
+                  programs can reuse the look. One style is saved for the batch.
+                </p>
+                {saveStyle && (
+                  <input
+                    className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+                    placeholder="Style name (defaults to the first program)"
+                    value={styleName}
+                    onChange={(e) => setStyleName(e.target.value)}
+                  />
+                )}
+              </div>
+            )}
+            <BulkImportReview
+              entries={entries}
+              groups={groups}
+              importableCount={importableCount}
+              canBulkConfirm={canBulkConfirm}
+              assignments={assignments}
+              athletes={athletes}
+              setAssignment={setAssignment}
+              setEntry={setEntry}
+              onReset={reset}
+              onConfirm={handleBulkConfirm}
+            />
+          </div>
         )}
 
         {/* Step: committing */}

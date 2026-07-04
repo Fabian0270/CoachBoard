@@ -13,6 +13,12 @@ import AthleteMaxes from '../components/AthleteMaxes'
 import PaymentsSection from '../components/PaymentsSection'
 import AthleteMediaSection from '../components/discord/AthleteMediaSection'
 import AthleteMessagesSection from '../components/discord/AthleteMessagesSection'
+import SlideIn from '../components/SlideIn'
+import BookmarkStar from '../components/BookmarkStar'
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from '../components/ui/select'
+import { WEIGHT_CLASSES, isPowerlifting } from 'coachboard-shared'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
 import type { DiscordUserItem } from 'coachboard-shared/discord'
 import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
@@ -23,6 +29,7 @@ interface Athlete {
   id: string
   name: string
   sport: string | null
+  weight_class: string | null
   email: string | null
   date_of_birth: string | null
   notes: string | null
@@ -34,6 +41,7 @@ interface Program {
   status: string
   start_date: string | null
   focus: string | null
+  bookmarked?: number
 }
 
 export default function AthleteDetail() {
@@ -45,7 +53,7 @@ export default function AthleteDetail() {
   const [programs, setPrograms] = useState<Program[]>([])
   const [notFound, setNotFound] = useState(false)
   const [editing, setEditing] = useState(false)
-  const [editForm, setEditForm] = useState({ name: '', email: '', sport: '', date_of_birth: '', notes: '' })
+  const [editForm, setEditForm] = useState({ name: '', email: '', sport: '', weight_class: '', date_of_birth: '', notes: '' })
   const [saving, setSaving] = useState(false)
   const { configured: discordConfigured } = useDiscordConfigured()
   const [discordUsernames, setDiscordUsernames] = useState<string[]>([])
@@ -98,12 +106,26 @@ export default function AthleteDetail() {
 
   const handleDelete = () => setDeleteOpen(true)
 
+  const toggleBookmark = async (program: Program, next: boolean) => {
+    setPrograms((prev) => prev.map((p) => (p.id === program.id ? { ...p, bookmarked: next ? 1 : 0 } : p)))
+    const res = await fetch(`/api/programs/${program.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookmarked: next }),
+    })
+    if (!res.ok) {
+      setPrograms((prev) => prev.map((p) => (p.id === program.id ? { ...p, bookmarked: next ? 0 : 1 } : p)))
+      toast.error('Failed to update bookmark')
+    }
+  }
+
   const startEdit = () => {
     if (!athlete) return
     setEditForm({
       name: athlete.name,
       email: athlete.email ?? '',
       sport: athlete.sport ?? '',
+      weight_class: athlete.weight_class ?? '',
       date_of_birth: athlete.date_of_birth ?? '',
       notes: athlete.notes ?? '',
     })
@@ -165,6 +187,7 @@ export default function AthleteDetail() {
           <TabsTrigger value="payments">Payments</TabsTrigger>
         </TabsList>
         <TabsContent value="info">
+          <SlideIn>
           <Card>
             {editing ? (
               <CardContent className="p-6">
@@ -181,6 +204,18 @@ export default function AthleteDetail() {
                     <Label htmlFor="edit-sport">Sport</Label>
                     <Input id="edit-sport" value={editForm.sport} onChange={(e) => setEditForm({ ...editForm, sport: e.target.value })} />
                   </div>
+                  {isPowerlifting(editForm.sport) && (
+                    <div className="space-y-1">
+                      <Label htmlFor="edit-weight-class">Weight class</Label>
+                      <Select value={editForm.weight_class} onValueChange={(v) => setEditForm({ ...editForm, weight_class: v })}>
+                        <SelectTrigger id="edit-weight-class"><SelectValue placeholder="Select weight class…" /></SelectTrigger>
+                        <SelectContent>
+                          {WEIGHT_CLASSES.men.map((w) => <SelectItem key={`m${w}`} value={w}>{w} kg (men)</SelectItem>)}
+                          {WEIGHT_CLASSES.women.map((w) => <SelectItem key={`w${w}`} value={w}>{w} kg (women)</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="space-y-1">
                     <Label htmlFor="edit-dob">Date of Birth</Label>
                     <Input id="edit-dob" type="date" value={editForm.date_of_birth} onChange={(e) => setEditForm({ ...editForm, date_of_birth: e.target.value })} />
@@ -204,6 +239,9 @@ export default function AthleteDetail() {
                 </div>
                 {athlete.email && <div><span className="font-medium">Email:</span> {athlete.email}</div>}
                 {athlete.sport && <div><span className="font-medium">Sport:</span> {athlete.sport}</div>}
+                {isPowerlifting(athlete.sport) && athlete.weight_class && (
+                  <div><span className="font-medium">Weight class:</span> {athlete.weight_class} kg</div>
+                )}
                 {athlete.date_of_birth && <div><span className="font-medium">Date of Birth:</span> {athlete.date_of_birth}</div>}
                 {discordUsernames.length > 0 && (
                   <div><span className="font-medium">Discord:</span> {discordUsernames.map((u) => `@${u}`).join(', ')}</div>
@@ -215,8 +253,10 @@ export default function AthleteDetail() {
               </CardContent>
             )}
           </Card>
+          </SlideIn>
         </TabsContent>
         <TabsContent value="programs">
+          <SlideIn>
           <div className="space-y-3">
             <div className="relative inline-block" ref={newMenuRef}>
               <Button size="sm" onClick={(e) => { e.stopPropagation(); setNewMenuOpen((v) => !v) }}>
@@ -249,35 +289,50 @@ export default function AthleteDetail() {
             {programs.length === 0 ? (
               <Card><CardContent className="py-8 text-center text-muted-foreground">No programs yet.</CardContent></Card>
             ) : programs.map((program) => (
-              <Link key={program.id} to={`/programs/${program.id}`} className="block">
-                <Card className="hover:shadow-md transition-shadow cursor-pointer">
-                  <CardHeader className="py-4">
-                    <CardTitle className="text-base">{program.name}</CardTitle>
-                    <div className="flex gap-1.5">
-                      <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
-                      {program.focus && <Badge variant="outline" className="capitalize">{program.focus}</Badge>}
-                    </div>
-                  </CardHeader>
-                </Card>
-              </Link>
+              <div key={program.id} className="group relative">
+                <Link to={`/programs/${program.id}`} className="block">
+                  <Card className="hover:shadow-md transition-shadow cursor-pointer">
+                    <CardHeader className="py-4 pr-10">
+                      <CardTitle className="text-base">{program.name}</CardTitle>
+                      <div className="flex gap-1.5">
+                        <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
+                        {program.focus && <Badge variant="outline" className="capitalize">{program.focus}</Badge>}
+                      </div>
+                    </CardHeader>
+                  </Card>
+                </Link>
+                <div
+                  className={
+                    program.bookmarked === 1
+                      ? 'absolute top-3 right-3'
+                      : 'absolute top-3 right-3 opacity-0 transition-opacity group-hover:opacity-100'
+                  }
+                >
+                  <BookmarkStar
+                    bookmarked={program.bookmarked === 1}
+                    onToggle={(next) => toggleBookmark(program, next)}
+                  />
+                </div>
+              </div>
             ))}
           </div>
+          </SlideIn>
         </TabsContent>
         <TabsContent value="maxes">
-          {id && <AthleteMaxes athleteId={id} />}
+          <SlideIn>{id && <AthleteMaxes athleteId={id} />}</SlideIn>
         </TabsContent>
         {discordConfigured && (
           <TabsContent value="videos">
-            {id && <AthleteMediaSection athleteId={id} />}
+            <SlideIn>{id && <AthleteMediaSection athleteId={id} />}</SlideIn>
           </TabsContent>
         )}
         {discordConfigured && (
           <TabsContent value="messages">
-            {id && <AthleteMessagesSection athleteId={id} />}
+            <SlideIn>{id && <AthleteMessagesSection athleteId={id} />}</SlideIn>
           </TabsContent>
         )}
         <TabsContent value="payments">
-          {id && <PaymentsSection athleteId={id} />}
+          <SlideIn>{id && <PaymentsSection athleteId={id} />}</SlideIn>
         </TabsContent>
       </Tabs>
       {id && (

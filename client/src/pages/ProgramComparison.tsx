@@ -6,13 +6,15 @@ import { Badge } from '../components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus } from 'lucide-react'
+import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus, Star } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
+import BookmarkStar from '../components/BookmarkStar'
+import { cn } from '../lib/utils'
 
 interface Athlete { id: string; name: string }
-interface Program { id: string; name: string; status: string; athlete_id: string | null; start_date: string | null }
+interface Program { id: string; name: string; status: string; athlete_id: string | null; start_date: string | null; bookmarked?: number }
 
 const STATUSES = ['active', 'completed', 'archived'] as const
 // Sentinel for the athlete filter's "unassigned" option (Select values must be strings).
@@ -27,6 +29,7 @@ export default function ProgramComparison() {
   const [programs, setPrograms] = useState<Program[]>([])
   const [selectedAthlete, setSelectedAthlete] = useState<string>('all')
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
+  const [bookmarkedOnly, setBookmarkedOnly] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -102,6 +105,21 @@ export default function ProgramComparison() {
     }
   }
 
+  const toggleBookmark = async (program: Program, next: boolean) => {
+    // Optimistic — flip locally, then persist.
+    setPrograms((prev) => prev.map((p) => (p.id === program.id ? { ...p, bookmarked: next ? 1 : 0 } : p)))
+    const res = await fetch(`/api/programs/${program.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookmarked: next }),
+    })
+    if (!res.ok) {
+      // Revert on failure.
+      setPrograms((prev) => prev.map((p) => (p.id === program.id ? { ...p, bookmarked: next ? 0 : 1 } : p)))
+      toast.error('Failed to update bookmark')
+    }
+  }
+
   const handleStatusChange = async (programId: string, status: string) => {
     setMenuOpen(null)
     const res = await fetch(`/api/programs/${programId}`, {
@@ -169,6 +187,7 @@ export default function ProgramComparison() {
           : p.athlete_id === selectedAthlete,
     )
     .filter((p) => selectedStatus === 'all' || p.status === selectedStatus)
+    .filter((p) => !bookmarkedOnly || p.bookmarked === 1)
   const athleteMap = Object.fromEntries(athletes.map((athlete) => [athlete.id, athlete.name]))
   const hasUnassigned = programs.some((p) => p.athlete_id === null)
   // Resolve a program's owner label: its athlete, "Unassigned" when detached, or
@@ -226,6 +245,15 @@ export default function ProgramComparison() {
             <SelectItem value="archived">Archived</SelectItem>
           </SelectContent>
         </Select>
+        <Button
+          type="button"
+          variant={bookmarkedOnly ? 'default' : 'outline'}
+          onClick={() => setBookmarkedOnly((v) => !v)}
+          title="Show only bookmarked programs"
+        >
+          <Star className={cn('h-4 w-4 mr-2', bookmarkedOnly && 'fill-yellow-400 text-yellow-400')} />
+          Bookmarked
+        </Button>
       </div>
       {filtered.length === 0 ? (
         <Card>
@@ -294,6 +322,21 @@ export default function ProgramComparison() {
                     </CardContent>
                   </Card>
                 </Link>
+              )}
+
+              {/* Bookmark star — always visible when bookmarked, on hover otherwise */}
+              {renamingId !== program.id && (
+                <div
+                  className={cn(
+                    'absolute top-2.5 right-10 transition-opacity',
+                    program.bookmarked === 1 ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+                  )}
+                >
+                  <BookmarkStar
+                    bookmarked={program.bookmarked === 1}
+                    onToggle={(next) => toggleBookmark(program, next)}
+                  />
+                </div>
               )}
 
               {/* Three-dot menu button */}

@@ -1,9 +1,26 @@
 import { beforeAll, describe, it, expect } from 'vitest'
 import { initializeDatabase } from '../db.js'
-import { createAthlete, findAllAthletes, findAthleteById } from './athleteService.js'
+import { createAthlete, findAllAthletes, findAthleteById, updateAthlete } from './athleteService.js'
 
 beforeAll(async () => {
   await initializeDatabase(':memory:')
+})
+
+describe('weight_class', () => {
+  it('round-trips through create and update', async () => {
+    const a = await createAthlete({ name: 'Lifter Lena', sport: 'Powerlifting', weight_class: '83' })
+    expect(a.weight_class).toBe('83')
+    const updated = await updateAthlete(a.id, { weight_class: '93' })
+    expect(updated?.weight_class).toBe('93')
+    // Omitting it on update leaves the stored value untouched.
+    const again = await updateAthlete(a.id, { sport: 'Powerlifting' })
+    expect(again?.weight_class).toBe('93')
+  })
+
+  it('defaults to null when not provided', async () => {
+    const a = await createAthlete({ name: 'No Class Nick' })
+    expect(a.weight_class).toBeNull()
+  })
 })
 
 describe('archived athletes (Feature 4d)', () => {

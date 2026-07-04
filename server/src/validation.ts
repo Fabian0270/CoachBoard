@@ -26,6 +26,7 @@ export const schemas = {
       name: z.string().min(1).max(200),
       email: optionalEmail,
       sport: optionalString(100),
+      weight_class: optionalString(20),
       date_of_birth: optionalIsoDate,
       notes: optionalString(2000),
       // Set when creating a minimal owner for a historical back-catalogue import.
@@ -35,6 +36,7 @@ export const schemas = {
       name: z.string().min(1).max(200).optional(),
       email: optionalEmail,
       sport: optionalString(100),
+      weight_class: optionalString(20),
       date_of_birth: optionalIsoDate,
       notes: optionalString(2000),
     }),
@@ -70,6 +72,8 @@ export const schemas = {
       athlete_id: z.uuid().optional(),
       // Switch the built-in starter look on an existing program.
       builtin_template: z.enum(['coachboard', 'minimal', 'modern']).optional(),
+      // Favorite/unfavorite for reuse.
+      bookmarked: z.boolean().optional(),
     }).refine(dateRangeValid, dateRangeIssue),
     duration: z.object({
       start_date: isoDate,

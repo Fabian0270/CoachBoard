@@ -5,13 +5,17 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { ArrowLeft } from 'lucide-react'
+import { WEIGHT_CLASSES, isPowerlifting } from 'coachboard-shared'
 
 export default function NewAthlete() {
   const navigate = useNavigate()
   const toast = useToast()
-  const [form, setForm] = useState({ name: '', email: '', sport: '', date_of_birth: '', notes: '' })
+  const [form, setForm] = useState({ name: '', email: '', sport: '', weight_class: '', date_of_birth: '', notes: '' })
   const [saving, setSaving] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -59,6 +63,18 @@ export default function NewAthlete() {
               <Label htmlFor="sport">Sport</Label>
               <Input id="sport" value={form.sport} onChange={(e) => setForm({ ...form, sport: e.target.value })} />
             </div>
+            {isPowerlifting(form.sport) && (
+              <div className="space-y-1">
+                <Label htmlFor="weight_class">Weight class</Label>
+                <Select value={form.weight_class} onValueChange={(v) => setForm({ ...form, weight_class: v })}>
+                  <SelectTrigger id="weight_class"><SelectValue placeholder="Select weight class…" /></SelectTrigger>
+                  <SelectContent>
+                    {WEIGHT_CLASSES.men.map((w) => <SelectItem key={`m${w}`} value={w}>{w} kg (men)</SelectItem>)}
+                    {WEIGHT_CLASSES.women.map((w) => <SelectItem key={`w${w}`} value={w}>{w} kg (women)</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-1">
               <Label htmlFor="date_of_birth">Date of Birth</Label>
               <Input id="date_of_birth" type="date" value={form.date_of_birth} onChange={(e) => setForm({ ...form, date_of_birth: e.target.value })} />
