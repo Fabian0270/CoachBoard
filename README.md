@@ -64,7 +64,7 @@ The app stores all data locally in your user profile (`%APPDATA%` on Windows, `~
 
 - [Node.js](https://nodejs.org/) v20 or later
 - npm v10 or later (comes with Node.js)
-- Windows or macOS. `better-sqlite3` is a native module compiled per-platform, so a packaged build must be produced **on** its target OS — a Windows installer on Windows, a macOS `.dmg` on macOS. The macOS builds are produced by the [`Release (macOS)` CI workflow](.github/workflows/release-mac.yml), so no Mac hardware is needed to ship them.
+- Windows or macOS. `better-sqlite3` is a native module compiled per-platform, so a packaged build must be produced **on** its target OS — a Windows installer on Windows, a macOS `.dmg` on macOS. The [`Release` CI workflow](.github/workflows/release.yml) builds both on GitHub's runners when you push a version tag, so no Mac hardware is needed to ship them.
 
 ### 1. Clone the repo
 
@@ -115,30 +115,33 @@ Outputs:
 - `client/dist/` — Vite production build
 - `server/dist/electron-bundle.cjs` — esbuild bundle of the Express server
 
-### Package as a Windows installer
+### Cutting a release (recommended)
+
+Both installers are built by CI on a version tag, then attached to one GitHub Release:
 
 ```bash
-npm run package   # run on Windows
+# 1. bump the version in the workspace package.json files to match the tag
+# 2. commit + merge to main, then:
+git tag v1.14.0
+git push --tags
 ```
 
-Outputs to `dist-electron/`:
-- `CoachBoard Setup x.x.x.exe` — NSIS installer
-- `win-unpacked/` — unpacked app directory
+The [`Release` workflow](.github/workflows/release.yml) builds the Windows `.exe`
+(`windows-latest`) and the Apple Silicon `.dmg` (`macos-14`) in parallel and publishes a
+single `v1.14.0` Release with both attached. The installer filenames embed the package.json
+`version`, so **always bump the version to match the tag first.** Intel (x64) Macs aren't
+built — GitHub's free Intel runners were retired; see the header note in
+[`release.yml`](.github/workflows/release.yml) for how to add them back. Builds are unsigned:
+Windows users click through SmartScreen, Mac users right-click → Open on first launch.
 
-### Package as a macOS app
+### Building installers locally
 
-Must run **on macOS** (native module compilation). Each machine builds its own CPU arch:
+Each installer must be built **on** its target OS (native module compilation):
 
 ```bash
-npm run package:mac   # run on a Mac
+npm run package        # Windows → dist-electron/CoachBoard Setup x.x.x.exe (+ win-unpacked/)
+npm run package:mac    # macOS   → dist-electron/CoachBoard-x.x.x-<arch>.dmg
 ```
-
-Outputs `CoachBoard-x.x.x-<arch>.dmg` to `dist-electron/`. To build without a Mac, push a
-version tag (`git tag vX.Y.Z && git push --tags`) and the [`Release (macOS)` workflow](.github/workflows/release-mac.yml)
-builds the Apple Silicon DMG on a GitHub macOS runner and attaches it to the GitHub Release.
-Intel (x64) is not currently built — GitHub's free Intel runners were retired; see the note
-in [`release-mac.yml`](.github/workflows/release-mac.yml) for how to add it back. The builds
-are unsigned and not notarized, so Mac users right-click → Open on first launch.
 
 ---
 

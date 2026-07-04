@@ -1,0 +1,115 @@
+name: Release
+
+# Builds the installers for every supported platform and publishes them to a
+# single GitHub Release. Triggered by pushing a version tag (Flow A):
+#
+#   # bump package.json version to match, commit, merge to main, then:
+#   git tag v1.14.0
+#   git push --tags
+#
+# The DMG/EXE filenames embed the package.json "version", so ALWAYS bump the
+# version to match the tag before tagging — otherwise a v1.14.0 release ends up
+# with a CoachBoard-1.13.1 file on it.
+#
+# Native note: better-sqlite3 is a native module compiled per-OS/per-arch and
+# copied straight into the app, so each installer must be built ON its target
+# platform — the macOS DMG on a Mac runner, the Windows EXE on a Windows runner.
+# It cannot be cross-built. macOS is Apple Silicon (arm64) only; GitHub's free
+# Intel (macos-13) runners were retired. To add Intel back, build x64 on a
+# billable macos-13-large runner or a self-hosted Intel Mac.
+#
+# You can also run this manually from the Actions tab (workflow_dispatch) to get
+# the installers as downloadable artifacts without publishing a release.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create/update the GitHub Release on a tag
+
+jobs:
+  build-mac:
+    runs-on: macos-14   # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # npm ci's postinstall runs electron-rebuild for the host arch, which is
+      # exactly the arch this runner builds for.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Package macOS arm64 build
+        run: npm run package:mac
+        env:
+          # Force an unsigned build until an Apple Developer ID cert is wired in.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coachboard-mac-arm64
+          path: dist-electron/*.dmg
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Uses the existing Windows package script (cmd-syntax env var runs fine
+      # because npm executes scripts through cmd.exe on Windows). Produces an
+      # unsigned NSIS installer until a Windows cert is configured.
+      - name: Package Windows build
+        run: npm run package
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coachboard-windows-x64
+          path: dist-electron/*.exe
+          if-no-files-found: error
+
+  release:
+    # Only publish a GitHub Release when triggered by a tag push, and only once
+    # BOTH installers have built successfully so the release is never half-done.
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-mac, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish installers to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # download-artifact v4 places each artifact in its own subdirectory,
+          # so the files sit exactly one level down: artifacts/<name>/<file>.
+          # (Globbed paths keep spaces intact, e.g. "CoachBoard Setup x.y.z.exe".)
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            artifacts/*/*.dmg artifacts/*/*.exe \
+          || gh release upload "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber \
+            artifacts/*/*.dmg artifacts/*/*.exe
