@@ -8,6 +8,15 @@ electronLanguages:
 directories:
   output: ../dist-electron
 
+# Tells electron-builder where published builds live, which is what makes it emit
+# the latest.yml / latest-mac.yml update manifests that electron-updater reads.
+# Nothing is uploaded from here — the release workflow attaches the artifacts —
+# but without this block no update metadata is generated at all.
+publish:
+  provider: github
+  owner: Fabian0270
+  repo: CoachBoard
+
 files:
   - dist/**/*
 
@@ -54,6 +63,11 @@ mac:
   # macos-14 = Apple Silicon arm64) instead of pinning [arm64, x64] here.
   target:
     - target: dmg
+    # Squirrel.Mac updates from a zip, not a dmg, and without a zip target
+    # latest-mac.yml is never generated. Built now so the metadata is already
+    # correct the day a Developer ID cert lands — macOS auto-update stays off
+    # until then, because Squirrel.Mac refuses to update an unsigned bundle.
+    - target: zip
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist

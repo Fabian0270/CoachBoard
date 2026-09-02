@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { validate } from '../validation.js'
 import { fail } from '../lib/httpError.js'
 import { canReveal, dataDir, databasePath, logFilePath, reveal } from '../services/systemService.js'
+import { getUpdateState, installUpdate } from '../services/updateService.js'
 
 const router = Router()
 
@@ -38,6 +39,30 @@ router.post('/reveal', async (req: Request, res: Response): Promise<void> => {
     res.status(204).end()
   } catch (err) {
     fail(res, 'Failed to open the data folder', err)
+  }
+})
+
+// GET /api/system/update — auto-update status, polled by the UI so a downloaded
+// update can offer a restart. Always answers, even when updates are unsupported
+// on this platform, so the client needs no special-casing.
+router.get('/update', (_req: Request, res: Response): void => {
+  try {
+    res.json(getUpdateState())
+  } catch (err) {
+    fail(res, 'Failed to read update status', err)
+  }
+})
+
+// POST /api/system/update/install — quit and install a downloaded update.
+router.post('/update/install', (_req: Request, res: Response): void => {
+  try {
+    if (!installUpdate()) {
+      res.status(409).json({ error: 'No update is ready to install' })
+      return
+    }
+    res.status(202).end()
+  } catch (err) {
+    fail(res, 'Failed to install the update', err)
   }
 })
 

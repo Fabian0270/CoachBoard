@@ -1,10 +1,32 @@
 import { app, BrowserWindow, Menu, session, dialog, nativeTheme, safeStorage, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
-import { createServer } from 'http'
+import { createServer, type RequestListener } from 'http'
+import { autoUpdater } from 'electron-updater'
 
 const isDev = process.env.NODE_ENV === 'development'
 const SERVER_PORT = 3001
+
+/**
+ * The embedded server bundle, loaded at runtime from extraResources. Typed here
+ * rather than left as the `any` a dynamic import produces, so a rename on the
+ * server side fails the build instead of failing silently at launch.
+ *
+ * Members added after the first release are optional: a packaged app can be
+ * running against a bundle built before they existed.
+ */
+interface ServerBundle {
+  initializeDatabase(dbPath: string): Promise<void>
+  createApp(staticDir: string, logPath: string): RequestListener
+  configureSecureStore(opts: { safeStorage: unknown; userDataDir: string }): void
+  configureSystem?(opts: { shell: unknown }): void
+  configureUpdates?(opts: { install: () => void }): void
+  setUpdateState?(state: { status: string; version?: string | null; message?: string | null }): void
+  runStartupBackup?(): Promise<string | null>
+  initDiscordSync?(opts: { launchDelayMs: number }): void | Promise<void>
+}
+
+let serverBundle: ServerBundle | null = null
 
 let logPath = ''
 
@@ -85,7 +107,8 @@ async function startServer(): Promise<void> {
   const bundlePath = resolveServerPath('server/dist/electron-bundle.cjs')
   log(`Bundle path: ${bundlePath} (exists: ${fs.existsSync(bundlePath)})`)
 
-  const bundle = await import(bundlePath as string)
+  const bundle = (await import(bundlePath as string)) as ServerBundle
+  serverBundle = bundle
   log('Bundle loaded, initializing database...')
 
   await bundle.initializeDatabase(dbPath)
@@ -136,6 +159,56 @@ async function startServer(): Promise<void> {
       log(`Discord sync failed to start: ${describeError(err)}`)
     }
   })()
+}
+
+/**
+ * Auto-update, deliberately quiet.
+ *
+ * This is an offline-first app: a coach with no internet, or at a meet on a phone
+ * hotspot, must never be blocked or nagged. Every failure here is a logged no-op,
+ * and the only thing the coach ever sees is an optional "restart to update" once
+ * a new version has already downloaded.
+ */
+function initAutoUpdate(): void {
+  // electron-updater throws outside a packaged app — there is nothing to update.
+  if (!app.isPackaged) return
+
+  // Squirrel.Mac refuses to install an update unless the app bundle is signed,
+  // and the macOS build is forced unsigned until an Apple Developer ID exists.
+  // Checking anyway would just error on every launch, so skip it entirely.
+  if (process.platform === 'darwin') {
+    log('Auto-update skipped: macOS builds are unsigned (see docs/CODE_SIGNING.md)')
+    return
+  }
+
+  const bundle = serverBundle
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on('update-available', (info) => {
+    log(`Update available: ${info.version}`)
+    bundle?.setUpdateState?.({ status: 'downloading', version: info.version })
+  })
+  autoUpdater.on('update-not-available', () => {
+    bundle?.setUpdateState?.({ status: 'idle' })
+  })
+  autoUpdater.on('update-downloaded', (info) => {
+    log(`Update downloaded and staged: ${info.version}`)
+    bundle?.setUpdateState?.({ status: 'ready', version: info.version })
+  })
+  autoUpdater.on('error', (err) => {
+    // Being offline lands here. It is normal, so it stays in the log only.
+    log(`Auto-update error: ${describeError(err)}`)
+    bundle?.setUpdateState?.({ status: 'error', message: err?.message ?? 'unknown' })
+  })
+
+  bundle?.configureUpdates?.({ install: () => autoUpdater.quitAndInstall() })
+
+  bundle?.setUpdateState?.({ status: 'checking' })
+  void autoUpdater.checkForUpdates().catch((err: unknown) => {
+    log(`Auto-update check failed: ${describeError(err)}`)
+    bundle?.setUpdateState?.({ status: 'error', message: 'check failed' })
+  })
 }
 
 async function createWindow(): Promise<void> {
@@ -218,6 +291,9 @@ app.whenReady().then(async () => {
   try {
     await startServer()
     await createWindow()
+    // After the window exists: the check is background work and must never sit
+    // between the coach and their app opening.
+    initAutoUpdate()
   } catch (err) {
     log(`FATAL: ${describeError(err)}`)
     // Lead with the readable message; the stack is in the log, not the dialog.
