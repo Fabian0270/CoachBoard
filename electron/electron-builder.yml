@@ -19,6 +19,13 @@ publish:
 
 files:
   - dist/**/*
+  # NOTE: electron-updater's own deps `semver` and `builder-util-runtime` are
+  # ALSO dependencies of electron-builder (a devDependency). With npm workspaces
+  # they hoist to the root node_modules, where electron-builder saw them as dev
+  # and pruned them from the asar — so require('electron-updater') threw
+  # MODULE_NOT_FOUND and the packaged app died silently before it could log
+  # anything. They are declared as direct dependencies of this workspace to keep
+  # them in the production tree. Verify with `npx asar list` after packaging.
 
 extraResources:
   - from: ../server/dist/electron-bundle.cjs
