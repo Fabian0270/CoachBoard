@@ -8,8 +8,24 @@ electronLanguages:
 directories:
   output: ../dist-electron
 
+# Tells electron-builder where published builds live, which is what makes it emit
+# the latest.yml / latest-mac.yml update manifests that electron-updater reads.
+# Nothing is uploaded from here — the release workflow attaches the artifacts —
+# but without this block no update metadata is generated at all.
+publish:
+  provider: github
+  owner: Fabian0270
+  repo: CoachBoard
+
 files:
   - dist/**/*
+  # NOTE: electron-updater's own deps `semver` and `builder-util-runtime` are
+  # ALSO dependencies of electron-builder (a devDependency). With npm workspaces
+  # they hoist to the root node_modules, where electron-builder saw them as dev
+  # and pruned them from the asar — so require('electron-updater') threw
+  # MODULE_NOT_FOUND and the packaged app died silently before it could log
+  # anything. They are declared as direct dependencies of this workspace to keep
+  # them in the production tree. Verify with `npx asar list` after packaging.
 
 extraResources:
   - from: ../server/dist/electron-bundle.cjs
@@ -43,6 +59,11 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   include: build/installer.nsh
+  # Hyphens, not spaces. electron-builder writes the hyphenated name into
+  # latest.yml regardless, and GitHub rewrites spaces in uploaded asset names —
+  # so a spaced filename means the updater asks for a URL that does not exist and
+  # every update check 404s silently. Keeping all three in agreement is the fix.
+  artifactName: ${productName}-Setup-${version}.${ext}
 
 mac:
   category: public.app-category.healthcare-fitness
@@ -54,6 +75,11 @@ mac:
   # macos-14 = Apple Silicon arm64) instead of pinning [arm64, x64] here.
   target:
     - target: dmg
+    # Squirrel.Mac updates from a zip, not a dmg, and without a zip target
+    # latest-mac.yml is never generated. Built now so the metadata is already
+    # correct the day a Developer ID cert lands — macOS auto-update stays off
+    # until then, because Squirrel.Mac refuses to update an unsigned bundle.
+    - target: zip
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist

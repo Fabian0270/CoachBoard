@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { z } from 'zod'
 import { computeStyleProfile, detectPatterns } from '../services/styleService.js'
+import { fail } from '../lib/httpError.js'
 
 const router = Router()
 
@@ -11,8 +12,8 @@ const focusQuery = z.enum(['hypertrophy', 'strength', 'peaking'])
 router.get('/patterns', async (_req: Request, res: Response): Promise<void> => {
   try {
     res.json(await detectPatterns())
-  } catch {
-    res.status(500).json({ error: 'Failed to detect patterns' })
+  } catch (err) {
+    fail(res, 'Failed to detect patterns', err)
   }
 })
 
@@ -27,8 +28,8 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       focus = parsed.data
     }
     res.json(await computeStyleProfile({ focus }))
-  } catch {
-    res.status(500).json({ error: 'Failed to compute style profile' })
+  } catch (err) {
+    fail(res, 'Failed to compute style profile', err)
   }
 })
 

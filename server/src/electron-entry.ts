@@ -1,4 +1,7 @@
 export { initializeDatabase, getDb } from './db.js'
 export { createApp } from './app.js'
 export { configureSecureStore } from './services/secureStore.js'
+export { configureSystem } from './services/systemService.js'
+export { runStartupBackup } from './services/backupService.js'
+export { configureUpdates, setUpdateState } from './services/updateService.js'
 export { initAutoSync as initDiscordSync } from './services/discordSyncService.js'

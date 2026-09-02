@@ -2,6 +2,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { LayoutDashboard, Users, Dumbbell, Calculator, Wallet, Palette, Settings, MessageSquare } from 'lucide-react'
 import { cn } from '../lib/utils'
 import ThemeToggle from './ThemeToggle'
+import UpdateNotice from './UpdateNotice'
 import { useDiscordInboxCounts } from '../hooks/useDiscordInboxCounts'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
 
@@ -56,6 +57,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </nav>
       <main className="flex-1 min-w-0 p-6 overflow-auto h-full">{children}</main>
+      <UpdateNotice />
     </div>
   )
 }

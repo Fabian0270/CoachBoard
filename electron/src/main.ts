@@ -1,18 +1,98 @@
 import { app, BrowserWindow, Menu, session, dialog, nativeTheme, safeStorage, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
-import { createServer } from 'http'
+import { createServer, type RequestListener } from 'http'
+import { autoUpdater } from 'electron-updater'
 
 const isDev = process.env.NODE_ENV === 'development'
 const SERVER_PORT = 3001
 
+/**
+ * The embedded server bundle, loaded at runtime from extraResources. Typed here
+ * rather than left as the `any` a dynamic import produces, so a rename on the
+ * server side fails the build instead of failing silently at launch.
+ *
+ * Members added after the first release are optional: a packaged app can be
+ * running against a bundle built before they existed.
+ */
+interface ServerBundle {
+  initializeDatabase(dbPath: string): Promise<void>
+  createApp(staticDir: string, logPath: string): RequestListener
+  configureSecureStore(opts: { safeStorage: unknown; userDataDir: string }): void
+  configureSystem?(opts: { shell: unknown }): void
+  configureUpdates?(opts: { install: () => void }): void
+  setUpdateState?(state: { status: string; version?: string | null; message?: string | null }): void
+  runStartupBackup?(): Promise<string | null>
+  initDiscordSync?(opts: { launchDelayMs: number }): void | Promise<void>
+}
+
+let serverBundle: ServerBundle | null = null
+
 let logPath = ''
+
+/** Roll the log past this size so it can't grow for the life of the install. */
+const MAX_LOG_BYTES = 5 * 1024 * 1024
+
+/** Best-effort rotation, keeping one previous generation. Never blocks logging. */
+function rotateLogIfNeeded(): void {
+  if (!logPath) return
+  try {
+    if (fs.statSync(logPath).size < MAX_LOG_BYTES) return
+    fs.rmSync(`${logPath}.1`, { force: true })
+    fs.renameSync(logPath, `${logPath}.1`)
+  } catch {
+    /* missing, locked, or unwritable — fall through and just append */
+  }
+}
 
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`
-  if (logPath) try { fs.appendFileSync(logPath, line) } catch { /* ignore */ }
+  if (logPath) {
+    rotateLogIfNeeded()
+    try { fs.appendFileSync(logPath, line) } catch { /* ignore */ }
+  }
   console.log(msg)
 }
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? `${err.message}\n\n${err.stack ?? ''}` : String(err)
+}
+
+// ── Crash safety ────────────────────────────────────────────────────────────
+// The Express server runs inside this process rather than as a child, so an
+// unhandled throw anywhere takes the entire app down with it. There were no
+// handlers at all, which meant that happened silently: no log line, no dialog,
+// just a window that vanished.
+
+let crashDialogShown = false
+
+function reportCrash(kind: string, err: unknown): void {
+  log(`${kind}: ${describeError(err)}`)
+
+  // Surface only the first one. A repeating fault would otherwise bury the coach
+  // in modal dialogs faster than they could dismiss them.
+  if (crashDialogShown || !app.isReady()) return
+  crashDialogShown = true
+  void dialog
+    .showMessageBox({
+      type: 'error',
+      title: 'CoachBoard hit an unexpected error',
+      message: 'Something went wrong in the background.',
+      detail:
+        'Your data on disk is untouched. If the app starts behaving oddly, restart it.\n\n' +
+        `Details were written to:\n${logPath}`,
+      buttons: ['OK'],
+    })
+    .catch(() => { /* a failed dialog must not recurse back into this handler */ })
+}
+
+process.on('uncaughtException', (err) => reportCrash('UNCAUGHT EXCEPTION', err))
+
+process.on('unhandledRejection', (reason) => {
+  // Logged but deliberately not surfaced. Rejections happen in normal operation
+  // (a dropped Discord fetch, an aborted request), so a dialog would cry wolf.
+  log(`UNHANDLED REJECTION: ${describeError(reason)}`)
+})
 
 function resolveServerPath(relPath: string): string {
   return app.isPackaged
@@ -27,11 +107,17 @@ async function startServer(): Promise<void> {
   const bundlePath = resolveServerPath('server/dist/electron-bundle.cjs')
   log(`Bundle path: ${bundlePath} (exists: ${fs.existsSync(bundlePath)})`)
 
-  const bundle = await import(bundlePath as string)
+  const bundle = (await import(bundlePath as string)) as ServerBundle
+  serverBundle = bundle
   log('Bundle loaded, initializing database...')
 
   await bundle.initializeDatabase(dbPath)
   log('Database initialized')
+
+  // Rolling backup of the database the coach just opened, keeping the last few.
+  // Best-effort inside the service — a backup failure must never block startup.
+  const backup = await bundle.runStartupBackup?.()
+  if (backup) log(`Startup backup: ${backup}`)
 
   const staticDir = resolveServerPath('client/dist')
   log(`Static dir: ${staticDir} (exists: ${fs.existsSync(staticDir)})`)
@@ -39,6 +125,11 @@ async function startServer(): Promise<void> {
   // Give the server access to Electron-owned secure storage (DPAPI) + the real
   // userData path so it can persist the encrypted email app-password (Feature 6a).
   bundle.configureSecureStore({ safeStorage, userDataDir: app.getPath('userData') })
+
+  // Same injection seam for the handful of shell actions the UI needs (opening
+  // the data folder from Settings and from the error screen). Optional-chained so
+  // a stale bundle without the export can't break startup.
+  bundle.configureSystem?.({ shell })
 
   const expressApp = bundle.createApp(staticDir, logPath)
 
@@ -57,7 +148,67 @@ async function startServer(): Promise<void> {
   // Discord sync-on-launch (delayed so startup isn't blocked; no-op when the
   // integration isn't configured). Optional-chained so a stale bundle without
   // the export can't crash startup.
-  bundle.initDiscordSync?.({ launchDelayMs: 8000 })
+  //
+  // Fire-and-forget by design, but it previously had no catch at all: a rejection
+  // here became an unhandled rejection that could take the main process down long
+  // after a successful launch. The IIFE catches a synchronous throw too.
+  void (async () => {
+    try {
+      await bundle.initDiscordSync?.({ launchDelayMs: 8000 })
+    } catch (err) {
+      log(`Discord sync failed to start: ${describeError(err)}`)
+    }
+  })()
+}
+
+/**
+ * Auto-update, deliberately quiet.
+ *
+ * This is an offline-first app: a coach with no internet, or at a meet on a phone
+ * hotspot, must never be blocked or nagged. Every failure here is a logged no-op,
+ * and the only thing the coach ever sees is an optional "restart to update" once
+ * a new version has already downloaded.
+ */
+function initAutoUpdate(): void {
+  // electron-updater throws outside a packaged app — there is nothing to update.
+  if (!app.isPackaged) return
+
+  // Squirrel.Mac refuses to install an update unless the app bundle is signed,
+  // and the macOS build is forced unsigned until an Apple Developer ID exists.
+  // Checking anyway would just error on every launch, so skip it entirely.
+  if (process.platform === 'darwin') {
+    log('Auto-update skipped: macOS builds are unsigned (see docs/CODE_SIGNING.md)')
+    return
+  }
+
+  const bundle = serverBundle
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on('update-available', (info) => {
+    log(`Update available: ${info.version}`)
+    bundle?.setUpdateState?.({ status: 'downloading', version: info.version })
+  })
+  autoUpdater.on('update-not-available', () => {
+    bundle?.setUpdateState?.({ status: 'idle' })
+  })
+  autoUpdater.on('update-downloaded', (info) => {
+    log(`Update downloaded and staged: ${info.version}`)
+    bundle?.setUpdateState?.({ status: 'ready', version: info.version })
+  })
+  autoUpdater.on('error', (err) => {
+    // Being offline lands here. It is normal, so it stays in the log only.
+    log(`Auto-update error: ${describeError(err)}`)
+    bundle?.setUpdateState?.({ status: 'error', message: err?.message ?? 'unknown' })
+  })
+
+  bundle?.configureUpdates?.({ install: () => autoUpdater.quitAndInstall() })
+
+  bundle?.setUpdateState?.({ status: 'checking' })
+  void autoUpdater.checkForUpdates().catch((err: unknown) => {
+    log(`Auto-update check failed: ${describeError(err)}`)
+    bundle?.setUpdateState?.({ status: 'error', message: 'check failed' })
+  })
 }
 
 async function createWindow(): Promise<void> {
@@ -140,12 +291,29 @@ app.whenReady().then(async () => {
   try {
     await startServer()
     await createWindow()
+    // After the window exists: the check is background work and must never sit
+    // between the coach and their app opening.
+    initAutoUpdate()
   } catch (err) {
-    const msg = err instanceof Error ? `${err.message}\n\n${err.stack}` : String(err)
-    log(`FATAL: ${msg}`)
-    dialog.showErrorBox('CoachBoard failed to start', msg)
+    log(`FATAL: ${describeError(err)}`)
+    // Lead with the readable message; the stack is in the log, not the dialog.
+    const message = err instanceof Error ? err.message : String(err)
+    dialog.showErrorBox(
+      'CoachBoard failed to start',
+      `${message}\n\nYour data has not been touched. Full details were written to:\n${logPath}`,
+    )
     app.quit()
   }
+})
+
+// A dead renderer presents as a frozen or blank window with no other signal, so
+// record why. Child processes (GPU, utility) are usually recoverable — log only.
+app.on('render-process-gone', (_event, _webContents, details) => {
+  log(`RENDERER GONE: reason=${details.reason} exitCode=${details.exitCode}`)
+})
+
+app.on('child-process-gone', (_event, details) => {
+  log(`CHILD PROCESS GONE: type=${details.type} reason=${details.reason}`)
 })
 
 app.on('window-all-closed', () => {

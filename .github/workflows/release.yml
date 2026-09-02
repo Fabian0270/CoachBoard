@@ -52,11 +52,17 @@ jobs:
           # Force an unsigned build until an Apple Developer ID cert is wired in.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
+      # The .zip and latest-mac.yml are the auto-update payload and manifest;
+      # electron-updater reads the manifest from the release, so a release with
+      # only the .dmg attached looks complete but can never serve an update.
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: coachboard-mac-arm64
-          path: dist-electron/*.dmg
+          path: |
+            dist-electron/*.dmg
+            dist-electron/*-mac.zip
+            dist-electron/latest-mac.yml
           if-no-files-found: error
 
   build-windows:
@@ -78,11 +84,14 @@ jobs:
       - name: Package Windows build
         run: npm run package
 
+      # latest.yml is what the installed app polls to discover a new version.
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: coachboard-windows-x64
-          path: dist-electron/*.exe
+          path: |
+            dist-electron/*.exe
+            dist-electron/latest.yml
           if-no-files-found: error
 
   release:
@@ -103,13 +112,37 @@ jobs:
         run: |
           # download-artifact v4 places each artifact in its own subdirectory,
           # so the files sit exactly one level down: artifacts/<name>/<file>.
-          # (Globbed paths keep spaces intact, e.g. "CoachBoard Setup x.y.z.exe".)
-          gh release create "${GITHUB_REF_NAME}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes \
-            artifacts/*/*.dmg artifacts/*/*.exe \
-          || gh release upload "${GITHUB_REF_NAME}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --clobber \
-            artifacts/*/*.dmg artifacts/*/*.exe
+          # Artifact names are hyphenated (no spaces) so the names in latest.yml,
+          # on disk, and on the GitHub release all agree — see the nsis
+          # artifactName note in electron-builder.yml.
+          #
+          # The .yml manifests must be attached alongside the installers or
+          # auto-update silently finds nothing on a release that looks complete.
+          set -euo pipefail
+          shopt -s nullglob
+          ASSETS=(artifacts/*/*.dmg artifacts/*/*.exe artifacts/*/*-mac.zip artifacts/*/latest*.yml)
+
+          # Fail loudly rather than publishing a release missing its update
+          # manifest — a silent half-release is worse than no release.
+          for required in latest.yml; do
+            if ! ls artifacts/*/"$required" >/dev/null 2>&1; then
+              echo "::error::$required is missing — auto-update would not work for this release."
+              exit 1
+            fi
+          done
+
+          # Create the release, or attach to it if the tag already has one. Only
+          # the "already exists" case should fall through to upload, so check for
+          # it explicitly instead of masking every failure behind ||.
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber \
+              "${ASSETS[@]}"
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes \
+              "${ASSETS[@]}"
+          fi
