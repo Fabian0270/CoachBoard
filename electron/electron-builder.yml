@@ -9,9 +9,14 @@ directories:
   output: ../dist-electron
 
 # Tells electron-builder where published builds live, which is what makes it emit
-# the latest.yml / latest-mac.yml update manifests that electron-updater reads.
-# Nothing is uploaded from here — the release workflow attaches the artifacts —
-# but without this block no update metadata is generated at all.
+# the latest.yml / latest-mac.yml update manifests that electron-updater reads,
+# and what the installed app reads from resources/app-update.yml to know where to
+# check. Without this block no update metadata is generated at all.
+#
+# IMPORTANT: the package scripts pass `--publish never`. On a tag build in CI,
+# electron-builder otherwise treats this block as "upload the artifacts yourself"
+# and fails the whole build with "GitHub Personal Access Token is not set". The
+# release workflow attaches the assets with `gh release` instead.
 publish:
   provider: github
   owner: Fabian0270
