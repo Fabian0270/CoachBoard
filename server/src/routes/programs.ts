@@ -28,6 +28,7 @@ import { sendProgramEmail } from '../services/emailService.js'
 import { getProgramReport } from '../services/analysisService.js'
 import { generateDraftProgram } from '../services/suggestionService.js'
 import type { ExternalParseOverrides } from 'coachboard-shared'
+import { fail } from '../lib/httpError.js'
 
 const router = Router()
 
@@ -71,8 +72,8 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       athleteId = parsed.data
     }
     res.json(await findAllPrograms(athleteId))
-  } catch {
-    res.status(500).json({ error: 'Failed to fetch programs' })
+  } catch (err) {
+    fail(res, 'Failed to fetch programs', err)
   }
 })
 
@@ -81,8 +82,8 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
     const program = await findProgramById(String(req.params.id))
     if (!program) { res.status(404).json({ error: 'Program not found' }); return }
     res.json(program)
-  } catch {
-    res.status(500).json({ error: 'Failed to fetch program' })
+  } catch (err) {
+    fail(res, 'Failed to fetch program', err)
   }
 })
 
@@ -91,8 +92,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   if (!body) return
   try {
     res.status(201).json(await createProgram(body))
-  } catch {
-    res.status(500).json({ error: 'Failed to create program' })
+  } catch (err) {
+    fail(res, 'Failed to create program', err)
   }
 })
 
@@ -103,8 +104,8 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
     const updated = await updateProgram(String(req.params.id), body)
     if (!updated) { res.status(404).json({ error: 'Program not found' }); return }
     res.json(updated)
-  } catch {
-    res.status(500).json({ error: 'Failed to update program' })
+  } catch (err) {
+    fail(res, 'Failed to update program', err)
   }
 })
 
@@ -113,8 +114,8 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
     const deleted = await deleteProgram(String(req.params.id))
     if (!deleted) { res.status(404).json({ error: 'Program not found' }); return }
     res.status(204).send()
-  } catch {
-    res.status(500).json({ error: 'Failed to delete program' })
+  } catch (err) {
+    fail(res, 'Failed to delete program', err)
   }
 })
 
@@ -125,8 +126,8 @@ router.put('/:programId/duration', async (req: Request, res: Response): Promise<
     const updated = await setProgramDuration(String(req.params.programId), body.start_date, body.weeks)
     if (!updated) { res.status(404).json({ error: 'Program not found' }); return }
     res.json(updated)
-  } catch {
-    res.status(500).json({ error: 'Failed to update program duration' })
+  } catch (err) {
+    fail(res, 'Failed to update program duration', err)
   }
 })
 
@@ -145,8 +146,8 @@ router.post('/:programId/workouts', async (req: Request, res: Response): Promise
       notes: body.notes,
     })
     res.status(201).json(workout)
-  } catch {
-    res.status(500).json({ error: 'Failed to create workout' })
+  } catch (err) {
+    fail(res, 'Failed to create workout', err)
   }
 })
 
@@ -157,8 +158,8 @@ router.put('/:programId/workouts/:workoutId', async (req: Request, res: Response
     const updated = await updateWorkout(String(req.params.workoutId), String(req.params.programId), body)
     if (!updated) { res.status(404).json({ error: 'Workout not found' }); return }
     res.json(updated)
-  } catch {
-    res.status(500).json({ error: 'Failed to update workout' })
+  } catch (err) {
+    fail(res, 'Failed to update workout', err)
   }
 })
 
@@ -167,8 +168,8 @@ router.delete('/:programId/workouts/:workoutId', async (req: Request, res: Respo
     const deleted = await deleteWorkout(String(req.params.workoutId), String(req.params.programId))
     if (!deleted) { res.status(404).json({ error: 'Workout not found' }); return }
     res.status(204).send()
-  } catch {
-    res.status(500).json({ error: 'Failed to delete workout' })
+  } catch (err) {
+    fail(res, 'Failed to delete workout', err)
   }
 })
 
@@ -182,8 +183,8 @@ router.post('/:programId/workouts/:workoutId/exercises', async (req: Request, re
   try {
     const exercise = await createExercise({ workout_id: String(req.params.workoutId), ...body })
     res.status(201).json(exercise)
-  } catch {
-    res.status(500).json({ error: 'Failed to create exercise' })
+  } catch (err) {
+    fail(res, 'Failed to create exercise', err)
   }
 })
 
@@ -198,8 +199,8 @@ router.put('/:programId/workouts/:workoutId/exercises/reorder', async (req: Requ
     )
     if (!result) { res.status(404).json({ error: 'Workout not found' }); return }
     res.json({ exercises: result })
-  } catch {
-    res.status(500).json({ error: 'Failed to reorder exercises' })
+  } catch (err) {
+    fail(res, 'Failed to reorder exercises', err)
   }
 })
 
@@ -210,8 +211,8 @@ router.put('/:programId/workouts/:workoutId/exercises/:exerciseId', async (req: 
     const updated = await updateExercise(String(req.params.exerciseId), String(req.params.workoutId), body)
     if (!updated) { res.status(404).json({ error: 'Exercise not found' }); return }
     res.json(updated)
-  } catch {
-    res.status(500).json({ error: 'Failed to update exercise' })
+  } catch (err) {
+    fail(res, 'Failed to update exercise', err)
   }
 })
 
@@ -220,8 +221,8 @@ router.delete('/:programId/workouts/:workoutId/exercises/:exerciseId', async (re
     const deleted = await deleteExercise(String(req.params.exerciseId), String(req.params.workoutId))
     if (!deleted) { res.status(404).json({ error: 'Exercise not found' }); return }
     res.status(204).send()
-  } catch {
-    res.status(500).json({ error: 'Failed to delete exercise' })
+  } catch (err) {
+    fail(res, 'Failed to delete exercise', err)
   }
 })
 
@@ -234,8 +235,8 @@ router.post('/:programId/workouts/:workoutId/exercises/:exerciseId/add-set', asy
     )
     if (!result) { res.status(404).json({ error: 'Exercise not found' }); return }
     res.status(201).json(result)
-  } catch {
-    res.status(500).json({ error: 'Failed to add set' })
+  } catch (err) {
+    fail(res, 'Failed to add set', err)
   }
 })
 
@@ -257,8 +258,8 @@ router.post('/:programId/copy-day', async (req: Request, res: Response): Promise
   try {
     const result = await copyWorkoutDay(String(req.params.programId), body.sourceDate, body.targetDates)
     res.json(result)
-  } catch {
-    res.status(500).json({ error: 'Failed to copy day' })
+  } catch (err) {
+    fail(res, 'Failed to copy day', err)
   }
 })
 
@@ -271,8 +272,8 @@ router.get('/:id/report', async (req: Request, res: Response): Promise<void> => 
     const report = await getProgramReport(String(req.params.id))
     if (!report) { res.status(404).json({ error: 'Program not found' }); return }
     res.json(report)
-  } catch {
-    res.status(500).json({ error: 'Failed to generate report' })
+  } catch (err) {
+    fail(res, 'Failed to generate report', err)
   }
 })
 

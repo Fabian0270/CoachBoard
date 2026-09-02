@@ -6,6 +6,7 @@ import {
   createProgressRecord,
   deleteProgressRecord,
 } from '../services/progressService.js'
+import { fail } from '../lib/httpError.js'
 
 const router = Router()
 
@@ -26,8 +27,8 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     }
 
     res.json(await findProgressRecords(filters))
-  } catch {
-    res.status(500).json({ error: 'Failed to fetch progress records' })
+  } catch (err) {
+    fail(res, 'Failed to fetch progress records', err)
   }
 })
 
@@ -36,8 +37,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   if (!body) return
   try {
     res.status(201).json(await createProgressRecord(body))
-  } catch {
-    res.status(500).json({ error: 'Failed to create progress record' })
+  } catch (err) {
+    fail(res, 'Failed to create progress record', err)
   }
 })
 
@@ -46,8 +47,8 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
     const deleted = await deleteProgressRecord(String(req.params.id))
     if (!deleted) { res.status(404).json({ error: 'Record not found' }); return }
     res.status(204).send()
-  } catch {
-    res.status(500).json({ error: 'Failed to delete progress record' })
+  } catch (err) {
+    fail(res, 'Failed to delete progress record', err)
   }
 })
 

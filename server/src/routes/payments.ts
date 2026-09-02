@@ -9,6 +9,7 @@ import {
   renewPayment,
   getPaymentAlerts,
 } from '../services/paymentService.js'
+import { fail } from '../lib/httpError.js'
 
 const router = Router()
 
@@ -16,8 +17,8 @@ const router = Router()
 router.get('/alerts', async (_req: Request, res: Response): Promise<void> => {
   try {
     res.json(await getPaymentAlerts())
-  } catch {
-    res.status(500).json({ error: 'Failed to fetch payment alerts' })
+  } catch (err) {
+    fail(res, 'Failed to fetch payment alerts', err)
   }
 })
 
@@ -30,8 +31,8 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       filters.athlete_id = parsed.data
     }
     res.json(await findPayments(filters))
-  } catch {
-    res.status(500).json({ error: 'Failed to fetch payments' })
+  } catch (err) {
+    fail(res, 'Failed to fetch payments', err)
   }
 })
 
@@ -40,8 +41,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   if (!body) return
   try {
     res.status(201).json(await createPayment(body))
-  } catch {
-    res.status(500).json({ error: 'Failed to create payment' })
+  } catch (err) {
+    fail(res, 'Failed to create payment', err)
   }
 })
 
@@ -52,8 +53,8 @@ router.patch('/:id', async (req: Request, res: Response): Promise<void> => {
     const updated = await updatePayment(String(req.params.id), body)
     if (!updated) { res.status(404).json({ error: 'Payment not found' }); return }
     res.json(updated)
-  } catch {
-    res.status(500).json({ error: 'Failed to update payment' })
+  } catch (err) {
+    fail(res, 'Failed to update payment', err)
   }
 })
 
@@ -62,8 +63,8 @@ router.post('/:id/renew', async (req: Request, res: Response): Promise<void> => 
     const next = await renewPayment(String(req.params.id))
     if (!next) { res.status(404).json({ error: 'Payment not found' }); return }
     res.status(201).json(next)
-  } catch {
-    res.status(500).json({ error: 'Failed to renew payment' })
+  } catch (err) {
+    fail(res, 'Failed to renew payment', err)
   }
 })
 
@@ -72,8 +73,8 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
     const deleted = await deletePayment(String(req.params.id))
     if (!deleted) { res.status(404).json({ error: 'Payment not found' }); return }
     res.status(204).send()
-  } catch {
-    res.status(500).json({ error: 'Failed to delete payment' })
+  } catch (err) {
+    fail(res, 'Failed to delete payment', err)
   }
 })
 

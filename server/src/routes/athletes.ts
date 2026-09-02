@@ -11,6 +11,7 @@ import {
   createAthleteMax,
   deleteAthleteMax,
 } from '../services/athleteService.js'
+import { fail } from '../lib/httpError.js'
 
 const router = Router()
 
@@ -18,8 +19,8 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
   try {
     const includeArchived = req.query.include_archived === '1'
     res.json(await findAllAthletes({ includeArchived }))
-  } catch {
-    res.status(500).json({ error: 'Failed to fetch athletes' })
+  } catch (err) {
+    fail(res, 'Failed to fetch athletes', err)
   }
 })
 
@@ -28,8 +29,8 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
     const athlete = await findAthleteById(String(req.params.id))
     if (!athlete) { res.status(404).json({ error: 'Athlete not found' }); return }
     res.json(athlete)
-  } catch {
-    res.status(500).json({ error: 'Failed to fetch athlete' })
+  } catch (err) {
+    fail(res, 'Failed to fetch athlete', err)
   }
 })
 
@@ -38,8 +39,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   if (!body) return
   try {
     res.status(201).json(await createAthlete(body))
-  } catch {
-    res.status(500).json({ error: 'Failed to create athlete' })
+  } catch (err) {
+    fail(res, 'Failed to create athlete', err)
   }
 })
 
@@ -50,8 +51,8 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
     const updated = await updateAthlete(String(req.params.id), body)
     if (!updated) { res.status(404).json({ error: 'Athlete not found' }); return }
     res.json(updated)
-  } catch {
-    res.status(500).json({ error: 'Failed to update athlete' })
+  } catch (err) {
+    fail(res, 'Failed to update athlete', err)
   }
 })
 
@@ -65,8 +66,8 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
       : await deleteAthlete(String(req.params.id))
     if (!deleted) { res.status(404).json({ error: 'Athlete not found' }); return }
     res.status(204).send()
-  } catch {
-    res.status(500).json({ error: 'Failed to delete athlete' })
+  } catch (err) {
+    fail(res, 'Failed to delete athlete', err)
   }
 })
 
@@ -79,8 +80,8 @@ router.get('/:id/maxes', async (req: Request, res: Response): Promise<void> => {
     const athlete = await findAthleteById(String(req.params.id))
     if (!athlete) { res.status(404).json({ error: 'Athlete not found' }); return }
     res.json(await findMaxesByAthlete(athlete.id))
-  } catch {
-    res.status(500).json({ error: 'Failed to fetch maxes' })
+  } catch (err) {
+    fail(res, 'Failed to fetch maxes', err)
   }
 })
 
@@ -91,8 +92,8 @@ router.post('/:id/maxes', async (req: Request, res: Response): Promise<void> => 
     const athlete = await findAthleteById(String(req.params.id))
     if (!athlete) { res.status(404).json({ error: 'Athlete not found' }); return }
     res.status(201).json(await createAthleteMax({ athlete_id: athlete.id, ...body }))
-  } catch {
-    res.status(500).json({ error: 'Failed to create max' })
+  } catch (err) {
+    fail(res, 'Failed to create max', err)
   }
 })
 
@@ -101,8 +102,8 @@ router.delete('/:id/maxes/:maxId', async (req: Request, res: Response): Promise<
     const deleted = await deleteAthleteMax(String(req.params.maxId), String(req.params.id))
     if (!deleted) { res.status(404).json({ error: 'Max not found' }); return }
     res.status(204).send()
-  } catch {
-    res.status(500).json({ error: 'Failed to delete max' })
+  } catch (err) {
+    fail(res, 'Failed to delete max', err)
   }
 })
 

@@ -1,7 +1,7 @@
 import express, { NextFunction, Request, Response } from 'express'
 import cors from 'cors'
 import { join } from 'path'
-import fs from 'fs'
+import { configureLogger, logError } from './lib/logger.js'
 import athletesRouter from './routes/athletes.js'
 import programsRouter from './routes/programs.js'
 import progressRouter from './routes/progress.js'
@@ -15,11 +15,9 @@ import discordRouter from './routes/discord.js'
 export function createApp(staticDir?: string, logPath?: string) {
   const app = express()
 
-  const log = (msg: string) => {
-    const line = `[${new Date().toISOString()}] ${msg}\n`
-    if (logPath) try { fs.appendFileSync(logPath, line) } catch { /* ignore */ }
-    console.log(msg)
-  }
+  // Routes log through the shared logger rather than a closure, so a handler
+  // anywhere in the tree can record why it failed.
+  configureLogger(logPath)
 
   app.use(cors({ origin: ['http://localhost:3000', 'http://localhost:3001'] }))
   app.use(express.json())
@@ -48,11 +46,12 @@ export function createApp(staticDir?: string, logPath?: string) {
     })
   }
 
-  // Global error handler — logs the error and returns JSON
+  // Global error handler — the stack goes to the log, never to the client.
+  // It used to be returned as the JSON error body, which surfaced raw internals
+  // in a UI toast.
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const msg = err instanceof Error ? err.stack ?? err.message : String(err)
-    log(`EXPRESS ERROR: ${msg}`)
-    res.status(500).json({ error: msg })
+    logError('Unhandled request error', err)
+    res.status(500).json({ error: 'Internal server error' })
   })
 
   return app
