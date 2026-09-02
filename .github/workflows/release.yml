@@ -124,12 +124,14 @@ jobs:
 
           # Fail loudly rather than publishing a release missing its update
           # manifest — a silent half-release is worse than no release.
-          for required in latest.yml; do
-            if ! ls artifacts/*/"$required" >/dev/null 2>&1; then
-              echo "::error::$required is missing — auto-update would not work for this release."
-              exit 1
-            fi
-          done
+          # NB: check the expanded array, not `ls`. With nullglob a missing file
+          # leaves `ls` with no arguments, so it lists the working directory and
+          # exits 0 — the guard would pass exactly when it should fail.
+          MANIFESTS=(artifacts/*/latest.yml)
+          if [ ${#MANIFESTS[@]} -eq 0 ]; then
+            echo "::error::latest.yml is missing — auto-update would not work for this release."
+            exit 1
+          fi
 
           # Create the release, or attach to it if the tag already has one. Only
           # the "already exists" case should fall through to upload, so check for
