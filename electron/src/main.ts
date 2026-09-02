@@ -98,6 +98,11 @@ async function startServer(): Promise<void> {
   // userData path so it can persist the encrypted email app-password (Feature 6a).
   bundle.configureSecureStore({ safeStorage, userDataDir: app.getPath('userData') })
 
+  // Same injection seam for the handful of shell actions the UI needs (opening
+  // the data folder from Settings and from the error screen). Optional-chained so
+  // a stale bundle without the export can't break startup.
+  bundle.configureSystem?.({ shell })
+
   const expressApp = bundle.createApp(staticDir, logPath)
 
   await new Promise<void>((resolve, reject) => {
