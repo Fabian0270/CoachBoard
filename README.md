@@ -26,7 +26,7 @@ A desktop application for strength coaches to manage athletes, build and analyze
 Go to the [Releases page](https://github.com/Fabian0270/CoachBoard/releases) and download the build for your OS:
 
 **Windows**
-1. Download **CoachBoard Setup x.x.x.exe** from the latest release
+1. Download **CoachBoard-Setup-x.x.x.exe** from the latest release
 2. Run the installer and follow the prompts
 3. Launch **CoachBoard** from the Start Menu or Desktop shortcut
 
@@ -141,7 +141,7 @@ Windows users click through SmartScreen, Mac users right-click → Open on first
 Each installer must be built **on** its target OS (native module compilation):
 
 ```bash
-npm run package        # Windows → dist-electron/CoachBoard Setup x.x.x.exe (+ win-unpacked/)
+npm run package        # Windows → dist-electron/CoachBoard-Setup-x.x.x.exe (+ win-unpacked/)
 npm run package:mac    # macOS   → dist-electron/CoachBoard-x.x.x-<arch>.dmg
 ```
 

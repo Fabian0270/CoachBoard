@@ -52,6 +52,11 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   include: build/installer.nsh
+  # Hyphens, not spaces. electron-builder writes the hyphenated name into
+  # latest.yml regardless, and GitHub rewrites spaces in uploaded asset names —
+  # so a spaced filename means the updater asks for a URL that does not exist and
+  # every update check 404s silently. Keeping all three in agreement is the fix.
+  artifactName: ${productName}-Setup-${version}.${ext}
 
 mac:
   category: public.app-category.healthcare-fitness

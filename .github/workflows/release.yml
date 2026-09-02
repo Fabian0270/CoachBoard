@@ -112,7 +112,9 @@ jobs:
         run: |
           # download-artifact v4 places each artifact in its own subdirectory,
           # so the files sit exactly one level down: artifacts/<name>/<file>.
-          # (Globbed paths keep spaces intact, e.g. "CoachBoard Setup x.y.z.exe".)
+          # Artifact names are hyphenated (no spaces) so the names in latest.yml,
+          # on disk, and on the GitHub release all agree — see the nsis
+          # artifactName note in electron-builder.yml.
           #
           # The .yml manifests must be attached alongside the installers or
           # auto-update silently finds nothing on a release that looks complete.
