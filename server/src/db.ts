@@ -2,6 +2,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import { Kysely, SqliteDialect, sql, type Generated } from 'kysely'
 import { mkdirSync } from 'fs'
 import { dirname } from 'path'
+import { applyPendingRestore } from './services/pendingRestore.js'
 
 export interface AthleteTable {
   id: string
@@ -212,17 +213,44 @@ export interface DB {
 }
 
 let _db: Kysely<DB> | null = null
+let _sqlite: BetterSqlite3.Database | null = null
+let _dbPath = ''
 
 export function getDb(): Kysely<DB> {
   if (!_db) throw new Error('Database not initialized — call initializeDatabase() first')
   return _db
 }
 
+/**
+ * The raw better-sqlite3 handle underneath Kysely. Needed for the online backup
+ * API, which is the only way to copy the database consistently while the app is
+ * running — a plain file copy can catch a half-written page.
+ */
+export function getSqlite(): BetterSqlite3.Database {
+  if (!_sqlite) throw new Error('Database not initialized — call initializeDatabase() first')
+  return _sqlite
+}
+
+/** Where the live database file is. ':memory:' under test. */
+export function getDatabasePath(): string {
+  return _dbPath
+}
+
 export async function initializeDatabase(dbPath: string): Promise<void> {
   mkdirSync(dirname(dbPath), { recursive: true })
 
+  // A restore staged by the coach is swapped in here, before anything opens the
+  // file — SQLite holds it open for the whole session, so this is the only safe
+  // moment to replace it.
+  if (applyPendingRestore(dbPath)) {
+    console.log('Applied a staged database restore')
+  }
+
+  _sqlite = new BetterSqlite3(dbPath)
+  _dbPath = dbPath
+
   const dialect = new SqliteDialect({
-    database: new BetterSqlite3(dbPath),
+    database: _sqlite,
   })
 
   _db = new Kysely<DB>({ dialect })

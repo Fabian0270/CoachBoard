@@ -37,7 +37,7 @@ Go to the [Releases page](https://github.com/Fabian0270/CoachBoard/releases) and
 
 > Intel Macs aren't supported yet — GitHub's free Intel build runners have been retired, so a native x64 build needs a paid runner or a self-hosted Intel Mac (tracked as a follow-up).
 
-The app stores all data locally in your user profile (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS). No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
+The app stores all data locally in a single folder named `coachboard-electron` inside your user profile — `%APPDATA%\coachboard-electron` on Windows, `~/Library/Application Support/coachboard-electron` on macOS. That folder holds the database, the log, automatic backups, and any synced Discord media. **Settings → Your data** shows the exact path, opens the folder, and lets you save or restore a copy of the database. No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
 
 ---
 
@@ -170,4 +170,4 @@ CoachBoard/
 └── package.json     # npm workspaces root (client, server, shared, electron)
 ```
 
-The app runs Express on `localhost:3001` inside the Electron process. The React frontend talks to it via the `/api/*` routes. SQLite data is stored in the app's `userData` directory under `%APPDATA%`.
+The app runs Express on `localhost:3001` inside the Electron process. The React frontend talks to it via the `/api/*` routes. SQLite data is stored as `coachboard.sqlite` in the app's `userData` directory (`%APPDATA%\coachboard-electron` on Windows — the folder name comes from `electron/package.json` `"name"`, as no `productName` is set).

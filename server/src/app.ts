@@ -12,6 +12,7 @@ import exportTemplatesRouter from './routes/exportTemplates.js'
 import settingsRouter from './routes/settings.js'
 import discordRouter from './routes/discord.js'
 import systemRouter from './routes/system.js'
+import backupRouter from './routes/backup.js'
 
 export function createApp(staticDir?: string, logPath?: string) {
   const app = express()
@@ -34,6 +35,7 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api/settings', settingsRouter)
   app.use('/api/discord', discordRouter)
   app.use('/api/system', systemRouter)
+  app.use('/api/backup', backupRouter)
 
   // Unknown API routes must 404 as JSON, not fall through to the static catch-all
   app.use('/api', (_req, res) => {

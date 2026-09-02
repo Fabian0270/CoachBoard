@@ -91,6 +91,11 @@ async function startServer(): Promise<void> {
   await bundle.initializeDatabase(dbPath)
   log('Database initialized')
 
+  // Rolling backup of the database the coach just opened, keeping the last few.
+  // Best-effort inside the service — a backup failure must never block startup.
+  const backup = await bundle.runStartupBackup?.()
+  if (backup) log(`Startup backup: ${backup}`)
+
   const staticDir = resolveServerPath('client/dist')
   log(`Static dir: ${staticDir} (exists: ${fs.existsSync(staticDir)})`)
 
