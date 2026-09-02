@@ -8,11 +8,69 @@ const SERVER_PORT = 3001
 
 let logPath = ''
 
+/** Roll the log past this size so it can't grow for the life of the install. */
+const MAX_LOG_BYTES = 5 * 1024 * 1024
+
+/** Best-effort rotation, keeping one previous generation. Never blocks logging. */
+function rotateLogIfNeeded(): void {
+  if (!logPath) return
+  try {
+    if (fs.statSync(logPath).size < MAX_LOG_BYTES) return
+    fs.rmSync(`${logPath}.1`, { force: true })
+    fs.renameSync(logPath, `${logPath}.1`)
+  } catch {
+    /* missing, locked, or unwritable — fall through and just append */
+  }
+}
+
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`
-  if (logPath) try { fs.appendFileSync(logPath, line) } catch { /* ignore */ }
+  if (logPath) {
+    rotateLogIfNeeded()
+    try { fs.appendFileSync(logPath, line) } catch { /* ignore */ }
+  }
   console.log(msg)
 }
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? `${err.message}\n\n${err.stack ?? ''}` : String(err)
+}
+
+// ── Crash safety ────────────────────────────────────────────────────────────
+// The Express server runs inside this process rather than as a child, so an
+// unhandled throw anywhere takes the entire app down with it. There were no
+// handlers at all, which meant that happened silently: no log line, no dialog,
+// just a window that vanished.
+
+let crashDialogShown = false
+
+function reportCrash(kind: string, err: unknown): void {
+  log(`${kind}: ${describeError(err)}`)
+
+  // Surface only the first one. A repeating fault would otherwise bury the coach
+  // in modal dialogs faster than they could dismiss them.
+  if (crashDialogShown || !app.isReady()) return
+  crashDialogShown = true
+  void dialog
+    .showMessageBox({
+      type: 'error',
+      title: 'CoachBoard hit an unexpected error',
+      message: 'Something went wrong in the background.',
+      detail:
+        'Your data on disk is untouched. If the app starts behaving oddly, restart it.\n\n' +
+        `Details were written to:\n${logPath}`,
+      buttons: ['OK'],
+    })
+    .catch(() => { /* a failed dialog must not recurse back into this handler */ })
+}
+
+process.on('uncaughtException', (err) => reportCrash('UNCAUGHT EXCEPTION', err))
+
+process.on('unhandledRejection', (reason) => {
+  // Logged but deliberately not surfaced. Rejections happen in normal operation
+  // (a dropped Discord fetch, an aborted request), so a dialog would cry wolf.
+  log(`UNHANDLED REJECTION: ${describeError(reason)}`)
+})
 
 function resolveServerPath(relPath: string): string {
   return app.isPackaged
@@ -57,7 +115,17 @@ async function startServer(): Promise<void> {
   // Discord sync-on-launch (delayed so startup isn't blocked; no-op when the
   // integration isn't configured). Optional-chained so a stale bundle without
   // the export can't crash startup.
-  bundle.initDiscordSync?.({ launchDelayMs: 8000 })
+  //
+  // Fire-and-forget by design, but it previously had no catch at all: a rejection
+  // here became an unhandled rejection that could take the main process down long
+  // after a successful launch. The IIFE catches a synchronous throw too.
+  void (async () => {
+    try {
+      await bundle.initDiscordSync?.({ launchDelayMs: 8000 })
+    } catch (err) {
+      log(`Discord sync failed to start: ${describeError(err)}`)
+    }
+  })()
 }
 
 async function createWindow(): Promise<void> {
@@ -141,11 +209,25 @@ app.whenReady().then(async () => {
     await startServer()
     await createWindow()
   } catch (err) {
-    const msg = err instanceof Error ? `${err.message}\n\n${err.stack}` : String(err)
-    log(`FATAL: ${msg}`)
-    dialog.showErrorBox('CoachBoard failed to start', msg)
+    log(`FATAL: ${describeError(err)}`)
+    // Lead with the readable message; the stack is in the log, not the dialog.
+    const message = err instanceof Error ? err.message : String(err)
+    dialog.showErrorBox(
+      'CoachBoard failed to start',
+      `${message}\n\nYour data has not been touched. Full details were written to:\n${logPath}`,
+    )
     app.quit()
   }
+})
+
+// A dead renderer presents as a frozen or blank window with no other signal, so
+// record why. Child processes (GPU, utility) are usually recoverable — log only.
+app.on('render-process-gone', (_event, _webContents, details) => {
+  log(`RENDERER GONE: reason=${details.reason} exitCode=${details.exitCode}`)
+})
+
+app.on('child-process-gone', (_event, details) => {
+  log(`CHILD PROCESS GONE: type=${details.type} reason=${details.reason}`)
 })
 
 app.on('window-all-closed', () => {
