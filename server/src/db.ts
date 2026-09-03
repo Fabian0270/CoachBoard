@@ -166,6 +166,17 @@ export interface DiscordMediaTable {
   duplicate_of_id: string | null       // informational sha256-dup marker (both files kept)
   reviewed: number                     // 0/1
   created_at: string
+  // --- Feature 11a (thumbnails) ---
+  thumb_path: string | null            // relative to userData; derived, deleted with the source
+  thumb_status: string | null          // null (untried) | 'ok' | 'unsupported' | 'failed'
+  duration_ms: number | null           // captured alongside the thumbnail
+  /**
+   * Set once a coach has converted an undecodable video (e.g. HEVC) to a format
+   * Chromium can play here. Every reader — player, thumbnailer, analyser —
+   * prefers this over local_path when present. Nullable and unused until the
+   * converter ships; added now because a column costs nothing and a migration does.
+   */
+  transcoded_path: string | null
 }
 
 export interface DiscordSentMessageTable {
@@ -589,6 +600,13 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
       FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE SET NULL
     )
   `.execute(_db)
+
+  // Feature 11a — thumbnails. Added by ALTER rather than in the CREATE above so
+  // databases from <=1.14.0 converge to the same shape as a fresh install.
+  await addColumnIfMissing('discord_media', 'thumb_path', 'TEXT')
+  await addColumnIfMissing('discord_media', 'thumb_status', 'TEXT')
+  await addColumnIfMissing('discord_media', 'duration_ms', 'INTEGER')
+  await addColumnIfMissing('discord_media', 'transcoded_path', 'TEXT')
 
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_athlete ON discord_media(athlete_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_user ON discord_media(discord_user_id)`.execute(_db)

@@ -1,5 +1,10 @@
-import { Router } from 'express'
+import express, { Router } from 'express'
 import { z } from 'zod'
+import {
+  saveThumbnail,
+  markThumbStatus,
+  getThumbAbsPath,
+} from '../services/discordThumbService.js'
 import {
   getPublicSettings,
   saveToken,
@@ -398,6 +403,86 @@ router.get('/media/:id/file', async (req, res) => {
     acceptRanges: true,
     headers: { 'Content-Type': row.content_type ?? 'application/octet-stream' },
   })
+})
+
+// --- Thumbnails (Feature 11a) ----------------------------------------------
+// Generated in the renderer (see client thumbnailQueue) because Chromium already
+// decodes the video; shipping ffmpeg just to grab one frame would cost ~80 MB per
+// platform on the installer and on every auto-update.
+
+router.get('/media/:id/thumb', async (req, res) => {
+  const abs = await getThumbAbsPath(req.params.id)
+  if (!abs) {
+    res.status(404).json({ error: 'No thumbnail' })
+    return
+  }
+  res.sendFile(abs, {
+    headers: {
+      'Content-Type': 'image/jpeg',
+      // The path is keyed by media id and only ever rewritten by an explicit
+      // regenerate, so the browser can hold it indefinitely.
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    },
+  })
+})
+
+const thumbMetaSchema = z.object({
+  width: z.coerce.number().int().positive().optional(),
+  height: z.coerce.number().int().positive().optional(),
+  durationMs: z.coerce.number().nonnegative().optional(),
+})
+
+// express.json() is installed globally in app.ts but only parses
+// application/json, so a raw parser has to be mounted per-route for binary
+// bodies — same shape as the restore upload in routes/backup.ts.
+router.post(
+  '/media/:id/thumbnail',
+  express.raw({ type: 'image/jpeg', limit: '2mb' }),
+  async (req, res) => {
+    const body = req.body
+    // The bytes come from our own renderer, but this route writes to disk, so
+    // it verifies rather than trusts: JPEG SOI marker, non-empty.
+    if (!Buffer.isBuffer(body) || body.length < 4 || body[0] !== 0xff || body[1] !== 0xd8) {
+      res.status(400).json({ error: 'Expected a JPEG body' })
+      return
+    }
+    const parsed = thumbMetaSchema.safeParse(req.query)
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid thumbnail metadata' })
+      return
+    }
+    const saved = await saveThumbnail(req.params.id, body, {
+      width: parsed.data.width ?? null,
+      height: parsed.data.height ?? null,
+      durationMs: parsed.data.durationMs ?? null,
+    })
+    if (!saved) {
+      res.status(404).json({ error: 'Media not found' })
+      return
+    }
+    res.json(await getMediaItem(req.params.id))
+  },
+)
+
+const thumbStatusSchema = z.object({ status: z.enum(['unsupported', 'failed']) })
+
+/**
+ * Records that this machine could not produce a thumbnail. Persisting the
+ * failure is what stops the tile re-attempting an impossible decode (HEVC with
+ * no platform decoder) on every scroll.
+ */
+router.post('/media/:id/thumbnail/status', async (req, res) => {
+  const parsed = thumbStatusSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid thumbnail status' })
+    return
+  }
+  const ok = await markThumbStatus(req.params.id, parsed.data.status)
+  if (!ok) {
+    res.status(404).json({ error: 'Media not found' })
+    return
+  }
+  res.json(await getMediaItem(req.params.id))
 })
 
 const assignSchema = z.object({ athleteId: z.string().nullable() })

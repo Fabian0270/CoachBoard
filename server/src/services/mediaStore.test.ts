@@ -10,6 +10,9 @@ import {
   discordMediaRelPath,
   resolveMediaAbsPath,
   downloadToFile,
+  thumbRelPath,
+  writeMediaFile,
+  deleteAllFilesFor,
   MediaTooLargeError,
   MediaDownloadError,
 } from './mediaStore.js'
@@ -56,6 +59,73 @@ describe('discordMediaRelPath', () => {
   it('builds a stable month-bucketed path with message + attachment ids', () => {
     const rel = discordMediaRelPath('2026-07-03T10:00:00.000Z', 'msg1', 'att1', 'video.mov')
     expect(rel).toBe('media/discord/2026-07/msg1_att1_video.mov')
+  })
+})
+
+describe('thumbRelPath', () => {
+  it('buckets by month and keys by media id', () => {
+    expect(thumbRelPath('2026-07-03T10:00:00.000Z', 'abc-123')).toBe(
+      'media/thumbs/2026-07/abc-123.jpg',
+    )
+  })
+
+  it('falls back to a bucket rather than producing a rootless path', () => {
+    expect(thumbRelPath('', 'abc')).toBe('media/thumbs/unknown/abc.jpg')
+  })
+})
+
+describe('writeMediaFile', () => {
+  it('creates missing directories and leaves no .part behind', async () => {
+    await writeMediaFile('media/thumbs/2026-07/x.jpg', Buffer.from('jpegbytes'))
+    const abs = path.join(tmpDir, 'media', 'thumbs', '2026-07', 'x.jpg')
+    expect(fs.readFileSync(abs, 'utf8')).toBe('jpegbytes')
+    expect(fs.existsSync(`${abs}.part`)).toBe(false)
+  })
+
+  it('refuses to write outside the media root', async () => {
+    await expect(writeMediaFile('../escape.jpg', Buffer.from('x'))).rejects.toThrow()
+  })
+})
+
+describe('deleteAllFilesFor', () => {
+  // Regression guard: the thumbnail column was added after three delete paths
+  // already existed, and each one that forgets a derived file leaks it forever.
+  it('removes the source and every derived file', async () => {
+    await writeMediaFile('media/discord/2026-07/v.mp4', Buffer.from('video'))
+    await writeMediaFile('media/thumbs/2026-07/v.jpg', Buffer.from('thumb'))
+    await writeMediaFile('media/converted/2026-07/v.webm', Buffer.from('converted'))
+
+    const deleted = await deleteAllFilesFor({
+      local_path: 'media/discord/2026-07/v.mp4',
+      thumb_path: 'media/thumbs/2026-07/v.jpg',
+      transcoded_path: 'media/converted/2026-07/v.webm',
+    })
+
+    expect(deleted).toBe(true)
+    expect(fs.existsSync(path.join(tmpDir, 'media', 'discord', '2026-07', 'v.mp4'))).toBe(false)
+    expect(fs.existsSync(path.join(tmpDir, 'media', 'thumbs', '2026-07', 'v.jpg'))).toBe(false)
+    expect(fs.existsSync(path.join(tmpDir, 'media', 'converted', '2026-07', 'v.webm'))).toBe(false)
+  })
+
+  it('reports only whether the SOURCE went, so delete counts stay honest', async () => {
+    await writeMediaFile('media/thumbs/2026-07/orphan.jpg', Buffer.from('thumb'))
+    const deleted = await deleteAllFilesFor({
+      local_path: null,
+      thumb_path: 'media/thumbs/2026-07/orphan.jpg',
+      transcoded_path: null,
+    })
+    expect(deleted).toBe(false)
+    expect(fs.existsSync(path.join(tmpDir, 'media', 'thumbs', '2026-07', 'orphan.jpg'))).toBe(false)
+  })
+
+  it('tolerates already-missing files', async () => {
+    await expect(
+      deleteAllFilesFor({
+        local_path: 'media/discord/2026-07/gone.mp4',
+        thumb_path: 'media/thumbs/2026-07/gone.jpg',
+        transcoded_path: null,
+      }),
+    ).resolves.toBe(false)
   })
 })
 

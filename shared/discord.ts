@@ -102,6 +102,18 @@ export interface DiscordMediaItem {
   /** True when the file is downloaded and /media/:id/file will serve it. */
   playable: boolean
   isVideo: boolean
+  /** Poster-frame URL, or null when one hasn't been generated (see thumbStatus). */
+  thumbUrl: string | null
+  /**
+   * null = not attempted yet, so the tile may generate one.
+   * 'unsupported' = this machine cannot decode the video (e.g. HEVC with no
+   * platform decoder); 'failed' = decoding worked but capture didn't. Either
+   * non-null value means STOP RETRYING — without it every scroll past the tile
+   * re-attempts a decode that can never succeed.
+   */
+  thumbStatus: 'ok' | 'unsupported' | 'failed' | null
+  /** Video length, captured in the same pass as the thumbnail. */
+  durationMs: number | null
 }
 
 export interface DiscordUserItem {
