@@ -73,6 +73,38 @@ export function discordMediaRelPath(
   return `media/discord/${month}/${messageId}_${attachmentId}_${sanitizeFilename(filename)}`
 }
 
+/**
+ * Where a video's generated poster frame lives:
+ * media/thumbs/{yyyy-mm}/{mediaId}.jpg
+ *
+ * Month-bucketed like the source files so a year of videos doesn't put tens of
+ * thousands of entries in one directory. Keyed by media id rather than by the
+ * source filename because it is derived data — one thumbnail per row, always
+ * overwritable, and trivially matched back to its owner by the orphan sweep.
+ */
+export function thumbRelPath(postedAt: string, mediaId: string): string {
+  const month = postedAt.slice(0, 7) || 'unknown'
+  return `media/thumbs/${month}/${mediaId}.jpg`
+}
+
+/**
+ * Writes a small generated file (currently thumbnails) into the media root.
+ * Same .part-then-rename discipline as downloadToFile: a reader can never
+ * observe a half-written file, and a crash leaves no partial artifact behind.
+ */
+export async function writeMediaFile(relPath: string, data: Buffer): Promise<void> {
+  const abs = resolveMediaAbsPath(relPath)
+  await fsp.mkdir(path.dirname(abs), { recursive: true })
+  const partPath = `${abs}.part`
+  try {
+    await fsp.writeFile(partPath, data)
+    await fsp.rename(partPath, abs)
+  } catch (err) {
+    await fsp.unlink(partPath).catch(() => {})
+    throw err
+  }
+}
+
 export class MediaTooLargeError extends Error {
   constructor(public bytes: number, public maxBytes: number) {
     super(`Attachment exceeds the ${Math.round(maxBytes / 1024 / 1024)} MB size cap`)
@@ -143,4 +175,28 @@ export async function deleteMediaFile(relPath: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/** Every on-disk file a media row owns. */
+export interface MediaRowFiles {
+  local_path: string | null
+  thumb_path: string | null
+  transcoded_path: string | null
+}
+
+/**
+ * Removes the download AND its derived files (poster frame, converted copy).
+ * Deletion goes through here rather than through bare deleteMediaFile calls so
+ * that adding a fourth derived file later is one edit, not a hunt through every
+ * delete path — the thumbnail column was added after three such paths already
+ * existed, and missing one leaks files forever.
+ *
+ * Returns whether the *source* file was removed, so callers can keep reporting
+ * "N videos deleted" without derived files inflating the count.
+ */
+export async function deleteAllFilesFor(row: MediaRowFiles): Promise<boolean> {
+  const sourceDeleted = row.local_path ? await deleteMediaFile(row.local_path) : false
+  if (row.thumb_path) await deleteMediaFile(row.thumb_path)
+  if (row.transcoded_path) await deleteMediaFile(row.transcoded_path)
+  return sourceDeleted
 }
