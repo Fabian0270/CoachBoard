@@ -229,6 +229,12 @@ async function createWindow(): Promise<void> {
     width: 1280,
     height: 800,
     autoHideMenuBar: true,
+    // Dev only. A packaged build takes its window and taskbar icon from the
+    // executable, which electron-builder stamps from build/icon.png — but an
+    // unpackaged `electron .` has no such exe and falls back to the default
+    // Electron atom, so the icon is passed explicitly here. __dirname is
+    // electron/dist at runtime, hence ../build.
+    ...(app.isPackaged ? {} : { icon: path.join(__dirname, '../build/icon.png') }),
     // Match the app's light/dark background during load to avoid a white flash.
     // Approximates the renderer's "system" default; values mirror --background in index.css.
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff',
