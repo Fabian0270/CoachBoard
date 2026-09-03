@@ -91,12 +91,24 @@ export interface TrackOptions {
   maxForwardBackwardError?: number
   /** Give up when a re-seed cannot find at least this many corners. */
   minPoints?: number
+  /**
+   * Pyramid levels for the optical flow search. Each level roughly doubles the
+   * per-frame displacement that can be captured, so this is the knob to raise
+   * if a fast lift filmed close up outruns the search window.
+   *
+   * Left at 3 because raising it to 4 changed nothing across the whole spike
+   * library — the one clip that failed did so because the camera was picked up
+   * mid-clip, not because the bar moved too fast. No evidence, no default
+   * change; the option is here for when footage actually demands it.
+   */
+  pyramidLevels?: number
 }
 
 const DEFAULTS = {
   reseedBelow: 0.6,
   maxForwardBackwardError: 1.0,
   minPoints: 6,
+  pyramidLevels: 3,
 }
 
 /**
@@ -167,7 +179,7 @@ export function trackFrames(
 
   const winSize = new cv.Size(21, 21)
   const criteria = new cv.TermCriteria(cv.TermCriteria_EPS | cv.TermCriteria_COUNT, 30, 0.01)
-  const maxLevel = 3
+  const maxLevel = opts.pyramidLevels
 
   let prevGray = toGrayMat(cv, frames[0])
   const box: Seed = { ...seed }
