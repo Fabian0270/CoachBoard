@@ -81,8 +81,8 @@ describe('backup validation', () => {
 
   it('rejects a SQLite database that is not a CoachBoard one', async () => {
     const strayPath = path.join(dir, 'stray.sqlite')
-    const { default: BetterSqlite3 } = await import('better-sqlite3')
-    const stray = new BetterSqlite3(strayPath)
+    const { openSqlite } = await import('../sqlite.js')
+    const stray = openSqlite(strayPath)
     stray.exec('CREATE TABLE unrelated (id TEXT)')
     stray.close()
 

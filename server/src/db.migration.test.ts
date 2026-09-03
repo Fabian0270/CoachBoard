@@ -1,5 +1,5 @@
 import { afterAll, describe, it, expect } from 'vitest'
-import BetterSqlite3 from 'better-sqlite3'
+import { openSqlite } from './sqlite.js'
 import { sql } from 'kysely'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -18,7 +18,7 @@ afterAll(() => {
 describe('programs.athlete_id NOT NULL → nullable migration', () => {
   it('drops the NOT NULL constraint while preserving programs and their children', async () => {
     // Build the legacy schema by hand (athlete_id NOT NULL, no focus/export columns).
-    const raw = new BetterSqlite3(dbPath)
+    const raw = openSqlite(dbPath)
     raw.pragma('foreign_keys = ON')
     raw.exec(`
       CREATE TABLE athletes (id TEXT PRIMARY KEY, name TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
@@ -80,7 +80,7 @@ describe('discord_media gains the Feature 11a thumbnail columns', () => {
 
     // A v1.13.0-era discord_media: no thumb_path / thumb_status / duration_ms /
     // transcoded_path. Only the columns the old code actually wrote.
-    const raw = new BetterSqlite3(thumbDbPath)
+    const raw = openSqlite(thumbDbPath)
     raw.exec(`
       CREATE TABLE discord_users (
         id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT, avatar_url TEXT,

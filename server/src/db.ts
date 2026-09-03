@@ -1,7 +1,8 @@
-import BetterSqlite3 from 'better-sqlite3'
+import type BetterSqlite3 from 'better-sqlite3'
 import { Kysely, SqliteDialect, sql, type Generated } from 'kysely'
 import { mkdirSync } from 'fs'
 import { dirname } from 'path'
+import { openSqlite } from './sqlite.js'
 import { applyPendingRestore } from './services/pendingRestore.js'
 
 export interface AthleteTable {
@@ -257,7 +258,7 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
     console.log('Applied a staged database restore')
   }
 
-  _sqlite = new BetterSqlite3(dbPath)
+  _sqlite = openSqlite(dbPath)
   _dbPath = dbPath
 
   const dialect = new SqliteDialect({

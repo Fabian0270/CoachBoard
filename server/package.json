@@ -7,7 +7,8 @@
     "build": "tsc && npm run bundle",
     "bundle": "esbuild src/electron-entry.ts --bundle --platform=node --target=node20 --outfile=dist/electron-bundle.cjs --external:better-sqlite3 --format=cjs",
     "test": "node scripts/run-tests.cjs run",
-    "test:watch": "node scripts/run-tests.cjs"
+    "test:watch": "node scripts/run-tests.cjs",
+    "sqlite:repair": "node scripts/run-tests.cjs --repair"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
