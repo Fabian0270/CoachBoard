@@ -73,3 +73,74 @@ describe('programs.athlete_id NOT NULL → nullable migration', () => {
     expect(detached?.athlete_id).toBeNull()
   })
 })
+
+describe('discord_media gains the Feature 11a thumbnail columns', () => {
+  it('adds the columns to a pre-11a database without disturbing existing rows', async () => {
+    const thumbDbPath = join(dir, 'pre-11a.sqlite')
+
+    // A v1.13.0-era discord_media: no thumb_path / thumb_status / duration_ms /
+    // transcoded_path. Only the columns the old code actually wrote.
+    const raw = new BetterSqlite3(thumbDbPath)
+    raw.exec(`
+      CREATE TABLE discord_users (
+        id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT, avatar_url TEXT,
+        athlete_id TEXT, linked_at TEXT, first_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE discord_media (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL, channel_name TEXT,
+        message_id TEXT NOT NULL, attachment_id TEXT NOT NULL,
+        discord_user_id TEXT NOT NULL,
+        athlete_id TEXT, workout_id TEXT, suggested_workout_id TEXT,
+        filename TEXT NOT NULL, content_type TEXT,
+        size_bytes INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER,
+        message_content TEXT, posted_at TEXT NOT NULL, posted_date TEXT NOT NULL,
+        source_url TEXT, local_path TEXT, sha256 TEXT,
+        download_status TEXT NOT NULL DEFAULT 'pending', download_error TEXT,
+        duplicate_of_id TEXT, reviewed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (message_id, attachment_id)
+      );
+      INSERT INTO discord_users (id, username) VALUES ('u1', 'lifter');
+      INSERT INTO discord_media
+        (id, channel_id, message_id, attachment_id, discord_user_id, filename,
+         size_bytes, posted_at, posted_date, local_path, download_status)
+      VALUES
+        ('m1', 'c1', 'msg1', 'att1', 'u1', 'squat.mp4',
+         42, '2026-07-03T10:00:00.000Z', '2026-07-03',
+         'media/discord/2026-07/msg1_att1_squat.mp4', 'downloaded');
+    `)
+    const before = raw.prepare(`PRAGMA table_info(discord_media)`).all() as Array<{ name: string }>
+    expect(before.map((c) => c.name)).not.toContain('thumb_path')
+    raw.close()
+
+    await initializeDatabase(thumbDbPath)
+    const db = getDb()
+
+    const after = (
+      await sql<{ name: string }>`PRAGMA table_info(discord_media)`.execute(db)
+    ).rows.map((c) => c.name)
+    for (const col of ['thumb_path', 'thumb_status', 'duration_ms', 'transcoded_path']) {
+      expect(after).toContain(col)
+    }
+
+    // The existing video survives, with the new columns defaulting to null —
+    // which is what tells the client "no thumbnail attempted yet".
+    const row = await db.selectFrom('discord_media').selectAll().where('id', '=', 'm1').executeTakeFirst()
+    expect(row?.filename).toBe('squat.mp4')
+    expect(row?.local_path).toBe('media/discord/2026-07/msg1_att1_squat.mp4')
+    expect(row?.thumb_path).toBeNull()
+    expect(row?.thumb_status).toBeNull()
+    expect(row?.duration_ms).toBeNull()
+
+    // And they are writable, so saveThumbnail has somewhere to land.
+    await db
+      .updateTable('discord_media')
+      .set({ thumb_path: 'media/thumbs/2026-07/m1.jpg', thumb_status: 'ok', duration_ms: 5000 })
+      .where('id', '=', 'm1')
+      .execute()
+    const updated = await db.selectFrom('discord_media').selectAll().where('id', '=', 'm1').executeTakeFirst()
+    expect(updated?.thumb_status).toBe('ok')
+    expect(updated?.duration_ms).toBe(5000)
+  })
+})

@@ -20,6 +20,7 @@ import {
   getMessageRetentionDays,
 } from './discordSettingsService.js'
 import { applyRetention, applyMessageRetention } from './discordMediaService.js'
+import { sweepOrphanThumbs } from './discordThumbService.js'
 import {
   discordMediaRelPath,
   downloadToFile,
@@ -327,6 +328,10 @@ async function runSync(token: string): Promise<void> {
       // Retention sweeps — delete videos and messages past the coach's cutoffs.
       await applyRetention(await getRetentionDays()).catch(() => {})
       await applyMessageRetention(await getMessageRetentionDays()).catch(() => {})
+      // Thumbnails whose owning row is already gone. Needed because deleting a
+      // file can legitimately fail on Windows while it is open in the player,
+      // which would otherwise strand the thumbnail on disk forever.
+      await sweepOrphanThumbs().catch(() => {})
     }
   } catch (err) {
     resultCode = 'error'

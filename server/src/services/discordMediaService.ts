@@ -2,7 +2,7 @@ import { getDb } from '../db.js'
 import type { DiscordMediaTable } from '../db.js'
 import { computeSuggestedWorkoutId, ensureDmChannel, disableDmChannel, stopAutoSync } from './discordSyncService.js'
 import { clearSettings } from './discordSettingsService.js'
-import { deleteMediaFile } from './mediaStore.js'
+import { deleteAllFilesFor } from './mediaStore.js'
 import { parseCaption } from './captionMatcher.js'
 import type {
   DiscordMediaItem,
@@ -74,9 +74,16 @@ function toItem(row: MediaJoinRow): DiscordMediaItem {
     duplicateOfId: row.duplicate_of_id,
     reviewed: row.reviewed === 1,
     playable: row.download_status === 'downloaded' && !!row.local_path,
+    // The extension is a fallback, not a tiebreak: phones and some Discord
+    // clients upload .mov/.mp4 as application/octet-stream, and `??` would only
+    // reach the regex for a null content_type — so such a video used to be
+    // classed as an image and rendered through <img>, giving a broken icon.
     isVideo:
-      row.content_type?.startsWith('video/') ??
-      /\.(mp4|mov|webm|mkv|avi)$/i.test(row.filename),
+      row.content_type?.startsWith('video/') ||
+      /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(row.filename),
+    thumbUrl: row.thumb_path ? `/api/discord/media/${row.id}/thumb` : null,
+    thumbStatus: row.thumb_status as DiscordMediaItem['thumbStatus'],
+    durationMs: row.duration_ms,
   }
 }
 
@@ -228,25 +235,33 @@ export async function deleteMedia(mediaId: string): Promise<boolean> {
   const db = getDb()
   const row = await db
     .selectFrom('discord_media')
-    .select('local_path')
+    .select(['local_path', 'thumb_path', 'transcoded_path'])
     .where('id', '=', mediaId)
     .executeTakeFirst()
   if (!row) return false
-  if (row.local_path) await deleteMediaFile(row.local_path)
+  await deleteAllFilesFor(row)
   await db.deleteFrom('discord_media').where('id', '=', mediaId).execute()
   return true
 }
 
-/** Deletes media posted before the cutoff (file + row). Returns the count. */
+/**
+ * Deletes media posted before the cutoff (files + rows). Returns the count.
+ *
+ * applyRetention() and clearCache() both delegate here, so they inherit the
+ * derived-file cleanup for free — do not duplicate it there.
+ *
+ * TODO (11b): exempt videos that have a saved analysis. An analysis is
+ * deliberate work, not cache, and expiring the footage would strand it.
+ */
 export async function deleteMediaBefore(cutoffIso: string): Promise<number> {
   const db = getDb()
   const expired = await db
     .selectFrom('discord_media')
-    .select(['id', 'local_path'])
+    .select(['id', 'local_path', 'thumb_path', 'transcoded_path'])
     .where('posted_at', '<', cutoffIso)
     .execute()
   for (const row of expired) {
-    if (row.local_path) await deleteMediaFile(row.local_path)
+    await deleteAllFilesFor(row)
   }
   if (expired.length > 0) {
     await db
@@ -505,13 +520,15 @@ export async function disconnect(opts: { purge: boolean }): Promise<{ deletedFil
   const db = getDb()
   const files = await db
     .selectFrom('discord_media')
-    .select('local_path')
+    .select(['local_path', 'thumb_path', 'transcoded_path'])
     .where('local_path', 'is not', null)
     .execute()
 
+  // deletedFiles counts source videos only. The coach reads it as "N videos
+  // removed", so letting thumbnails and conversions inflate it would be a lie.
   let deleted = 0
   for (const f of files) {
-    if (f.local_path && (await deleteMediaFile(f.local_path))) deleted++
+    if (await deleteAllFilesFor(f)) deleted++
   }
 
   await db.deleteFrom('discord_sent_messages').execute()
