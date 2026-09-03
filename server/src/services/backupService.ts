@@ -1,7 +1,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import BetterSqlite3 from 'better-sqlite3'
+import { openSqlite } from '../sqlite.js'
 import { getDatabasePath, getSqlite } from '../db.js'
 import { pendingRestorePath } from './pendingRestore.js'
 import { log } from '../lib/logger.js'
@@ -127,7 +127,7 @@ export function validateDatabaseBuffer(buf: Buffer): string | null {
   const tmp = path.join(os.tmpdir(), `coachboard-verify-${Date.now()}-${process.pid}.sqlite`)
   try {
     fs.writeFileSync(tmp, buf)
-    const probe = new BetterSqlite3(tmp, { readonly: true });
+    const probe = openSqlite(tmp, { readonly: true });
     try {
       const rows = probe
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")

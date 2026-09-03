@@ -1,5 +1,5 @@
 import { afterAll, describe, it, expect } from 'vitest'
-import BetterSqlite3 from 'better-sqlite3'
+import { openSqlite } from './sqlite.js'
 import { sql } from 'kysely'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -18,7 +18,7 @@ afterAll(() => {
 describe('programs.athlete_id NOT NULL → nullable migration', () => {
   it('drops the NOT NULL constraint while preserving programs and their children', async () => {
     // Build the legacy schema by hand (athlete_id NOT NULL, no focus/export columns).
-    const raw = new BetterSqlite3(dbPath)
+    const raw = openSqlite(dbPath)
     raw.pragma('foreign_keys = ON')
     raw.exec(`
       CREATE TABLE athletes (id TEXT PRIMARY KEY, name TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0);

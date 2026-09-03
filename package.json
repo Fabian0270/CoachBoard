@@ -16,6 +16,7 @@
     "package:mac": "npm run build && npm run build:electron && electron-rebuild -f -w better-sqlite3 && cd electron && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --config electron-builder.yml --publish never",
     "typecheck": "npm exec -w client -- tsc --noEmit && npm exec -w server -- tsc --noEmit && npm exec -w electron -- tsc --noEmit",
     "test": "npm run test -w client && npm run test -w server",
+    "sqlite:repair": "npm run sqlite:repair -w server",
     "release": "node scripts/release.mjs",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
   },
