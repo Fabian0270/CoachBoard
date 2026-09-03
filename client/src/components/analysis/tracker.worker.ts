@@ -192,7 +192,10 @@ self.onmessage = async (event: MessageEvent<TrackerRequest>) => {
       // A previous run that was never ended (the coach navigated away
       // mid-track) still holds OpenCV Mats — release them before starting.
       endStream()
-      stream = { id: msg.id, tracker: createTracker(cv, msg.first, msg.seed) }
+      stream = {
+        id: msg.id,
+        tracker: createTracker(cv, msg.first, msg.seed),
+      }
       self.postMessage({
         type: 'sample',
         id: msg.id,

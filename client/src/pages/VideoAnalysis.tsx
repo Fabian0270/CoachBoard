@@ -23,8 +23,15 @@ import {
 
 type Phase = 'idle' | 'capturing' | 'tracking' | 'done'
 
-/** Below this the numbers stop meaning anything, so no path is shown at all. */
-const MIN_EFFECTIVE_FPS = 20
+/**
+ * Below this the numbers stop meaning anything, so no path is shown at all.
+ *
+ * Reading a frame off a playing video costs enough that roughly one frame in
+ * three is missed, so 30 fps footage yields ~18-20 samples per second. That is
+ * still several points per velocity window, so the floor sits below it — the
+ * gate is here to catch genuinely unusable captures, not normal ones.
+ */
+const MIN_EFFECTIVE_FPS = 12
 const MIN_SURVIVAL = 0.4
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
@@ -584,8 +591,8 @@ export default function VideoAnalysis() {
 
             {busy && (
               <p className="text-xs text-muted-foreground">
-                Playing at half speed to catch every frame — that takes about twice the length of
-                the range, and is what keeps the velocity numbers honest. The path draws as it goes.
+                Frames are read while the clip plays, so this takes about as long as the range
+                itself. The path draws as it goes.
               </p>
             )}
 
