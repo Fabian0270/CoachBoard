@@ -15,6 +15,16 @@ import type { Frame, Sample } from './tracker.core'
 // not draw anything until the whole clip had been read. Optical flow only ever
 // compares a frame to its predecessor, so frames are handed over as they
 // decode and released immediately.
+//
+// The canvas readback below looks expensive in isolation and is not: measured
+// end to end it captures ~30 samples per video-second at normal playback speed.
+// Two "faster" alternatives were tried and both were worse. Playing at half
+// speed caught every frame but ran the clip in slow motion for no real gain.
+// Handing ImageBitmaps to the worker tracked almost nothing, because
+// createImageBitmap applies its resize BEFORE the video's rotation metadata —
+// a 480x640 portrait clip came back as a 427x320 bitmap holding sideways
+// content, and the bar path collapsed to a 17px wiggle. Drawing the video
+// element directly is what keeps the frame in the orientation the coach sees.
 // ---------------------------------------------------------------------------
 
 /** Downscale target. Tracking does not need full resolution. */
@@ -28,25 +38,6 @@ const ANALYSIS_WIDTH = 320
  * forever with no error and no way back. A stall is not worth hanging over.
  */
 const STALL_TIMEOUT_MS = 5_000
-
-/**
- * Playback speed while capturing. Half speed is not a nicety — it is what makes
- * the numbers trustworthy.
- *
- * Pulling a frame off a playing <video> costs ~34 ms here however it is done:
- * measured at 33.9 ms via createImageBitmap, 35.1 ms via a CPU-backed canvas at
- * 160px wide, 39.8 ms via a GPU canvas at 320px. It is a fixed GPU sync per
- * readback, not pixel work — dropping the resolution changes nothing. At normal
- * speed that exceeds the 33 ms frame budget, so every other frame is missed and
- * a 30 fps clip yields 15 samples per second.
- *
- * That matters because velocity is a local quadratic fit over a ±75 ms window:
- * at 15 fps that window holds barely the three points the fit needs, so the
- * velocity gets noticeably worse. Measured samples per video-second: 15.2 at
- * 1.0x, 18.9 at 0.75x, 29.6 at 0.5x, 30.1 at 0.35x. Half speed is where every
- * frame lands, and going slower only costs more waiting.
- */
-const CAPTURE_PLAYBACK_RATE = 0.5
 
 export interface CaptureOptions {
   from: number
@@ -89,9 +80,7 @@ export async function captureInto(
 
   const wasMuted = video.muted
   const wasTime = video.currentTime
-  const wasRate = video.playbackRate
   video.muted = true
-  video.playbackRate = CAPTURE_PLAYBACK_RATE
   video.currentTime = from
   await new Promise<void>((resolve) => {
     const done = () => resolve()
@@ -132,6 +121,9 @@ export async function captureInto(
       if (meta.mediaTime > to) return stop(false)
       armStall()
 
+      // Drawing the video element directly is what keeps the frame in the same
+      // orientation the coach clicked on — the element applies the clip's
+      // rotation metadata, and anything that bypasses it does not.
       ctx.drawImage(video, 0, 0, width, height)
       const frame: Frame = {
         t: meta.mediaTime,
@@ -168,7 +160,6 @@ export async function captureInto(
   await inFlight.catch(() => null)
 
   video.muted = wasMuted
-  video.playbackRate = wasRate
   video.currentTime = wasTime
   return { scale, framesRead, stoppedEarly }
 }

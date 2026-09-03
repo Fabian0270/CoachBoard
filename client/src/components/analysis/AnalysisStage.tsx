@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { Sample } from './tracker.core'
-import { withAlpha } from './trackerColor'
 
 /** A point in ORIGINAL video pixels. Everything the coach sees is display
  *  pixels, but every stored coordinate is video pixels so it survives resizing
@@ -183,18 +182,9 @@ export default function AnalysisStage({
       }
     }
 
-    if (seed && !samples) {
-      ctx.strokeStyle = withAlpha(color, 0.5)
-      ctx.setLineDash([4, 4])
-      ctx.lineWidth = 1
-      ctx.strokeRect(
-        (seed.x - seed.radius) * scale,
-        (seed.y - seed.radius) * scale,
-        seed.radius * 2 * scale,
-        seed.radius * 2 * scale,
-      )
-      ctx.setLineDash([])
-    }
+    // No search-box outline. The circle already shows where the tracker is
+    // looking and the +/- buttons change its size, so the extra rectangle only
+    // added clutter over the lift.
   }, [samples, seed, videoRef, color, calibration, livePathRef])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
