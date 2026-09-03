@@ -383,6 +383,17 @@ router.get('/media/storage', async (_req, res) => {
   res.json(await getStorageUsage())
 })
 
+// Registered after /media/counts and /media/storage so those literal paths win;
+// Express matches in order and :id would otherwise swallow them.
+router.get('/media/:id', async (req, res) => {
+  const item = await getMediaItem(req.params.id)
+  if (!item) {
+    res.status(404).json({ error: 'Media not found' })
+    return
+  }
+  res.json(item)
+})
+
 router.delete('/media/:id', async (req, res) => {
   const deleted = await deleteMedia(req.params.id)
   if (!deleted) {
