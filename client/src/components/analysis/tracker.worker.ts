@@ -1,5 +1,13 @@
 /// <reference lib="webworker" />
-import { trackFrames, type Frame, type Seed, type TrackResult } from './tracker.core'
+import {
+  createTracker,
+  trackFrames,
+  type Frame,
+  type Sample,
+  type Seed,
+  type StreamingTracker,
+  type TrackResult,
+} from './tracker.core'
 
 // ---------------------------------------------------------------------------
 // Runs opencv.js off the main thread.
@@ -67,11 +75,18 @@ function patchDataUriFetch(): void {
 export type TrackerRequest =
   | { type: 'init' }
   | { type: 'track'; id: number; frames: Frame[]; seed: Seed }
+  // Streaming: one frame at a time, so memory stays constant however long the
+  // clip is and the path can be drawn while it is still being tracked.
+  | { type: 'streamStart'; id: number; first: Frame; seed: Seed }
+  | { type: 'streamFrame'; id: number; frame: Frame }
+  | { type: 'streamEnd'; id: number }
 
 export type TrackerResponse =
   | { type: 'ready' }
   | { type: 'error'; id?: number; message: string }
   | { type: 'result'; id: number; result: TrackResult }
+  /** One tracked position, or null for the frame where the bar was lost. */
+  | { type: 'sample'; id: number; sample: Sample | null }
 
 /** How long to wait for the wasm runtime before calling it a failure. */
 const RUNTIME_TIMEOUT_MS = 30_000
@@ -152,6 +167,14 @@ function loadCvWrapped(): Promise<{ value: unknown }> {
   })
 }
 
+/** The in-flight streaming track, if any. Only one runs at a time. */
+let stream: { id: number; tracker: StreamingTracker } | null = null
+
+function endStream(): void {
+  stream?.tracker.dispose()
+  stream = null
+}
+
 self.onmessage = async (event: MessageEvent<TrackerRequest>) => {
   const msg = event.data
   try {
@@ -163,11 +186,46 @@ self.onmessage = async (event: MessageEvent<TrackerRequest>) => {
     if (msg.type === 'track') {
       const result = trackFrames(cv, msg.frames, msg.seed)
       self.postMessage({ type: 'result', id: msg.id, result } satisfies TrackerResponse)
+      return
+    }
+    if (msg.type === 'streamStart') {
+      // A previous run that was never ended (the coach navigated away
+      // mid-track) still holds OpenCV Mats — release them before starting.
+      endStream()
+      stream = { id: msg.id, tracker: createTracker(cv, msg.first, msg.seed) }
+      self.postMessage({
+        type: 'sample',
+        id: msg.id,
+        sample: stream.tracker.samples[0] ?? null,
+      } satisfies TrackerResponse)
+      return
+    }
+    if (msg.type === 'streamFrame') {
+      // Late frames from a superseded run are ignored rather than corrupting
+      // the current one.
+      if (stream?.id !== msg.id) return
+      const sample = stream.tracker.push(msg.frame)
+      self.postMessage({ type: 'sample', id: msg.id, sample } satisfies TrackerResponse)
+      return
+    }
+    if (msg.type === 'streamEnd') {
+      if (stream?.id !== msg.id) return
+      const result: TrackResult = {
+        samples: stream.tracker.samples,
+        quality: stream.tracker.quality,
+      }
+      endStream()
+      self.postMessage({ type: 'result', id: msg.id, result } satisfies TrackerResponse)
+      return
     }
   } catch (err) {
+    endStream()
     self.postMessage({
       type: 'error',
-      id: msg.type === 'track' ? msg.id : undefined,
+      // Carry the id for every request that has one, so the caller's pending
+      // promise rejects instead of hanging. Only 'init' has no id, and that is
+      // the case that should surface as a whole-analyser failure.
+      id: msg.type === 'init' ? undefined : msg.id,
       message: err instanceof Error ? err.message : String(err),
     } satisfies TrackerResponse)
   }

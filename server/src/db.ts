@@ -207,6 +207,33 @@ export interface DiscordInboundMessageTable {
   created_at: string
 }
 
+/**
+ * A saved bar-path analysis (Feature 11b).
+ *
+ * The tracked path is JSON in a TEXT column rather than a row per point: a rep
+ * is a few hundred points, it is only ever read and written whole, and it rides
+ * along in the database backup that way. Roughly 10 KB per analysis.
+ *
+ * media_id is nullable because an analysis can come from a file on the coach's
+ * own computer, which has no library row behind it.
+ */
+export interface VideoAnalysisTable {
+  id: string
+  media_id: string | null
+  athlete_id: string | null
+  /** Shown when there is no media row to take a name from. */
+  source_label: string
+  /** JSON: the tracked path, as [{t,x,y}] in original video pixels. */
+  track: string
+  /** JSON: the scale line and plate size, or null if never calibrated. */
+  calibration: string | null
+  /** JSON: cached per-rep metrics, so a saved analysis lists without recomputing. */
+  metrics: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface DB {
   athletes: AthleteTable
   programs: ProgramTable
@@ -221,6 +248,7 @@ export interface DB {
   discord_media: DiscordMediaTable
   discord_sent_messages: DiscordSentMessageTable
   discord_inbound_messages: DiscordInboundMessageTable
+  video_analyses: VideoAnalysisTable
 }
 
 let _db: Kysely<DB> | null = null
@@ -606,6 +634,28 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await addColumnIfMissing('discord_media', 'thumb_status', 'TEXT')
   await addColumnIfMissing('discord_media', 'duration_ms', 'INTEGER')
   await addColumnIfMissing('discord_media', 'transcoded_path', 'TEXT')
+
+  // Feature 11b — saved bar-path analyses. ON DELETE SET NULL rather than
+  // CASCADE on both sides: an analysis is the coach's own work, so deleting the
+  // source video (or the athlete) must not silently destroy it.
+  await sql`
+    CREATE TABLE IF NOT EXISTS video_analyses (
+      id TEXT PRIMARY KEY,
+      media_id TEXT,
+      athlete_id TEXT,
+      source_label TEXT NOT NULL DEFAULT '',
+      track TEXT NOT NULL,
+      calibration TEXT,
+      metrics TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (media_id) REFERENCES discord_media(id) ON DELETE SET NULL,
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE SET NULL
+    )
+  `.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_media ON video_analyses(media_id)`.execute(_db)
+  await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_athlete ON video_analyses(athlete_id)`.execute(_db)
 
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_athlete ON discord_media(athlete_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_user ON discord_media(discord_user_id)`.execute(_db)
