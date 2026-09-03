@@ -80,7 +80,7 @@ describe('discord_media gains the Feature 11a thumbnail columns', () => {
 
     // A v1.13.0-era discord_media: no thumb_path / thumb_status / duration_ms /
     // transcoded_path. Only the columns the old code actually wrote.
-    const raw = new BetterSqlite3(thumbDbPath)
+    const raw = openSqlite(thumbDbPath)
     raw.exec(`
       CREATE TABLE discord_users (
         id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT, avatar_url TEXT,
