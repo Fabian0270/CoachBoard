@@ -4,7 +4,8 @@ import { Button } from '../ui/button'
 import { Textarea } from '../ui/textarea'
 import { useToast } from '../ui/toast'
 import { useConfirm } from '../ui/confirm-dialog'
-import { MessageSquareReply, Send, Trash2 } from 'lucide-react'
+import { LineChart, MessageSquareReply, Send, Trash2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import type { DiscordMediaItem, SentMessageDto } from 'coachboard-shared/discord'
 
 /**
@@ -25,6 +26,7 @@ export default function MediaPlayerDialog({
 }) {
   const toast = useToast()
   const confirm = useConfirm()
+  const navigate = useNavigate()
   const [reply, setReply] = useState('')
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState<SentMessageDto[]>([])
@@ -158,6 +160,19 @@ export default function MediaPlayerDialog({
                 rows={2}
               />
               <div className="flex flex-wrap gap-2">
+                {item.isVideo && item.thumbStatus !== 'unsupported' && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      onClose()
+                      navigate(`/analysis/${item.id}`)
+                    }}
+                  >
+                    <LineChart className="h-4 w-4" />
+                    Analyse bar path
+                  </Button>
+                )}
                 <Button size="sm" onClick={() => sendReply('channel')} disabled={sending || !reply.trim()}>
                   <MessageSquareReply className="h-4 w-4" />
                   {sending ? 'Sending…' : `Reply in ${item.channelName ?? 'channel'}`}

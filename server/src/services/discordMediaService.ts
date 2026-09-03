@@ -250,8 +250,11 @@ export async function deleteMedia(mediaId: string): Promise<boolean> {
  * applyRetention() and clearCache() both delegate here, so they inherit the
  * derived-file cleanup for free — do not duplicate it there.
  *
- * TODO (11b): exempt videos that have a saved analysis. An analysis is
- * deliberate work, not cache, and expiring the footage would strand it.
+ * Videos with a SAVED analysis are exempt. An analysis is deliberate work
+ * rather than cache, and the analysis keeps only the bar path — expiring the
+ * footage would leave a saved result no one could ever check against the video
+ * it came from. Same instinct as athlete deletion returning media to the
+ * unmatched queue rather than destroying it.
  */
 export async function deleteMediaBefore(cutoffIso: string): Promise<number> {
   const db = getDb()
@@ -259,6 +262,15 @@ export async function deleteMediaBefore(cutoffIso: string): Promise<number> {
     .selectFrom('discord_media')
     .select(['id', 'local_path', 'thumb_path', 'transcoded_path'])
     .where('posted_at', '<', cutoffIso)
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom('video_analyses')
+            .select('video_analyses.id')
+            .whereRef('video_analyses.media_id', '=', 'discord_media.id'),
+        ),
+      ),
+    )
     .execute()
   for (const row of expired) {
     await deleteAllFilesFor(row)

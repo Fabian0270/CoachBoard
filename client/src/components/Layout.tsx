@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, Dumbbell, Calculator, Wallet, Palette, Settings, MessageSquare } from 'lucide-react'
+import { LayoutDashboard, Users, Dumbbell, Calculator, Wallet, Palette, Settings, MessageSquare, LineChart } from 'lucide-react'
 import { cn } from '../lib/utils'
 import ThemeToggle from './ThemeToggle'
 import UpdateNotice from './UpdateNotice'
@@ -10,6 +10,10 @@ const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/athletes', label: 'Athletes', icon: Users },
   { to: '/programs', label: 'Programs', icon: Dumbbell },
+  // Deliberately NOT discordOnly: bar-path analysis works on any video file, so
+  // gating it behind the Discord integration would hide a standalone tool
+  // behind an unrelated setup step.
+  { to: '/analysis', label: 'Bar path', icon: LineChart },
   { to: '/calculators', label: 'Calculators', icon: Calculator },
   { to: '/payments', label: 'Payments', icon: Wallet },
   { to: '/styles', label: 'Excel Styles', icon: Palette },

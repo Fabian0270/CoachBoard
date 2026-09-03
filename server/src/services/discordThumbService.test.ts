@@ -110,6 +110,24 @@ describe('thumbnail cleanup', () => {
     expect(thumbExists(id)).toBe(false)
   })
 
+  it('the retention sweep spares videos that have a saved analysis', async () => {
+    // An analysis is deliberate work, not cache. Expiring the footage under it
+    // would leave a saved bar path no one could check against its own video.
+    const kept = await createMedia('2020-07-03T10:00:00.000Z')
+    const swept = await createMedia('2020-07-03T10:00:00.000Z')
+    await getDb().insertInto('video_analyses').values({
+      id: uuidv4(), media_id: kept, athlete_id: null, source_label: 'squat',
+      track: JSON.stringify([{ t: 0, x: 1, y: 2 }]), calibration: null,
+      metrics: null, notes: null, created_at: now(), updated_at: now(),
+    }).execute()
+
+    await applyRetention(30)
+
+    const left = await getDb().selectFrom('discord_media').select('id').execute()
+    expect(left.map((r) => r.id)).toEqual([kept])
+    expect(left.map((r) => r.id)).not.toContain(swept)
+  })
+
   it('the retention sweep removes thumbnails too', async () => {
     const id = await createMedia('2020-07-03T10:00:00.000Z')
     await saveThumbnail(id, JPEG, { width: 100, height: 100, durationMs: 1000 })
