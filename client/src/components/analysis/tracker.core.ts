@@ -51,6 +51,21 @@ export interface Sample {
   y: number
 }
 
+/**
+ * Signals for deciding whether a track is trustworthy enough to derive numbers
+ * from.
+ *
+ * READ THIS BEFORE GATING ANYTHING ON THEM: healthy-looking quality does NOT
+ * mean the track followed the bar. A box seeded slightly off the plate — onto a
+ * window frame or a rack upright behind it — tracks its static target perfectly
+ * and reports 100% survival, zero reseeds and never-lost. That exact failure
+ * happened during the 11b spike and was invisible in every metric here; only
+ * drawing the path over the frame revealed it.
+ *
+ * So these gate out BAD tracks, they never certify good ones. The overlay the
+ * coach can see is the real check, which is why it is a requirement and not
+ * decoration.
+ */
 export interface TrackQuality {
   /** Corners found inside the seed box. Too few means a featureless plate. */
   seededPoints: number
