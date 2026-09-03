@@ -12,7 +12,6 @@
     "./payments": "./payments.ts",
     "./discord": "./discord.ts",
     "./scoring": "./scoring.ts",
-    "./warmup": "./warmup.ts",
-    "./videoAnalysis": "./videoAnalysis.ts"
+    "./warmup": "./warmup.ts"
   }
 }
