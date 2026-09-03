@@ -8,6 +8,15 @@ electronLanguages:
 directories:
   output: ../dist-electron
 
+# The single source for every platform's icon. electron-builder resolves
+# buildResources to ./build, would pick build/icon.png up implicitly, and
+# generates the .ico (Windows exe + NSIS installer) and .icns (mac .app + dmg)
+# from it at package time — so no .ico or .icns is committed. Named explicitly
+# anyway: the implicit lookup is silent when it fails, and a build that quietly
+# ships the default Electron atom is exactly the kind of thing that only gets
+# noticed after a release. Source must stay square and >= 256x256.
+icon: build/icon.png
+
 # Tells electron-builder where published builds live, which is what makes it emit
 # the latest.yml / latest-mac.yml update manifests that electron-updater reads,
 # and what the installed app reads from resources/app-update.yml to know where to
