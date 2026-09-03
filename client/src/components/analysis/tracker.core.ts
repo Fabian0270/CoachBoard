@@ -155,33 +155,44 @@ function seedCorners(cv: OpenCv, gray: OpenCv, box: Seed, maxCorners: number): O
 }
 
 /**
- * Tracks the seeded box through the frames, returning one sample per frame.
+ * A tracker that consumes frames one at a time.
  *
- * Frames must be in presentation order and share dimensions. The returned
- * samples are the box CENTRE in frame pixels; converting to metres is the
- * calibration step's job, not this one's.
+ * Streaming rather than array-at-once because optical flow only ever compares
+ * frame N to frame N-1 — it needs two frames in memory, not the whole clip.
+ * Buffering the clip first cost ~330 MB for twenty seconds of 320px RGBA and
+ * meant nothing could be drawn until every frame had been read; this way memory
+ * is constant however long the video is, and the path can be drawn as it grows.
  */
-export function trackFrames(
+export interface StreamingTracker {
+  /** Feeds one frame, returning the bar position for it, or null once lost. */
+  push(frame: Frame): Sample | null
+  /** Releases the OpenCV Mats held between frames. Safe to call twice. */
+  dispose(): void
+  readonly quality: TrackQuality
+  readonly samples: Sample[]
+}
+
+/**
+ * Starts tracking the seeded box from `first`.
+ *
+ * Frames must arrive in presentation order and share dimensions. Samples are
+ * the box CENTRE in frame pixels; converting to metres is the calibration
+ * step's job, not this one's.
+ */
+export function createTracker(
   cv: OpenCv,
-  frames: Frame[],
+  first: Frame,
   seed: Seed,
   options: TrackOptions = {},
-): TrackResult {
+): StreamingTracker {
   const opts = { ...DEFAULTS, ...options }
   const maxCorners = 60
-
-  if (frames.length < 2) {
-    return {
-      samples: frames.map((f) => ({ t: f.t, x: seed.x + seed.width / 2, y: seed.y + seed.height / 2 })),
-      quality: { seededPoints: 0, medianSurvivalRate: 0, reseeds: 0, lostAtFrame: null, effectiveFps: 0 },
-    }
-  }
 
   const winSize = new cv.Size(21, 21)
   const criteria = new cv.TermCriteria(cv.TermCriteria_EPS | cv.TermCriteria_COUNT, 30, 0.01)
   const maxLevel = opts.pyramidLevels
 
-  let prevGray = toGrayMat(cv, frames[0])
+  let prevGray = toGrayMat(cv, first)
   const box: Seed = { ...seed }
   let prevPts = seedCorners(cv, prevGray, box, maxCorners)
   const seededPoints = prevPts.rows
@@ -209,10 +220,12 @@ export function trackFrames(
   }
   reanchor(prevPts)
 
-  const samples: Sample[] = [{ t: frames[0].t, x: box.x + box.width / 2, y: box.y + box.height / 2 }]
+  const samples: Sample[] = [{ t: first.t, x: box.x + box.width / 2, y: box.y + box.height / 2 }]
   const survivalRates: number[] = []
   let reseeds = 0
   let lostAtFrame: number | null = null
+  let frameIndex = 0
+  let disposed = false
 
   const scratch: OpenCv[] = []
   const track = (from: OpenCv, to: OpenCv, pts: OpenCv) => {
@@ -224,14 +237,17 @@ export function trackFrames(
     return { next, status }
   }
 
-  try {
-    for (let i = 1; i < frames.length; i++) {
-      const gray = toGrayMat(cv, frames[i])
+  const push = (frame: Frame): Sample | null => {
+    if (disposed || lostAtFrame !== null) return null
+    const i = ++frameIndex
+
+    try {
+      const gray = toGrayMat(cv, frame)
 
       if (prevPts.rows < opts.minPoints) {
         lostAtFrame = i
         gray.delete()
-        break
+        return null
       }
 
       const fwd = track(prevGray, gray, prevPts)
@@ -271,13 +287,14 @@ export function trackFrames(
           lostAtFrame = i
           prevGray.delete()
           prevGray = gray
-          break
+          return null
         }
         reanchor(prevPts)
-        samples.push({ t: frames[i].t, x: box.x + box.width / 2, y: box.y + box.height / 2 })
+        const recovered = { t: frame.t, x: box.x + box.width / 2, y: box.y + box.height / 2 }
+        samples.push(recovered)
         prevGray.delete()
         prevGray = gray
-        continue
+        return recovered
       }
 
       // Absolute, not cumulative: the centre is read off where the points now
@@ -285,7 +302,8 @@ export function trackFrames(
       // decision but never feed the position, so nothing integrates.
       box.x = median(keptX) + anchor.dx - box.width / 2
       box.y = median(keptY) + anchor.dy - box.height / 2
-      samples.push({ t: frames[i].t, x: box.x + box.width / 2, y: box.y + box.height / 2 })
+      const sample = { t: frame.t, x: box.x + box.width / 2, y: box.y + box.height / 2 }
+      samples.push(sample)
 
       const survivalRate = keptX.length / prevPts.rows
       prevPts.delete()
@@ -301,26 +319,72 @@ export function trackFrames(
 
       prevGray.delete()
       prevGray = gray
-
+      return sample
+    } finally {
+      // Per-frame scratch Mats. Released every frame rather than at the end,
+      // because "at the end" is unbounded when frames stream in.
       for (const m of scratch) m.delete()
       scratch.length = 0
     }
-  } finally {
-    for (const m of scratch) m.delete()
-    prevPts.delete()
-    prevGray.delete()
   }
 
-  const span = samples.length > 1 ? samples[samples.length - 1].t - samples[0].t : 0
   return {
-    samples,
-    quality: {
-      seededPoints,
-      medianSurvivalRate: median(survivalRates),
-      reseeds,
-      lostAtFrame,
-      effectiveFps: span > 0 ? (samples.length - 1) / span : 0,
+    push,
+    dispose() {
+      if (disposed) return
+      disposed = true
+      for (const m of scratch) m.delete()
+      scratch.length = 0
+      prevPts.delete()
+      prevGray.delete()
     },
+    samples,
+    get quality(): TrackQuality {
+      const span = samples.length > 1 ? samples[samples.length - 1].t - samples[0].t : 0
+      return {
+        seededPoints,
+        medianSurvivalRate: median(survivalRates),
+        reseeds,
+        lostAtFrame,
+        effectiveFps: span > 0 ? (samples.length - 1) / span : 0,
+      }
+    },
+  }
+}
+
+/**
+ * Tracks a complete array of frames in one call.
+ *
+ * A thin wrapper over the streaming tracker, kept because it is far easier to
+ * assert against in tests — the production path streams.
+ */
+export function trackFrames(
+  cv: OpenCv,
+  frames: Frame[],
+  seed: Seed,
+  options: TrackOptions = {},
+): TrackResult {
+  if (frames.length === 0) {
+    return {
+      samples: [],
+      quality: { seededPoints: 0, medianSurvivalRate: 0, reseeds: 0, lostAtFrame: null, effectiveFps: 0 },
+    }
+  }
+  if (frames.length < 2) {
+    return {
+      samples: frames.map((f) => ({ t: f.t, x: seed.x + seed.width / 2, y: seed.y + seed.height / 2 })),
+      quality: { seededPoints: 0, medianSurvivalRate: 0, reseeds: 0, lostAtFrame: null, effectiveFps: 0 },
+    }
+  }
+
+  const tracker = createTracker(cv, frames[0], seed, options)
+  try {
+    for (let i = 1; i < frames.length; i++) {
+      if (tracker.push(frames[i]) === null) break
+    }
+    return { samples: tracker.samples, quality: tracker.quality }
+  } finally {
+    tracker.dispose()
   }
 }
 

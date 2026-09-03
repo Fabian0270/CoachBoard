@@ -262,6 +262,38 @@ export function repMetrics(
   }
 }
 
+/** The scale reference: a line drawn across a plate of known diameter. */
+export interface CalibrationDto {
+  a: { x: number; y: number }
+  b: { x: number; y: number }
+  plateDiameterMm: number
+}
+
+/** A saved analysis as it travels over HTTP. */
+export interface VideoAnalysisDto {
+  id: string
+  mediaId: string | null
+  athleteId: string | null
+  athleteName: string | null
+  sourceLabel: string
+  track: Sample[]
+  calibration: CalibrationDto | null
+  metrics: RepMetrics[]
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SaveVideoAnalysisInput {
+  mediaId: string | null
+  athleteId: string | null
+  sourceLabel: string
+  track: Sample[]
+  calibration: CalibrationDto | null
+  metrics: RepMetrics[]
+  notes: string | null
+}
+
 /** Standard competition and training plate diameters. */
 export const PLATE_DIAMETERS_MM = [
   { label: '450 mm — competition', value: 450 },

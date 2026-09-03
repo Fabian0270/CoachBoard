@@ -35,6 +35,16 @@ interface Props {
   seed: SeedPoint | null
   /** Video-pixel path, or null before tracking has run. */
   samples: Sample[] | null
+  /**
+   * Path being built right now, read straight from a ref rather than state.
+   *
+   * Live tracking produces a point every frame, and pushing each one through
+   * React re-rendered the whole page — and re-ran the metrics over the whole
+   * growing array — thirty times a second, which starved the capture loop badly
+   * enough to halve the effective frame rate. The overlay already redraws every
+   * animation frame, so it can just read the latest array itself.
+   */
+  livePathRef?: React.MutableRefObject<Sample[]>
   onPlaceSeed: (point: { x: number; y: number }) => void
   onLoadedMetadata: (video: HTMLVideoElement) => void
   onTimeUpdate: (time: number) => void
@@ -60,6 +70,7 @@ export default function AnalysisStage({
   videoRef,
   seed,
   samples,
+  livePathRef,
   onPlaceSeed,
   onLoadedMetadata,
   onTimeUpdate,
@@ -87,12 +98,16 @@ export default function AnalysisStage({
     if (!ctx) return
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
+    // Finished path if there is one, otherwise whatever tracking has produced
+    // so far — so the line grows as the clip plays.
+    const path = samples ?? livePathRef?.current ?? null
+
     // The whole path, so a track that wandered off the bar is obvious at a
     // glance. Quality numbers cannot be trusted to reveal that on their own.
-    if (samples && samples.length > 1) {
+    if (path && path.length > 1) {
       const trace = () => {
         ctx.beginPath()
-        samples.forEach((s, i) =>
+        path.forEach((s, i) =>
           i ? ctx.lineTo(s.x * scale, s.y * scale) : ctx.moveTo(s.x * scale, s.y * scale),
         )
         ctx.stroke()
@@ -109,12 +124,13 @@ export default function AnalysisStage({
       trace()
     }
 
-    // The dot, riding the bar: whichever sample is nearest the playhead.
+    // The dot, riding the bar: whichever sample is nearest the playhead. While
+    // tracking, that is simply the newest point — which IS the current frame.
     const marker = samples?.length
       ? samples.reduce((best, s) =>
           Math.abs(s.t - video.currentTime) < Math.abs(best.t - video.currentTime) ? s : best,
         )
-      : null
+      : (path?.[path.length - 1] ?? null)
     const point = marker ?? seed
 
     if (point) {
@@ -179,7 +195,7 @@ export default function AnalysisStage({
       )
       ctx.setLineDash([])
     }
-  }, [samples, seed, videoRef, color, calibration])
+  }, [samples, seed, videoRef, color, calibration, livePathRef])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
   // once on any state change so it is right while paused too.

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Crosshair, Loader2, Palette, RotateCcw, Ruler, Target } from 'lucide-react'
+import { ArrowLeft, Check, Crosshair, Loader2, Palette, RotateCcw, Ruler, Save, Target } from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
@@ -10,8 +10,8 @@ import AnalysisStage, {
   type StageMode,
 } from '../components/analysis/AnalysisStage'
 import VideoPicker, { type AnalysisSource } from '../components/analysis/VideoPicker'
-import { useTracker } from '../components/analysis/useTracker'
-import { captureFrames } from '../components/analysis/captureFrames'
+import { useTracker, type TrackStream } from '../components/analysis/useTracker'
+import { captureInto } from '../components/analysis/captureFrames'
 import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
 import { TRACKER_COLORS, useTrackerColor } from '../components/analysis/trackerColor'
 import {
@@ -34,7 +34,10 @@ export default function VideoAnalysis() {
   const navigate = useNavigate()
   const toast = useToast()
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const { status: cvStatus, error: cvError, track } = useTracker()
+  const abortRef = useRef<AbortController | null>(null)
+  /** The path as it is being tracked — see the note where it is filled. */
+  const livePathRef = useRef<Sample[]>([])
+  const { status: cvStatus, error: cvError, openStream } = useTracker()
 
   const [source, setSource] = useState<AnalysisSource | null>(null)
   const [notFound, setNotFound] = useState(false)
@@ -51,6 +54,10 @@ export default function VideoAnalysis() {
   const [mode, setMode] = useState<StageMode>('seed')
   const [calibration, setCalibration] = useState<CalibrationLine | null>(null)
   const [awaitingSecondPoint, setAwaitingSecondPoint] = useState(false)
+  /** Shown once a track finishes, so nothing is stored without being asked for. */
+  const [offerSave, setOfferSave] = useState(false)
+  const [savedId, setSavedId] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   /**
    * Everything below belongs to ONE video, and React Router keeps this page
@@ -123,18 +130,34 @@ export default function VideoAnalysis() {
     setSeed((s) => s ?? null)
   }
 
+  /**
+   * Clicking the bar places the tracking point AND starts tracking.
+   *
+   * Tracking runs from the current playhead to the end of the marked range, so
+   * clicking at the moment the lift begins is all the setup a coach needs.
+   */
   const placeSeed = (point: { x: number; y: number }) => {
     const video = videoRef.current
     if (!video) return
-    setSeed((prev) => ({
+    const next: SeedPoint = {
       x: point.x,
       y: point.y,
-      radius: prev?.radius ?? Math.max(24, Math.round(video.videoWidth * 0.07)),
-    }))
-    // Any previous path belongs to the old point.
-    setSamples(null)
+      radius: seed?.radius ?? Math.max(24, Math.round(video.videoWidth * 0.07)),
+    }
+    setSeed(next)
     setQuality(null)
-    setPhase('idle')
+
+    const from = video.currentTime
+    const to = range && range.to > from + 0.2 ? range.to : duration
+    setRange({ from, to })
+    void runTracking(next, from, to)
+  }
+
+  /** Re-runs from the same point, after a resize or a range change. */
+  const retrack = () => {
+    const video = videoRef.current
+    if (!video || !seed || !range) return
+    void runTracking(seed, range.from, range.to)
   }
 
   /**
@@ -152,6 +175,26 @@ export default function VideoAnalysis() {
     }
   }
 
+  // Scale comes from a line the coach drags across a plate of known diameter.
+  // The plate is the reference because it sits IN the plane the bar travels in,
+  // so it distorts less than anything else in frame. Velocity stays in px/s
+  // until that line exists: an uncalibrated m/s would be a confidently wrong
+  // number, which is worse than an honest pixel one.
+  const calibrationPx = calibration
+    ? Math.hypot(calibration.b.x - calibration.a.x, calibration.b.y - calibration.a.y)
+    : 0
+  const pixelsPerMetre =
+    calibrationPx > 1 ? pixelsPerMetreFromPlate(calibrationPx, plateMm) : null
+
+  // Memoised because it walks the whole path twice (velocity, then rep
+  // segmentation), and it MUST sit above the early returns below — a hook after
+  // a conditional return changes the hook count between renders, which React
+  // rejects outright.
+  const reps: RepMetrics[] = useMemo(
+    () => (samples ? analysePath(samples, pixelsPerMetre).reps : []),
+    [samples, pixelsPerMetre],
+  )
+
   const resizeSeed = (delta: number) => {
     const video = videoRef.current
     if (!video) return
@@ -160,40 +203,100 @@ export default function VideoAnalysis() {
     )
   }
 
-  const runTracking = async () => {
+  /**
+   * Tracks from `seedPoint` to the end of the marked range, drawing as it goes.
+   *
+   * Runs automatically when the coach clicks the bar — there is nothing useful
+   * to do between placing a point and tracking it, so making them press a
+   * second button only added a step. The path appears live because frames are
+   * streamed to the tracker as they decode rather than collected first.
+   */
+  const runTracking = async (seedPoint: SeedPoint, from: number, to: number) => {
     const video = videoRef.current
-    if (!video || !seed || !range) return
+    if (!video) return
+
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
 
     setPhase('capturing')
     setProgress(0)
     setSamples(null)
     setQuality(null)
+    let lastProgressAt = 0
+
+    // A holder rather than a bare `let`: it is only ever assigned inside the
+    // capture callback, which TypeScript's flow analysis cannot see, so a plain
+    // variable narrows to `never` everywhere afterwards.
+    const streamRef: { current: TrackStream | null } = { current: null }
+    let scale = 1
+    // Live points go into a ref, NOT state. Calling setSamples once per frame
+    // re-rendered the page and re-ran the metrics over the whole growing array
+    // thirty times a second, which starved the capture loop badly enough to
+    // halve the effective frame rate — 15 fps out of 30 fps footage, which the
+    // quality gate then correctly rejected. The overlay reads this ref directly.
+    livePathRef.current = []
 
     try {
-      const { frames, scale } = await captureFrames(video, {
-        from: range.from,
-        to: range.to,
-        onProgress: setProgress,
-      })
-      if (frames.length < 5) {
-        toast.error('Not enough frames in that range — widen it and try again.')
+      const handle = await captureInto(
+        video,
+        async (frame, isFirst) => {
+          if (isFirst) {
+            scale = frame.width / video.videoWidth
+            streamRef.current = openStream(frame, {
+              x: (seedPoint.x - seedPoint.radius) * scale,
+              y: (seedPoint.y - seedPoint.radius) * scale,
+              width: seedPoint.radius * 2 * scale,
+              height: seedPoint.radius * 2 * scale,
+            })
+            // The seed frame's own sample comes back from streamStart.
+            return null
+          }
+          return streamRef.current ? streamRef.current.push(frame) : null
+        },
+        {
+          from,
+          to,
+          signal: controller.signal,
+          onSample: (sample, fraction) => {
+            if (sample) {
+              livePathRef.current.push({ t: sample.t, x: sample.x / scale, y: sample.y / scale })
+            }
+            // Progress drives a percentage readout, so a few updates a second
+            // is plenty; per-frame would reintroduce the same render storm.
+            const now = performance.now()
+            if (now - lastProgressAt > 200) {
+              lastProgressAt = now
+              setProgress(fraction)
+            }
+          },
+        },
+      )
+
+      if (!streamRef.current) {
+        toast.error('No frames could be read from that range.')
         setPhase('idle')
         return
       }
 
-      setPhase('tracking')
-      const result = await track(frames, {
-        x: (seed.x - seed.radius) * scale,
-        y: (seed.y - seed.radius) * scale,
-        width: seed.radius * 2 * scale,
-        height: seed.radius * 2 * scale,
-      })
+      // Note: an aborted run is NOT discarded. Capture stops early but the
+      // frames already tracked are perfectly good, so stopping is "I have seen
+      // enough reps" rather than "throw it away" — which matters on a long clip
+      // where the coach only cares about the first set.
+      const result = await streamRef.current.finish()
 
       const q = result.quality
+      if (handle.framesRead < 5) {
+        toast.error('Not enough frames in that range — widen it and try again.')
+        setSamples(null)
+        setPhase('idle')
+        return
+      }
       if (q.effectiveFps < MIN_EFFECTIVE_FPS || q.medianSurvivalRate < MIN_SURVIVAL) {
         // Deliberately show nothing rather than a path we do not trust — a
         // wrong number costs more credibility than an absent one.
         setQuality(q)
+        setSamples(null)
         setPhase('idle')
         toast.error(
           'That track was too unreliable to use. Try clicking nearer the middle of a plate, or enlarging the search circle with +.',
@@ -205,14 +308,56 @@ export default function VideoAnalysis() {
       setSamples(result.samples.map((s) => ({ t: s.t, x: s.x / scale, y: s.y / scale })))
       setQuality(q)
       setPhase('done')
-      video.currentTime = range.from
+      setSavedId(null)
+      setOfferSave(true)
+      video.currentTime = from
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Tracking failed')
+      if (!controller.signal.aborted) {
+        toast.error(err instanceof Error ? err.message : 'Tracking failed')
+      }
+      streamRef.current?.cancel()
+      setSamples(null)
       setPhase('idle')
     }
   }
 
+  /** Stops capture early and keeps whatever has been tracked so far. */
+  const cancelTracking = () => {
+    abortRef.current?.abort()
+  }
+
+  const saveAnalysis = async () => {
+    if (!samples) return
+    setSaving(true)
+    try {
+      const res = await fetch('/api/analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mediaId: source?.kind === 'discord' ? source.item.id : null,
+          athleteId: source?.kind === 'discord' ? source.item.athleteId : null,
+          sourceLabel: sourceLabel,
+          track: samples,
+          calibration: calibration ? { ...calibration, plateDiameterMm: plateMm } : null,
+          metrics: reps,
+          notes: null,
+        }),
+      })
+      if (!res.ok) throw new Error('Save failed')
+      const saved = (await res.json()) as { id: string }
+      setSavedId(saved.id)
+      setOfferSave(false)
+      toast.success('Analysis saved')
+    } catch {
+      toast.error('Could not save that analysis.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const reset = () => {
+    abortRef.current?.abort()
+    livePathRef.current = []
     setSeed(null)
     setSamples(null)
     setQuality(null)
@@ -266,18 +411,6 @@ export default function VideoAnalysis() {
   const busy = phase === 'capturing' || phase === 'tracking'
   const canTrack = !!seed && cvStatus === 'ready' && !busy && !!range
 
-  // Scale comes from a line the coach drags across a plate of known diameter.
-  // The plate is the reference because it sits IN the plane the bar travels in,
-  // so it distorts less than anything else in frame. Velocity stays in px/s
-  // until that line exists: an uncalibrated m/s would be a confidently wrong
-  // number, which is worse than an honest pixel one.
-  const calibrationPx = calibration
-    ? Math.hypot(calibration.b.x - calibration.a.x, calibration.b.y - calibration.a.y)
-    : 0
-  const pixelsPerMetre =
-    calibrationPx > 1 ? pixelsPerMetreFromPlate(calibrationPx, plateMm) : null
-  const reps: RepMetrics[] = samples ? analysePath(samples, pixelsPerMetre).reps : []
-
   return (
     <div className="space-y-4 p-6">
       <div className="flex items-center gap-3">
@@ -299,6 +432,7 @@ export default function VideoAnalysis() {
           videoRef={videoRef}
           seed={seed}
           samples={samples}
+          livePathRef={livePathRef}
           onPlaceSeed={placeSeed}
           onLoadedMetadata={onLoadedMetadata}
           onTimeUpdate={setCurrentTime}
@@ -430,14 +564,17 @@ export default function VideoAnalysis() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={runTracking} disabled={!canTrack}>
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Target className="h-4 w-4" />}
-                {phase === 'capturing'
-                  ? `Reading frames… ${Math.round(progress * 100)}%`
-                  : phase === 'tracking'
-                    ? 'Tracking…'
-                    : 'Track bar path'}
-              </Button>
+              {busy ? (
+                <Button variant="outline" onClick={cancelTracking}>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {`Tracking… ${Math.round(progress * 100)}% — stop and keep`}
+                </Button>
+              ) : (
+                <Button onClick={retrack} disabled={!canTrack}>
+                  <Target className="h-4 w-4" />
+                  {samples ? 'Track again' : 'Track bar path'}
+                </Button>
+              )}
               {(seed || samples) && (
                 <Button variant="ghost" onClick={reset} disabled={busy}>
                   <RotateCcw className="h-4 w-4" /> Clear
@@ -445,9 +582,10 @@ export default function VideoAnalysis() {
               )}
             </div>
 
-            {phase === 'capturing' && (
+            {busy && (
               <p className="text-xs text-muted-foreground">
-                Frames are read while the clip plays, so this takes about as long as the range itself.
+                Playing at half speed to catch every frame — that takes about twice the length of
+                the range, and is what keeps the velocity numbers honest. The path draws as it goes.
               </p>
             )}
 
@@ -463,6 +601,38 @@ export default function VideoAnalysis() {
                 <Stat label="Effective frame rate" value={`${quality.effectiveFps.toFixed(1)} fps`} />
                 {samples && <Stat label="Path points" value={`${samples.length}`} />}
               </div>
+            )}
+
+            {/* Asked, never assumed: an analysis is only stored if the coach
+                says so, so a throwaway look at a clip leaves nothing behind. */}
+            {offerSave && samples && (
+              <div className="flex flex-wrap items-center gap-3 rounded-md border border-primary/40 bg-primary/5 p-3">
+                <Save className="h-4 w-4 text-primary" />
+                <span className="text-sm">
+                  Save this analysis?
+                  <span className="ml-1 text-muted-foreground">
+                    {reps.length > 0
+                      ? `${reps.length} ${reps.length === 1 ? 'rep' : 'reps'}, bar path and scale are kept.`
+                      : 'The bar path is kept.'}
+                    {source?.kind === 'local' && ' The video itself is not — it stays on your computer.'}
+                  </span>
+                </span>
+                <div className="ml-auto flex gap-2">
+                  <Button size="sm" onClick={saveAnalysis} disabled={saving}>
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Save
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setOfferSave(false)} disabled={saving}>
+                    Not now
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {savedId && (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Check className="h-4 w-4 text-emerald-500" /> Saved.
+              </p>
             )}
 
             {samples && reps.length > 0 && (
