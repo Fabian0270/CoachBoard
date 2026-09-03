@@ -1,4 +1,0 @@
-{
-  "//": "Not a package. opencv.js is a classic Emscripten script (it assigns to an undeclared `Module`), but client/package.json declares \"type\": \"module\", so Node's nearest-package-json lookup would treat it as ESM and it throws on load in strict mode. This one line scopes it back to CommonJS so the Node-only unit tests can require() it. The browser ignores this file entirely; Vite copies public/ verbatim, so it is only ever an unused static asset.",
-  "type": "commonjs"
-}
