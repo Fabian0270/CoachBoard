@@ -123,18 +123,17 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
                 <td className="py-1 pr-4">{last != null ? `${last.toFixed(2)} m/s` : '—'}</td>
                 <td className="py-1">
                   <div className="flex items-center justify-end gap-1">
-                    {/* Only a clip still in the library can be reopened — a local
-                        file was never uploaded, so there is no video to return to. */}
-                    {row.mediaId && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        title="Open this clip again"
-                        onClick={() => navigate(`/analysis/${row.mediaId}`)}
-                      >
-                        <LineChart className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
+                    {/* Every row opens: the saved view rebuilds the path from
+                        the stored track, so a local clip whose video was never
+                        uploaded is just as readable as one still in the library. */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      title="Open this analysis"
+                      onClick={() => navigate(`/analysis/saved/${row.id}`)}
+                    >
+                      <LineChart className="h-3.5 w-3.5" />
+                    </Button>
                     {!row.athleteId && athletes && athletes.length > 0 && (
                       <label className="flex items-center gap-1" title="Attach to an athlete">
                         <UserPlus className="h-3.5 w-3.5 text-muted-foreground" />
