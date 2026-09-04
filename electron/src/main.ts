@@ -32,10 +32,13 @@ interface ServerBundle {
   configureSystem?(opts: { shell: unknown }): void
   configureCapture?(opts: { desktopCapturer: unknown }): void
   /** The source the coach picked, consumed once. See services/captureService. */
-  resolvePendingSource?(): Promise<Electron.DesktopCapturerSource | null>
+  resolvePendingSource?(): Promise<
+    { kind: 'self' } | { kind: 'source'; source: Electron.DesktopCapturerSource } | null
+  >
   configureUpdates?(opts: { install: () => void }): void
   setUpdateState?(state: { status: string; version?: string | null; message?: string | null }): void
   runStartupBackup?(): Promise<string | null>
+  sweepRecordings?(): Promise<number>
   initDiscordSync?(opts: { launchDelayMs: number }): void | Promise<void>
 }
 
@@ -145,6 +148,14 @@ async function startServer(): Promise<void> {
   bundle.configureSystem?.({ shell })
   bundle.configureCapture?.({ desktopCapturer })
 
+  // Feedback recordings are scratch space: the coach keeps one only by saving or
+  // sending it. Anything still on disk after a restart is therefore abandoned —
+  // an interrupted recording, or a review dialog that was never answered — and
+  // keeping it would grow their disk with files they already declined. Needs
+  // configureSecureStore above for the userData path.
+  const swept = await bundle.sweepRecordings?.().catch(() => 0)
+  if (swept) log(`Swept ${swept} abandoned recording(s)`)
+
   const expressApp = bundle.createApp(staticDir, logPath)
 
   await new Promise<void>((resolve, reject) => {
@@ -235,7 +246,7 @@ function initAutoUpdate(): void {
  * Recording prompt that argument was avoiding is a cost we take instead, and
  * Windows is the only shipping target today.
  */
-function configureMediaHandlers(sess: Electron.Session): void {
+function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): void {
   // Only our own page may ask, and only for what the app actually uses.
   // Electron's default handler grants far more, and leaving camera and
   // microphone to an undocumented default is not a decision worth inheriting.
@@ -277,8 +288,8 @@ function configureMediaHandlers(sess: Electron.Session): void {
       // source it parked is what gets recorded.
       void serverBundle
         ?.resolvePendingSource?.()
-        .then((source) => {
-          if (!source) {
+        .then((chosen) => {
+          if (!chosen) {
             // No choice parked: the request did not come from our picker, or the
             // window the coach chose has since closed. Refusing is the honest
             // answer — defaulting to the whole screen would record something
@@ -287,10 +298,19 @@ function configureMediaHandlers(sess: Electron.Session): void {
             callback({ video: undefined })
             return
           }
-          log(`Display capture: ${source.name}`)
           // 'loopback' mixes the machine's own audio in, so a lift video's sound
           // survives into the recording. Confirmed working on Windows.
-          callback({ video: source, audio: 'loopback' })
+          if (chosen.kind === 'self') {
+            // Electron's window enumeration omits our own windows, so recording
+            // CoachBoard — the whole point of the program-walkthrough half of
+            // 11c — is done by capturing the frame rather than the window.
+            // Also strictly better: nothing overlapping the window can bleed in.
+            log('Display capture: CoachBoard (frame)')
+            callback({ video: win.webContents.mainFrame, audio: 'loopback' })
+            return
+          }
+          log(`Display capture: ${chosen.source.name}`)
+          callback({ video: chosen.source, audio: 'loopback' })
         })
         .catch((err: unknown) => {
           log(`Display capture failed: ${describeError(err)}`)
@@ -325,8 +345,6 @@ async function createWindow(): Promise<void> {
     })
   })
 
-  configureMediaHandlers(session.defaultSession)
-
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -345,6 +363,11 @@ async function createWindow(): Promise<void> {
       contextIsolation: true,
     },
   })
+
+  // Needs the window: recording CoachBoard itself captures its frame, not a
+  // desktopCapturer source. Handlers only have to exist before the first
+  // getDisplayMedia call, which is long after load.
+  configureMediaHandlers(session.defaultSession, win)
 
   // Keep a standard Edit menu so the copy/cut/paste/select-all keyboard
   // accelerators keep working (a null menu disables them). autoHideMenuBar keeps

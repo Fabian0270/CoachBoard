@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastProvider } from './components/ui/toast'
 import { ConfirmProvider } from './components/ui/confirm-dialog'
+import RecorderProvider from './components/recorder/RecorderProvider'
 import Dashboard from './pages/Dashboard'
 import AthletesList from './pages/AthletesList'
 import AthleteDetail from './pages/AthleteDetail'
@@ -18,8 +19,6 @@ import Settings from './pages/Settings'
 import DiscordInbox from './pages/DiscordInbox'
 import VideoAnalysis from './pages/VideoAnalysis'
 import SavedAnalysis from './pages/SavedAnalysis'
-// Temporary, for the 11c screen-recorder spike. Deliberately not in the sidebar.
-import RecorderSpike from './pages/RecorderSpike'
 
 export default function App() {
   return (
@@ -27,6 +26,10 @@ export default function App() {
       <ErrorBoundary>
         <ToastProvider>
         <ConfirmProvider>
+        {/* Above <Routes> deliberately: the coach records while clicking
+            through the app, so a recorder owned by a route would unmount
+            mid-take. See RecorderProvider. */}
+        <RecorderProvider>
         <Layout>
           <Routes>
             <Route path="/" element={<Dashboard />} />
@@ -45,9 +48,9 @@ export default function App() {
             <Route path="/analysis/saved/:id" element={<SavedAnalysis />} />
             <Route path="/analysis/:mediaId" element={<VideoAnalysis />} />
             <Route path="/settings" element={<Settings />} />
-            <Route path="/recorder-spike" element={<RecorderSpike />} />
           </Routes>
         </Layout>
+        </RecorderProvider>
         </ConfirmProvider>
         </ToastProvider>
       </ErrorBoundary>

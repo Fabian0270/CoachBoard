@@ -5,6 +5,7 @@ import ThemeToggle from './ThemeToggle'
 import UpdateNotice from './UpdateNotice'
 import { useDiscordInboxCounts } from '../hooks/useDiscordInboxCounts'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
+import { useRecorder } from './recorder/RecorderProvider'
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -19,15 +20,13 @@ const navItems = [
   { to: '/styles', label: 'Excel Styles', icon: Palette },
   { to: '/discord-inbox', label: 'Inbox', icon: MessageSquare, discordOnly: true },
   { to: '/settings', label: 'Settings', icon: Settings },
-  // TEMPORARY — Feature 11c spike (11c-0). An Electron window has no address
-  // bar, so an unlinked route is unreachable. Remove with the spike page.
-  { to: '/recorder-spike', label: 'Recorder spike', icon: Video },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const inboxCounts = useDiscordInboxCounts()
   const { configured: discordConfigured } = useDiscordConfigured()
+  const { startRecording, isRecording } = useRecorder()
   const inboxBadge = inboxCounts.unmatched + inboxCounts.unreviewed + inboxCounts.unreadMessages
   // Hide the Inbox until Discord is connected — nothing to show otherwise.
   const items = navItems.filter((n) => !n.discordOnly || discordConfigured)
@@ -59,6 +58,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             )
           })}
         </div>
+        {/* An action, not a route: recording follows the coach across pages, so
+            it deliberately does not navigate anywhere. */}
+        <button
+          onClick={startRecording}
+          disabled={isRecording}
+          className="flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors hover:bg-primary-foreground/10 disabled:opacity-50 dark:border-l-2 dark:border-l-transparent dark:text-[#c8c8c8] dark:hover:bg-[#2a2d2e]"
+          title="Record your screen with voice-over"
+        >
+          <Video className="h-4 w-4 shrink-0" />
+          <span className="hidden md:inline">{isRecording ? 'Recording…' : 'Record'}</span>
+        </button>
         <div className="hidden md:block">
           <ThemeToggle />
         </div>
