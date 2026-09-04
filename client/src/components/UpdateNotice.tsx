@@ -3,13 +3,41 @@ import { Button } from './ui/button'
 import { useToast } from './ui/toast'
 import { Download } from 'lucide-react'
 
+type UpdateStatus = 'idle' | 'checking' | 'downloading' | 'ready' | 'error'
+
 interface UpdateState {
-  status: 'idle' | 'checking' | 'downloading' | 'ready' | 'error'
+  status: UpdateStatus
   version: string | null
 }
 
-/** Updates are rare; there is no reason to ask more often than this. */
-const POLL_MS = 15 * 60 * 1000
+/** Nothing in flight. Updates are rare, so there is no reason to ask often. */
+const IDLE_POLL_MS = 15 * 60 * 1000
+
+/**
+ * Something is in flight, or is about to be.
+ *
+ * A single slow cadence made this notice close to decorative: the ~80 MB
+ * download finishes somewhere inside a 15-minute gap, so a coach who opens the
+ * app, works, and closes it never saw the prompt at all. The update still
+ * installed on quit — autoInstallOnAppQuit — but silently, which is not what a
+ * "restart to update" banner is for.
+ */
+const ACTIVE_POLL_MS = 10 * 1000
+
+/**
+ * How long after mount to keep asking quickly whatever the last answer said.
+ *
+ * Polling fast only while the status reads 'checking' or 'downloading' looks
+ * sufficient and is not: initAutoUpdate() runs AFTER createWindow() in the
+ * Electron main process, so this component routinely makes its first request
+ * before the check has started and is told the default 'idle'. Dropping to the
+ * slow cadence on that answer would miss the entire download — the exact bug
+ * this change exists to fix.
+ */
+const WARMUP_MS = 3 * 60 * 1000
+
+const isBusy = (status: UpdateStatus | undefined): boolean =>
+  status === 'checking' || status === 'downloading'
 
 /**
  * Shows a quiet prompt once a new version has already downloaded in the
@@ -24,23 +52,33 @@ export default function UpdateNotice() {
 
   useEffect(() => {
     let cancelled = false
+    let timer = 0
+    const mountedAt = Date.now()
 
-    const check = async () => {
+    // A self-rescheduling timeout rather than an interval, because the gap has
+    // to change with the answer.
+    const check = async (): Promise<void> => {
+      let next: UpdateState | null = null
       try {
         const res = await fetch('/api/system/update')
-        if (!res.ok) return
-        const next = (await res.json()) as UpdateState
-        if (!cancelled) setState(next)
+        if (res.ok) next = (await res.json()) as UpdateState
       } catch {
         /* no updater on this platform, or the app is offline — stay silent */
       }
+      if (cancelled) return
+      if (next) setState(next)
+
+      // 'ready' is terminal: the banner is up and no later answer can change it.
+      if (next?.status === 'ready') return
+
+      const fast = isBusy(next?.status) || Date.now() - mountedAt < WARMUP_MS
+      timer = window.setTimeout(() => void check(), fast ? ACTIVE_POLL_MS : IDLE_POLL_MS)
     }
 
     void check()
-    const timer = window.setInterval(() => void check(), POLL_MS)
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      window.clearTimeout(timer)
     }
   }, [])
 
