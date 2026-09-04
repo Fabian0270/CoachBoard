@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, Dumbbell, Calculator, Wallet, Palette, Settings, MessageSquare, LineChart } from 'lucide-react'
+import { LayoutDashboard, Users, Dumbbell, Calculator, Wallet, Palette, Settings, MessageSquare, LineChart, Video } from 'lucide-react'
 import { cn } from '../lib/utils'
 import ThemeToggle from './ThemeToggle'
 import UpdateNotice from './UpdateNotice'
@@ -19,6 +19,9 @@ const navItems = [
   { to: '/styles', label: 'Excel Styles', icon: Palette },
   { to: '/discord-inbox', label: 'Inbox', icon: MessageSquare, discordOnly: true },
   { to: '/settings', label: 'Settings', icon: Settings },
+  // TEMPORARY — Feature 11c spike (11c-0). An Electron window has no address
+  // bar, so an unlinked route is unreachable. Remove with the spike page.
+  { to: '/recorder-spike', label: 'Recorder spike', icon: Video },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {

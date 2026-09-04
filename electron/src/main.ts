@@ -1,4 +1,14 @@
-import { app, BrowserWindow, Menu, session, dialog, nativeTheme, safeStorage, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  session,
+  dialog,
+  desktopCapturer,
+  nativeTheme,
+  safeStorage,
+  shell,
+} from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { createServer, type RequestListener } from 'http'
@@ -20,6 +30,9 @@ interface ServerBundle {
   createApp(staticDir: string, logPath: string): RequestListener
   configureSecureStore(opts: { safeStorage: unknown; userDataDir: string }): void
   configureSystem?(opts: { shell: unknown }): void
+  configureCapture?(opts: { desktopCapturer: unknown }): void
+  /** The source the coach picked, consumed once. See services/captureService. */
+  resolvePendingSource?(): Promise<Electron.DesktopCapturerSource | null>
   configureUpdates?(opts: { install: () => void }): void
   setUpdateState?(state: { status: string; version?: string | null; message?: string | null }): void
   runStartupBackup?(): Promise<string | null>
@@ -130,6 +143,7 @@ async function startServer(): Promise<void> {
   // the data folder from Settings and from the error screen). Optional-chained so
   // a stale bundle without the export can't break startup.
   bundle.configureSystem?.({ shell })
+  bundle.configureCapture?.({ desktopCapturer })
 
   const expressApp = bundle.createApp(staticDir, logPath)
 
@@ -211,6 +225,92 @@ function initAutoUpdate(): void {
   })
 }
 
+/**
+ * Screen capture and camera/mic permissions for Feature 11c.
+ *
+ * The roadmap originally rejected getDisplayMedia for 11c in favour of
+ * canvas.captureStream(). That only ever worked for the bar-path overlay: the
+ * recorder also has to capture program pages, the Excel preview — and now any
+ * window the coach picks — none of which live in a canvas. The macOS Screen
+ * Recording prompt that argument was avoiding is a cost we take instead, and
+ * Windows is the only shipping target today.
+ */
+function configureMediaHandlers(sess: Electron.Session): void {
+  // Only our own page may ask, and only for what the app actually uses.
+  // Electron's default handler grants far more, and leaving camera and
+  // microphone to an undocumented default is not a decision worth inheriting.
+  //
+  // Clipboard is on the list because two real call sites depend on it — copying
+  // the Discord invite URL, and the error screen's copy-details button. A
+  // blanket media-only allowlist silently breaks both.
+  // 'fullscreen' is here because the spike caught it being denied the moment a
+  // recording was played back — the <video> fullscreen button goes through this
+  // handler, and so does the Excel preview. Exactly the case the logging below
+  // exists to surface.
+  const ALLOWED = new Set([
+    'media',
+    'clipboard-write',
+    'clipboard-sanitized-write',
+    'fullscreen',
+  ])
+
+  sess.setPermissionRequestHandler((contents, permission, callback) => {
+    const granted = ALLOWED.has(permission) && isOwnOrigin(contents.getURL())
+    // Logged rather than swallowed: a permission we did not anticipate should
+    // show up as a line in the log, not as a feature that mysteriously stopped.
+    if (!granted) log(`Permission denied: ${permission} for ${contents.getURL()}`)
+    callback(granted)
+  })
+
+  // The synchronous sibling of the above: Chromium consults this for permission
+  // *checks* (e.g. enumerateDevices labels) without a user gesture.
+  sess.setPermissionCheckHandler((_contents, permission, origin) =>
+    ALLOWED.has(permission) && isOwnOrigin(origin),
+  )
+
+  sess.setDisplayMediaRequestHandler(
+    (_request, callback) => {
+      // useSystemPicker stays on so this handler is skipped wherever the OS does
+      // provide a picker (recent macOS). It does NOT engage on Windows in
+      // Electron 33 — measured during the 11c spike, where every capture landed
+      // here — so on Windows the app's own picker is the real path, and the
+      // source it parked is what gets recorded.
+      void serverBundle
+        ?.resolvePendingSource?.()
+        .then((source) => {
+          if (!source) {
+            // No choice parked: the request did not come from our picker, or the
+            // window the coach chose has since closed. Refusing is the honest
+            // answer — defaulting to the whole screen would record something
+            // they never agreed to share.
+            log('Display capture refused: no source was chosen')
+            callback({ video: undefined })
+            return
+          }
+          log(`Display capture: ${source.name}`)
+          // 'loopback' mixes the machine's own audio in, so a lift video's sound
+          // survives into the recording. Confirmed working on Windows.
+          callback({ video: source, audio: 'loopback' })
+        })
+        .catch((err: unknown) => {
+          log(`Display capture failed: ${describeError(err)}`)
+          callback({ video: undefined })
+        })
+    },
+    { useSystemPicker: true },
+  )
+}
+
+/** Dev serves the renderer from :3000, production from the embedded server. */
+function isOwnOrigin(url: string): boolean {
+  try {
+    const { hostname } = new URL(url)
+    return hostname === 'localhost' || hostname === '127.0.0.1'
+  } catch {
+    return false
+  }
+}
+
 async function createWindow(): Promise<void> {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -224,6 +324,8 @@ async function createWindow(): Promise<void> {
       },
     })
   })
+
+  configureMediaHandlers(session.defaultSession)
 
   const win = new BrowserWindow({
     width: 1280,
