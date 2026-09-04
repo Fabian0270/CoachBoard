@@ -63,6 +63,16 @@ export default function RecorderProvider({ children }: { children: React.ReactNo
     toast.success('Saved. Choose where to keep it in the download prompt.')
   }, [toast])
 
+  /**
+   * Sending counts as keeping it: the athlete has the video, so closing the
+   * dialog afterwards is a normal finish rather than something to warn about.
+   */
+  const onSent = useCallback(() => {
+    savedRef.current = true
+    toast.success('Sent.')
+    void engine.discard()
+  }, [engine, toast])
+
   const value = useMemo(
     () => ({ startRecording, isRecording: isCapturing(engine.state) }),
     [startRecording, engine.state],
@@ -99,6 +109,7 @@ export default function RecorderProvider({ children }: { children: React.ReactNo
           bytes={engine.bytes}
           error={engine.error}
           onSaved={onSaved}
+          onSent={onSent}
           onDiscard={onDiscard}
         />
       )}

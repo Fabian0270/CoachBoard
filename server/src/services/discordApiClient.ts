@@ -122,6 +122,12 @@ export interface DiscordClient {
     content: string,
     replyToMessageId?: string,
   ): Promise<{ id: string }>
+  /** Same, with one file attached. See MAX_ATTACHMENT_BYTES before calling. */
+  sendMessageWithFile(
+    channelId: string,
+    content: string,
+    file: { filename: string; contentType: string; data: Buffer },
+  ): Promise<{ id: string }>
   searchGuildMembers(guildId: string, query: string): Promise<DiscordGuildMemberPayload[]>
 }
 
@@ -134,14 +140,23 @@ export function createDiscordClient(token: string, fetchImpl: typeof fetch = fet
     body?: unknown,
     attempt = 0,
   ): Promise<T> {
+    // FormData carries file uploads. Its Content-Type must be left unset so
+    // fetch can generate the multipart boundary — setting it by hand produces a
+    // body Discord cannot parse. Everything else is JSON as before.
+    const isMultipart = typeof FormData !== 'undefined' && body instanceof FormData
+
     const res = await fetchImpl(`${API_BASE}${apiPath}`, {
       method,
       headers: {
         Authorization: `Bot ${token}`,
         'User-Agent': 'CoachBoard (https://github.com/Fabian0270/CoachBoard, local)',
-        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(body !== undefined && !isMultipart ? { 'Content-Type': 'application/json' } : {}),
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: isMultipart
+        ? (body as FormData)
+        : body !== undefined
+          ? JSON.stringify(body)
+          : undefined,
     })
 
     if (res.status === 429 && attempt < 5) {
@@ -200,6 +215,27 @@ export function createDiscordClient(token: string, fetchImpl: typeof fetch = fet
           ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } }
           : {}),
       }),
+    sendMessageWithFile: (channelId, content, file) => {
+      const form = new FormData()
+      // Discord takes the message itself as a payload_json part, with each file
+      // in files[n] and a matching entry in `attachments` keyed by the same
+      // index. Omitting the attachments entry uploads the file but leaves it
+      // unreferenced by the message.
+      form.append(
+        'payload_json',
+        JSON.stringify({
+          content,
+          allowed_mentions: { parse: [] },
+          attachments: [{ id: 0, filename: file.filename }],
+        }),
+      )
+      form.append(
+        'files[0]',
+        new Blob([new Uint8Array(file.data)], { type: file.contentType }),
+        file.filename,
+      )
+      return request<{ id: string }>('POST', `/channels/${channelId}/messages`, form)
+    },
     searchGuildMembers: (guildId, query) => {
       const params = new URLSearchParams({ query, limit: '10' })
       return request<DiscordGuildMemberPayload[]>(

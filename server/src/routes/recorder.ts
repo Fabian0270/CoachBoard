@@ -11,8 +11,32 @@ import {
   statRecording,
 } from '../services/recordingStore.js'
 import { fail } from '../lib/httpError.js'
+import { dmRecordingToAthlete } from '../services/discordSendService.js'
+import {
+  ATTACHMENT_TOO_BIG,
+  MAX_ATTACHMENT_BYTES as MAX_EMAIL_BYTES,
+  sendAttachmentEmail,
+} from '../services/emailService.js'
+import fsp from 'fs/promises'
 
 const router = Router()
+
+/** Dated, so a coach's downloads folder does not fill with `recording.webm`. */
+function recordingFilename(): string {
+  return `coachboard-${new Date().toISOString().slice(0, 10)}.webm`
+}
+
+/** The finished bytes, or null while it is still being written. */
+async function readRecording(id: string): Promise<Buffer | null> {
+  let abs: string | null = null
+  try {
+    abs = await recordingPath(id)
+  } catch {
+    return null
+  }
+  if (!abs) return null
+  return fsp.readFile(abs)
+}
 
 /**
  * The source list for the recorder's own picker.
@@ -136,6 +160,76 @@ router.get('/recordings/:id/file', async (req, res) => {
   }
   // sendFile handles Range/206 natively — required for seeking during review.
   res.sendFile(abs, { acceptRanges: true, headers: { 'Content-Type': 'video/webm' } })
+})
+
+const discordSchema = z.object({
+  athleteId: z.string().min(1),
+  message: z.string().max(2000).default(''),
+})
+
+/** DM the recording to an athlete's linked Discord account. */
+router.post('/recordings/:id/discord', async (req, res) => {
+  const parsed = discordSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid request' })
+    return
+  }
+  const data = await readRecording(req.params.id)
+  if (!data) {
+    res.status(404).json({ error: 'Recording is not ready' })
+    return
+  }
+  try {
+    const sent = await dmRecordingToAthlete(parsed.data.athleteId, parsed.data.message, {
+      filename: recordingFilename(),
+      contentType: 'video/webm',
+      data,
+    })
+    // A logged failure is still a 200 from the send service's point of view, but
+    // the coach needs it as an error — their athlete did not get the video.
+    if (sent.status === 'failed') {
+      res.status(502).json({ error: sent.error ?? 'Discord rejected the message' })
+      return
+    }
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not send' })
+  }
+})
+
+const emailSchema = z.object({
+  to: z.string().email(),
+  subject: z.string().min(1).max(200),
+  body: z.string().max(5000).default(''),
+})
+
+router.post('/recordings/:id/email', async (req, res) => {
+  const parsed = emailSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Check the address and subject' })
+    return
+  }
+  const data = await readRecording(req.params.id)
+  if (!data) {
+    res.status(404).json({ error: 'Recording is not ready' })
+    return
+  }
+  if (data.length > MAX_EMAIL_BYTES) {
+    res.status(ATTACHMENT_TOO_BIG.status).json({ error: ATTACHMENT_TOO_BIG.error })
+    return
+  }
+  const result = await sendAttachmentEmail({
+    to: parsed.data.to,
+    subject: parsed.data.subject,
+    body: parsed.data.body,
+    attachmentName: recordingFilename(),
+    attachment: data,
+  })
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error, code: result.code })
+    return
+  }
+  res.json({ ok: true })
 })
 
 router.delete('/recordings/:id', async (req, res) => {

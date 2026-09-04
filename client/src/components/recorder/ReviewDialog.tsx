@@ -1,5 +1,7 @@
-import { Download, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { Download, Mail, MessageSquare, Trash2 } from 'lucide-react'
 import { Button } from '../ui/button'
+import SendPanel from './SendPanel'
 import { blockedReason, deliveryFitness, formatBytes } from './recorder.core'
 
 // ---------------------------------------------------------------------------
@@ -16,10 +18,19 @@ interface Props {
   bytes: number
   error: string | null
   onSaved(): void
+  onSent(): void
   onDiscard(): void
 }
 
-export default function ReviewDialog({ recordingId, bytes, error, onSaved, onDiscard }: Props) {
+export default function ReviewDialog({
+  recordingId,
+  bytes,
+  error,
+  onSaved,
+  onSent,
+  onDiscard,
+}: Props) {
+  const [sending, setSending] = useState<'discord' | 'email' | null>(null)
   const fitness = deliveryFitness(bytes)
   const src = `/api/recorder/recordings/${recordingId}/file`
 
@@ -52,10 +63,18 @@ export default function ReviewDialog({ recordingId, bytes, error, onSaved, onDis
             <Download className="h-4 w-4" />
             Save to PC
           </Button>
-          <Button variant="outline" disabled title="Coming in the next step">
+          <Button
+            variant={sending === 'discord' ? 'secondary' : 'outline'}
+            onClick={() => setSending(sending === 'discord' ? null : 'discord')}
+          >
+            <MessageSquare className="h-4 w-4" />
             Send on Discord
           </Button>
-          <Button variant="outline" disabled title="Coming in the next step">
+          <Button
+            variant={sending === 'email' ? 'secondary' : 'outline'}
+            onClick={() => setSending(sending === 'email' ? null : 'email')}
+          >
+            <Mail className="h-4 w-4" />
             Email it
           </Button>
           <Button variant="ghost" className="ml-auto" onClick={onDiscard}>
@@ -64,7 +83,20 @@ export default function ReviewDialog({ recordingId, bytes, error, onSaved, onDis
           </Button>
         </div>
 
-        {!fitness.discord && (
+        {sending && (
+          <SendPanel
+            recordingId={recordingId}
+            bytes={bytes}
+            channel={sending}
+            onSent={onSent}
+            onCancel={() => setSending(null)}
+          />
+        )}
+
+        {/* Said up front rather than at the point of failure: a coach who has
+            just recorded four minutes should not learn about the cap by
+            filling in a message and pressing Send. */}
+        {!sending && !fitness.discord && (
           <p className="mt-3 text-xs text-amber-500">{blockedReason('discord', bytes)}</p>
         )}
 

@@ -59,8 +59,12 @@ describe('discordSettingsService', () => {
   })
 
   it('builds the invite URL with the minimal two-way permission set', async () => {
+    // 101376 = View Channels + Send Messages + Attach Files + Read History.
+    // Attach Files (32768) joined the set for Feature 11c's feedback
+    // recordings. Pinned exactly so widening the bot's powers has to be a
+    // deliberate edit here rather than a quiet drift.
     expect(buildInviteUrl('app1')).toBe(
-      'https://discord.com/oauth2/authorize?client_id=app1&scope=bot&permissions=68608',
+      'https://discord.com/oauth2/authorize?client_id=app1&scope=bot&permissions=101376',
     )
     const pub = await saveToken(TOKEN, META)
     expect(pub.inviteUrl).toContain('client_id=app1')

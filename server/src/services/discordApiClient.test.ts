@@ -121,3 +121,62 @@ describe('createDiscordClient', () => {
     await client.getMessages('c1', { after: '123', limit: 100 })
   })
 })
+
+describe('sendMessageWithFile', () => {
+  // Multipart is the one genuinely new capability Feature 11c needed from this
+  // client, and the failure mode is quiet: a malformed body uploads the file but
+  // leaves the message without it, or Discord rejects a hand-written boundary.
+
+  it('sends multipart and lets fetch set the boundary itself', async () => {
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>
+      // Setting this by hand omits the boundary and Discord cannot parse it.
+      expect(headers['Content-Type']).toBeUndefined()
+      expect(headers.Authorization).toBe(`Bot ${TOKEN}`)
+      expect(init?.body).toBeInstanceOf(FormData)
+      return jsonResponse({ id: 'm1' })
+    })
+    const client = createDiscordClient(TOKEN, fetchImpl as unknown as typeof fetch)
+    const sent = await client.sendMessageWithFile('c1', 'here you go', {
+      filename: 'feedback.webm',
+      contentType: 'video/webm',
+      data: Buffer.from('video-bytes'),
+    })
+    expect(sent.id).toBe('m1')
+  })
+
+  it('references the upload from the message, or Discord orphans the file', async () => {
+    let form: FormData | undefined
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      form = init?.body as FormData
+      return jsonResponse({ id: 'm1' })
+    })
+    const client = createDiscordClient(TOKEN, fetchImpl as unknown as typeof fetch)
+    await client.sendMessageWithFile('c1', 'watch this', {
+      filename: 'feedback.webm',
+      contentType: 'video/webm',
+      data: Buffer.from('video-bytes'),
+    })
+
+    const payload = JSON.parse(form!.get('payload_json') as string)
+    expect(payload.content).toBe('watch this')
+    // The attachments entry is what binds files[0] to the message.
+    expect(payload.attachments).toEqual([{ id: 0, filename: 'feedback.webm' }])
+    // Same no-pings rule as every other CoachBoard message.
+    expect(payload.allowed_mentions).toEqual({ parse: [] })
+
+    const file = form!.get('files[0]') as File
+    expect(file.type).toBe('video/webm')
+    expect(await file.text()).toBe('video-bytes')
+  })
+
+  it('still sends plain messages as JSON', async () => {
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>)['Content-Type']).toBe('application/json')
+      expect(typeof init?.body).toBe('string')
+      return jsonResponse({ id: 'm2' })
+    })
+    const client = createDiscordClient(TOKEN, fetchImpl as unknown as typeof fetch)
+    await client.sendMessage('c1', 'no file here')
+  })
+})

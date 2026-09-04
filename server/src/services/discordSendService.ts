@@ -131,14 +131,20 @@ export async function replyToMedia(
   }
 }
 
-/** Free-form DM to an athlete via their linked Discord account. */
-export async function dmAthlete(athleteId: string, content: string): Promise<SentMessageDto> {
-  const token = await getToken()
-  if (!token) throw new DiscordSendError('Discord is not configured')
+/**
+ * Discord's attachment ceiling for a bot on an unboosted server.
+ *
+ * Not the 25 MB a Nitro user sees — the bot is neither, and reading the higher
+ * number off Discord's UI is an easy way to build a feature that fails only for
+ * real recordings. At the recorder's bitrate this is about 47 seconds of video,
+ * which is why a program walkthrough goes by email or to disk.
+ */
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
+/** The athlete's most recently active linked account, or an explanatory throw. */
+async function linkedUserId(athleteId: string): Promise<string> {
   // Multiple linked accounts → prefer the one that posted most recently.
-  const db = getDb()
-  const link = await db
+  const link = await getDb()
     .selectFrom('discord_users')
     .leftJoin('discord_media', 'discord_media.discord_user_id', 'discord_users.id')
     .select((eb) => [
@@ -150,6 +156,67 @@ export async function dmAthlete(athleteId: string, content: string): Promise<Sen
     .orderBy('last_post', 'desc')
     .executeTakeFirst()
   if (!link) throw new DiscordSendError('This athlete has no linked Discord account')
+  return link.user_id
+}
+
+/**
+ * DMs a feedback recording to an athlete.
+ *
+ * The size check happens before the upload rather than after Discord rejects
+ * it: a 40 MB POST that was always going to fail wastes the coach's time and
+ * their bandwidth, and the error Discord returns says nothing about what to do
+ * instead.
+ */
+export async function dmRecordingToAthlete(
+  athleteId: string,
+  content: string,
+  file: { filename: string; contentType: string; data: Buffer },
+): Promise<SentMessageDto> {
+  const token = await getToken()
+  if (!token) throw new DiscordSendError('Discord is not configured')
+  if (file.data.length > MAX_ATTACHMENT_BYTES) {
+    throw new DiscordSendError(
+      'This recording is too big for Discord. Email it or save it to your PC instead.',
+    )
+  }
+
+  const userId = await linkedUserId(athleteId)
+  const client = createDiscordClient(token)
+  try {
+    const dm = await client.createDm(userId)
+    const sent = await client.sendMessageWithFile(dm.id, content, file)
+    return await logAttempt({
+      channelId: dm.id,
+      kind: 'dm',
+      discordUserId: userId,
+      relatedMediaId: null,
+      replyToMessageId: null,
+      content,
+      status: 'sent',
+      error: null,
+      discordMessageId: sent.id,
+    })
+  } catch (err) {
+    return await logAttempt({
+      channelId: 'dm',
+      kind: 'dm',
+      discordUserId: userId,
+      relatedMediaId: null,
+      replyToMessageId: null,
+      content,
+      status: 'failed',
+      error: friendlySendError(err),
+      discordMessageId: null,
+    })
+  }
+}
+
+/** Free-form DM to an athlete via their linked Discord account. */
+export async function dmAthlete(athleteId: string, content: string): Promise<SentMessageDto> {
+  const token = await getToken()
+  if (!token) throw new DiscordSendError('Discord is not configured')
+
+  const link = { user_id: await linkedUserId(athleteId) }
 
   const client = createDiscordClient(token)
   try {

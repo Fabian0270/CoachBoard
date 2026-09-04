@@ -20,6 +20,24 @@ export interface SendProgramEmailInput {
   attachment: Buffer
 }
 
+/**
+ * Practical ceiling for one attachment.
+ *
+ * Providers advertise 25 MB, but MIME encodes attachments in base64, which
+ * inflates them by about a third — so a 25 MB file is not a 25 MB message, and
+ * the bounce arrives long after the coach thinks the video is on its way. 20 MB
+ * is the largest file that reliably survives that inflation.
+ */
+export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+
+export const ATTACHMENT_TOO_BIG: Extract<SendResult, { ok: false }> = {
+  ok: false,
+  status: 400,
+  code: 'send_failed',
+  error:
+    'This recording is too big to email. Save it to your PC and share it from there instead.',
+}
+
 const NOT_CONFIGURED: SendResult = {
   ok: false,
   status: 400,
@@ -64,7 +82,16 @@ async function buildTransport() {
   return { transport, from, user: cfg.user }
 }
 
-export async function sendProgramEmail(input: SendProgramEmailInput): Promise<SendResult> {
+/**
+ * Sends one file to one address.
+ *
+ * Named for what it does rather than for the program export it was written for,
+ * because feedback recordings (Feature 11c) need exactly the same thing and
+ * duplicating the transport, the from-header and the error mapping to say
+ * "video" instead of "program" would be three places to fix a bug instead of
+ * one.
+ */
+export async function sendAttachmentEmail(input: SendProgramEmailInput): Promise<SendResult> {
   const t = await buildTransport()
   if (!t) return NOT_CONFIGURED
   try {
@@ -81,6 +108,9 @@ export async function sendProgramEmail(input: SendProgramEmailInput): Promise<Se
     return { ok: false, status: 502, code, error }
   }
 }
+
+/** The program export's own name for the above. Unchanged behaviour. */
+export const sendProgramEmail = sendAttachmentEmail
 
 /** Sends a fixed test message to the coach's own configured address. */
 export async function sendTestEmail(): Promise<SendResult> {
