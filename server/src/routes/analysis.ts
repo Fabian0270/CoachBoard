@@ -5,6 +5,7 @@ import {
   saveAnalysis,
   listAnalyses,
   getAnalysis,
+  setAnalysisAthlete,
   deleteAnalysis,
 } from '../services/videoAnalysisService.js'
 
@@ -80,6 +81,25 @@ router.post('/', async (req, res) => {
       metrics: parsed.data.metrics as never,
     }),
   )
+})
+
+// Attaching an athlete after the fact. Deliberately the only mutable field: the
+// path and its metrics are a measurement, and editing those would make a saved
+// analysis something other than what was tracked.
+const attachSchema = z.object({ athleteId: z.string().nullable() })
+
+router.patch('/:id', async (req, res) => {
+  const parsed = attachSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid athlete' })
+    return
+  }
+  const updated = await setAnalysisAthlete(req.params.id, parsed.data.athleteId)
+  if (!updated) {
+    res.status(404).json({ error: 'Analysis not found' })
+    return
+  }
+  res.json(updated)
 })
 
 router.delete('/:id', async (req, res) => {

@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
-import { bestRepVelocity, lastRepVelocity, type LrvAnchor, type LvPoint, type VbtLift } from 'coachboard-shared/vbt'
+import {
+  bestRepVelocity,
+  lastRepVelocity,
+  type LrvAnchor,
+  type LvPoint,
+  type VbtLift,
+  type VelocityMetric,
+} from 'coachboard-shared/vbt'
 
 /**
  * What this athlete has previously tracked on one lift, as the two kinds of
@@ -17,6 +24,7 @@ import { bestRepVelocity, lastRepVelocity, type LrvAnchor, type LvPoint, type Vb
 export function useVbtHistory(
   athleteId: string | null,
   lift: VbtLift,
+  metric: VelocityMetric,
 ): { anchors: LrvAnchor[]; points: LvPoint[] } {
   const [rows, setRows] = useState<VideoAnalysisDto[]>([])
 
@@ -49,15 +57,15 @@ export function useVbtHistory(
       const metrics = row.metrics ?? []
       // The last rep is what an RPE is called on; the fastest is what a
       // load-velocity profile is built from.
-      const last = lastRepVelocity(metrics)
-      const best = bestRepVelocity(metrics)
+      const last = lastRepVelocity(metrics, metric)
+      const best = bestRepVelocity(metrics, metric)
       if (row.calledRpe != null && last != null) anchors.push({ rpe: row.calledRpe, velocity: last })
       if (row.loadKg != null && best != null) {
         points.push({ load: row.loadKg, velocity: best, label: row.createdAt.slice(0, 10) })
       }
     }
     return { anchors, points }
-  }, [rows, lift])
+  }, [rows, lift, metric])
 }
 
 /**

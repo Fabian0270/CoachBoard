@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useToast } from '../components/ui/toast'
 import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
 import AthleteMaxes from '../components/AthleteMaxes'
+import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import PaymentsSection from '../components/PaymentsSection'
 import AthleteMediaSection from '../components/discord/AthleteMediaSection'
 import AthleteMessagesSection from '../components/discord/AthleteMessagesSection'
@@ -182,6 +183,7 @@ export default function AthleteDetail() {
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="programs">Programs ({programs.length})</TabsTrigger>
           <TabsTrigger value="maxes">Maxes &amp; RPE</TabsTrigger>
+          <TabsTrigger value="barpath">Bar path</TabsTrigger>
           {discordConfigured && <TabsTrigger value="videos">Videos</TabsTrigger>}
           {discordConfigured && <TabsTrigger value="messages">Messages</TabsTrigger>}
           <TabsTrigger value="payments">Payments</TabsTrigger>
@@ -320,6 +322,18 @@ export default function AthleteDetail() {
         </TabsContent>
         <TabsContent value="maxes">
           <SlideIn>{id && <AthleteMaxes athleteId={id} />}</SlideIn>
+        </TabsContent>
+        <TabsContent value="barpath">
+          <SlideIn>
+            <Card>
+              <CardHeader className="py-4">
+                <CardTitle className="text-base">Bar path history</CardTitle>
+              </CardHeader>
+              <CardContent className="p-6 pt-0">
+                {id && <SavedAnalyses athleteId={id} />}
+              </CardContent>
+            </Card>
+          </SlideIn>
         </TabsContent>
         {discordConfigured && (
           <TabsContent value="videos">

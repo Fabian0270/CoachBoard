@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Gauge, Ruler, TrendingDown } from 'lucide-react'
+import { Gauge, Ruler, TrendingDown, TriangleAlert } from 'lucide-react'
 import { RPE_VALUES } from 'coachboard-shared/rpe'
-import type { RepMetrics } from 'coachboard-shared/videoAnalysis'
+import { looksMistracked, type RepMetrics } from 'coachboard-shared/videoAnalysis'
 import {
   VBT_LIFTS,
   LRV_TOLERANCE_MS,
@@ -9,6 +9,7 @@ import {
   bestRepVelocity,
   buildLoadVelocityProfile,
   defaultMvt,
+  defaultVelocityMetric,
   e1RMFromVelocity,
   effectiveRpe,
   effortLabel,
@@ -26,6 +27,7 @@ import {
   type LvWarning,
   type SlopeSource,
   type VbtLift,
+  type VelocityMetric,
 } from 'coachboard-shared/vbt'
 import { num } from '../../lib/num'
 import { Button } from '../ui/button'
@@ -98,6 +100,10 @@ export interface SetContextState {
   lift: VbtLift
   loadText: string
   calledRpe: number | null
+  /** How many reps the set actually had. Empty means "trust the tracker". */
+  repsText: string
+  /** Null follows the lift's default — see defaultVelocityMetric. */
+  metric: VelocityMetric | null
 }
 
 interface Props {
@@ -137,8 +143,26 @@ export default function VelocityPanel({
   const loadKg = value.loadText.trim() ? num(value.loadText) : null
   const validLoad = loadKg != null && Number.isFinite(loadKg) && loadKg > 0 ? loadKg : null
 
-  const lastV = calibrated ? lastRepVelocity(reps) : null
-  const bestV = calibrated ? bestRepVelocity(reps) : null
+  const metric = value.metric ?? defaultVelocityMetric(lift)
+
+  /**
+   * Reps whose peak is wildly out of line with their mean.
+   *
+   * Peak is a near-single-sample statistic, so a tracker re-lock lands in it
+   * whole: a real 165 kg bench reported 1.69 m/s, which the panel then read as
+   * "RPE 5, easy" on a set called at 8.5. The page already refuses to show a
+   * track it does not trust, and this is the same rule one level down — no
+   * reading at all beats a confident wrong one.
+   */
+  const mistracked = useMemo(() => reps.filter(looksMistracked), [reps])
+  const trusted = useMemo(
+    () => reps.filter((r) => !looksMistracked(r)),
+    [reps],
+  )
+  const readable = metric === 'peak' ? trusted : reps
+
+  const lastV = calibrated ? lastRepVelocity(readable, metric) : null
+  const bestV = calibrated ? bestRepVelocity(readable, metric) : null
 
   const chart = useMemo(() => lrvChart(lift, allAnchors), [lift, allAnchors])
   const reading = useMemo(
@@ -192,13 +216,30 @@ export default function VelocityPanel({
     [lift, profile, calibration],
   )
 
+  // The FASTEST rep, not the last. The load-velocity relationship describes how
+  // fast a load moves under full intent when fresh; a fatigued last rep reads
+  // the load as far heavier than it is. On a real 180 kg five by a 250 kg
+  // squatter the last rep estimated 201 kg and the first 249.
   const estimate = useMemo(
     () =>
-      lastV != null && validLoad != null && mvt != null
-        ? e1RMFromVelocity({ loadKg: validLoad, velocity: lastV, mvt, slope })
+      bestV != null && validLoad != null && mvt != null
+        ? e1RMFromVelocity({ loadKg: validLoad, velocity: bestV, mvt, slope })
         : null,
-    [lastV, validLoad, mvt, slope],
+    [bestV, validLoad, mvt, slope],
   )
+
+  /**
+   * What the coach counted, against what survived tracking.
+   *
+   * Only a disagreement is worth saying anything about — and it is worth saying
+   * loudly, because the usual cause is a cycle that was never a rep, which drags
+   * every number in this panel with it.
+   */
+  const countedReps = value.repsText.trim() ? Number(value.repsText.trim()) : null
+  const repMismatch =
+    countedReps != null && Number.isFinite(countedReps) && countedReps > 0 && countedReps !== reps.length
+      ? { counted: countedReps, tracked: reps.length }
+      : null
 
   /** Where this set sat against a max the coach has actually recorded. */
   const pctOfRecorded = knownMax != null && validLoad != null ? validLoad / knownMax : null
@@ -249,6 +290,21 @@ export default function VelocityPanel({
           />
         </label>
 
+        {/* The coach's own count, as a check on the tracker rather than an input
+            to the maths. A phantom cycle is easy to miss in a table and quietly
+            skews everything below it; a number that disagrees is impossible to
+            miss. */}
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">Reps in set</span>
+          <input
+            value={value.repsText}
+            onChange={(e) => onChange({ ...value, repsText: e.target.value })}
+            inputMode="numeric"
+            placeholder={`${reps.length} tracked`}
+            className="w-24 rounded-md border bg-background px-2 py-1 text-sm"
+          />
+        </label>
+
         <label className="flex flex-col gap-1">
           <span className="text-xs text-muted-foreground">RPE called</span>
           <select
@@ -267,10 +323,59 @@ export default function VelocityPanel({
           </select>
         </label>
 
+        {/* Visible rather than hidden: which velocity produced a number changes
+            it enormously, and bench defaults differently from everything else. */}
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">Read from</span>
+          <select
+            value={metric}
+            onChange={(e) => onChange({ ...value, metric: e.target.value as VelocityMetric })}
+            className="rounded-md border bg-background px-2 py-1 text-sm"
+          >
+            <option value="propulsive">Propulsive velocity</option>
+            <option value="mean">Mean velocity</option>
+            <option value="peak">Peak velocity</option>
+          </select>
+        </label>
+
         <p className="ml-auto max-w-xs text-xs text-muted-foreground">
           Saved with the analysis, so the profile below builds up over time.
         </p>
       </div>
+
+      {mistracked.length > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <p>
+            {mistracked.length === 1 ? 'Rep' : 'Reps'}{' '}
+            {mistracked.map((r) => r.index + 1).join(', ')}{' '}
+            {mistracked.length === 1 ? 'has a peak' : 'have peaks'} far out of line with{' '}
+            {mistracked.length === 1 ? 'its' : 'their'} mean — the tracker jumped rather than the bar
+            moving.{' '}
+            <span className="text-muted-foreground">
+              {metric === 'peak'
+                ? 'Left out of everything below, since peak is what this lift is read from. Strike them off or track the clip again.'
+                : 'The mean survives a jump, so the readings below still stand — but check the path sits on the plate.'}
+            </span>
+          </p>
+        </div>
+      )}
+
+      {repMismatch && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <p>
+            You counted {repMismatch.counted}{' '}
+            {repMismatch.counted === 1 ? 'rep' : 'reps'}, the tracker has{' '}
+            {repMismatch.tracked}.{' '}
+            <span className="text-muted-foreground">
+              {repMismatch.tracked > repMismatch.counted
+                ? 'Something that was not a rep is being counted — strike it off in the table above and everything here is recalculated without it.'
+                : 'Part of the set is outside the tracked range. Widen the start and end markers and track again, or the numbers below describe only part of it.'}
+            </span>
+          </p>
+        </div>
+      )}
 
       {/* Velocity loss is a ratio, so it survives having no scale — it is the one
           reading here that does, and it was on this page before any of the rest
@@ -354,8 +459,9 @@ export default function VelocityPanel({
                     Estimated 1RM {fmtKg(estimate.e1rm)}
                   </span>{' '}
                   <span className="text-muted-foreground">
-                    — this set at {Math.round(estimate.pctOf1RM * 100)}%, from {fmtV(lastV)} against a{' '}
-                    {estimate.mvt.toFixed(2)} m/s max velocity · {SLOPE_SOURCE[slope.source]}
+                    — this set at {Math.round(estimate.pctOf1RM * 100)}%, from its fastest rep at{' '}
+                    {fmtV(bestV!)} ({metric}) against a {estimate.mvt.toFixed(2)} m/s max velocity ·{' '}
+                    {SLOPE_SOURCE[slope.source]}
                   </span>
                   {pctOfRecorded != null && knownMax != null && (
                     <span className="block text-muted-foreground">

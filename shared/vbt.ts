@@ -123,6 +123,41 @@ export const MVT_RANGE: Partial<Record<VbtLift, { novice: number; elite: number 
 /** Agreement band between a called RPE and the bar. Anything inside it is a match. */
 export const LRV_TOLERANCE_MS = 0.03
 
+// ---------------------------------------------------------------------------
+// Which velocity the tables get read against
+// ---------------------------------------------------------------------------
+
+export type VelocityMetric = 'mean' | 'peak' | 'propulsive'
+
+/**
+ * Mean PROPULSIVE velocity everywhere, with mean as the fallback.
+ *
+ * This replaces a per-lift table that read bench off peak and everything else
+ * off mean. That table was an empirical patch for a real problem — a large share
+ * of a bench concentric is spent braking the bar so it does not leave the hands,
+ * and over 35 cm of travel that share is big enough to drag the mean well below
+ * what the reference tables describe, where a 100 cm squat barely notices. It
+ * worked on one clean bench clip and then fell over on the next one, because
+ * peak is a near-single-sample statistic and a tracker re-lock lands in it whole.
+ *
+ * MPV fixes the same problem from the other end. It averages, so it is robust
+ * like the mean, and it removes exactly the braking phase each lift actually
+ * has — a lot on bench, little on squat — so no lift needs a special case and
+ * nothing has to be tuned per lift.
+ *
+ * Falls back to mean, per rep, when there is no MPV to use: the phase boundary
+ * is literally 9.81 m/s², so it cannot be located on an uncalibrated path.
+ */
+export function defaultVelocityMetric(_lift: VbtLift): VelocityMetric {
+  return 'propulsive'
+}
+
+export const VELOCITY_METRIC_LABEL: Record<VelocityMetric, string> = {
+  mean: 'mean',
+  peak: 'peak',
+  propulsive: 'propulsive',
+}
+
 /** How the source labels its three anchors, for UI copy. */
 export function effortLabel(rpe: number): string {
   if (rpe >= 9.5) return 'max out'
@@ -573,18 +608,25 @@ export interface VelocityE1RM {
 /**
  * Estimated 1RM from one set's load and bar speed.
  *
- * Deliberately does NOT go via reps and the RPE chart. RPE-to-%1RM is highly
- * individual — a strong lifter routinely has more in reserve than the chart
- * assumes — whereas velocity at a given relative load is the one thing VBT finds
- * consistent. Chaining through reps on a real 205 kg double read 237.5 kg for an
- * athlete who had just squatted 250 in competition; going straight from velocity
- * reads 245.
+ * `velocity` MUST be the set's FASTEST rep, not its last — see bestRepVelocity.
+ * The load-velocity relationship describes how fast a given load moves under
+ * full intent when fresh, so feeding it a fatigued last rep reads the load as
+ * far heavier than it is, and increasingly so the longer the set. A real 180 kg
+ * five-rep squat by a 250 kg squatter: the last rep at 0.39 m/s estimates 201
+ * kg, the first at 0.62 m/s estimates 249. Last-rep velocity answers a different
+ * question — how hard the set was — which is rpeFromLastRepVelocity's job.
+ *
+ * Deliberately does NOT go via reps and the RPE chart either. RPE-to-%1RM is
+ * highly individual — a strong lifter routinely has more in reserve than the
+ * chart assumes — whereas velocity at a given relative load is the one thing VBT
+ * finds consistent.
  *
  * Null when the bar was at or below the MVT (the set was already a max or the
  * scale is wrong) or when the arithmetic would produce a non-positive max.
  */
 export function e1RMFromVelocity(opts: {
   loadKg: number
+  /** The fastest rep of the set, in m/s. */
   velocity: number
   mvt: number
   slope: LvSlope
@@ -709,20 +751,32 @@ export function zoneFor(velocity: number): VelocityZone | null {
 // ---------------------------------------------------------------------------
 
 /**
- * Velocity of the last rep — the number every LRV judgement is made on.
+ * The velocity a rep is judged on.
  *
- * Mean concentric velocity, in m/s, and null on an uncalibrated track: a
- * px/s figure carries no meaning against a published m/s table, and quietly
- * comparing them would produce nonsense with no visible symptom.
+ * MPV falls back to the mean rather than to null: an uncalibrated path has no
+ * propulsive phase to find, and on a calibrated one the fallback never fires.
  */
-export function lastRepVelocity(reps: RepMetrics[]): number | null {
-  const last = reps[reps.length - 1]
-  return last?.meanVelocity ?? null
+export const readRep = (rep: RepMetrics, metric: VelocityMetric): number | null => {
+  if (metric === 'peak') return rep.peakVelocity
+  if (metric === 'propulsive') return rep.meanPropulsiveVelocity ?? rep.meanVelocity
+  return rep.meanVelocity
 }
 
-/** Fastest mean concentric velocity in the set — the load-velocity profile's y value. */
-export function bestRepVelocity(reps: RepMetrics[]): number | null {
-  const speeds = reps.map((r) => r.meanVelocity).filter((v): v is number => v != null)
+/**
+ * Velocity of the last rep — the number every LRV judgement is made on.
+ *
+ * In m/s, and null on an uncalibrated track: a px/s figure carries no meaning
+ * against a published m/s table, and quietly comparing them would produce
+ * nonsense with no visible symptom.
+ */
+export function lastRepVelocity(reps: RepMetrics[], metric: VelocityMetric = 'mean'): number | null {
+  const last = reps[reps.length - 1]
+  return last ? readRep(last, metric) : null
+}
+
+/** Fastest rep in the set — the load-velocity profile's y value, and the 1RM estimate's input. */
+export function bestRepVelocity(reps: RepMetrics[], metric: VelocityMetric = 'mean'): number | null {
+  const speeds = reps.map((r) => readRep(r, metric)).filter((v): v is number => v != null)
   return speeds.length ? Math.max(...speeds) : null
 }
 

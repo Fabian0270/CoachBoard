@@ -13,9 +13,11 @@ import {
   matchesLiftName,
   effectiveRpe,
   defaultMvt,
+  defaultVelocityMetric,
   DEFAULT_LV_SLOPE,
   zoneFor,
   velocityLoss,
+  readRep,
   lastRepVelocity,
   bestRepVelocity,
   isVbtLift,
@@ -42,6 +44,10 @@ function rep(meanVelocity: number | null, pxS = 100): RepMetrics {
     peakVelocityPxS: pxS * 1.5,
     romM: null,
     meanVelocity,
+    // Propulsive is the driven part only, so it sits above the mean. 1.25x here
+    // keeps it between the mean and the 1.5x peak, as it is on a real lift.
+    meanPropulsiveVelocity: meanVelocity == null ? null : meanVelocity * 1.25,
+    propulsiveFraction: meanVelocity == null ? null : 0.7,
     peakVelocity: meanVelocity == null ? null : meanVelocity * 1.5,
   }
 }
@@ -526,6 +532,35 @@ describe('reading a set', () => {
     const reps = [rep(0.5), rep(0.55), rep(0.4)]
     expect(lastRepVelocity(reps)).toBe(0.4)
     expect(bestRepVelocity(reps)).toBe(0.55)
+  })
+
+  it('reads peak when asked, since bench is judged on it', () => {
+    const reps = [rep(0.5), rep(0.4)]
+    // The helper builds peak as 1.5x mean.
+    expect(lastRepVelocity(reps, 'peak')).toBeCloseTo(0.6, 9)
+    expect(bestRepVelocity(reps, 'peak')).toBeCloseTo(0.75, 9)
+  })
+
+  it('reads propulsive velocity everywhere, with no per-lift special case', () => {
+    // The per-lift table this replaced read bench off peak, which worked on one
+    // clean clip and then took a tracker re-lock straight into the answer.
+    for (const lift of ['bench-press', 'back-squat', 'deadlift-conventional', 'other'] as const) {
+      expect(defaultVelocityMetric(lift)).toBe('propulsive')
+    }
+  })
+
+  it('falls back to the mean when there is no propulsive phase to find', () => {
+    // An uncalibrated path cannot locate a boundary defined as 9.81 m/s².
+    const noMpv = { ...rep(0.5), meanPropulsiveVelocity: null, propulsiveFraction: null }
+    expect(readRep(noMpv, 'propulsive')).toBe(0.5)
+    expect(readRep(rep(0.5), 'propulsive')).toBeCloseTo(0.625, 9)
+  })
+
+  it('places propulsive between the mean and the peak', () => {
+    const set = [rep(0.24)]
+    const at = (metric: Parameters<typeof bestRepVelocity>[1]) => bestRepVelocity(set, metric)!
+    expect(at('mean')).toBeLessThan(at('propulsive'))
+    expect(at('propulsive')).toBeLessThan(at('peak'))
   })
 
   it('has no last-rep velocity without a scale', () => {

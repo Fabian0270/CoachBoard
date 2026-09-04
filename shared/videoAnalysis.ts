@@ -106,6 +106,42 @@ export function verticalVelocity(samples: Sample[], windowMs = 150): VelocitySam
   })
 }
 
+/** Where the propulsive phase ends: the bar decelerating at least as hard as gravity. */
+const GRAVITY_MS2 = 9.81
+
+/**
+ * Vertical acceleration at one sample, in pixels/s², by local weighted linear
+ * regression of velocity against time.
+ *
+ * A plain difference of two velocity samples is far too noisy to threshold
+ * against gravity — the whole point of the phase boundary is that it sits at a
+ * specific number, so the signal has to be smooth enough for that number to
+ * mean something. Regressing against real timestamps for the same reason
+ * verticalVelocity does: phone video is variable-frame-rate.
+ */
+function accelerationAt(velocities: VelocitySample[], index: number, halfWindowS: number): number {
+  const centre = velocities[index]
+  let sw = 0, swx = 0, swx2 = 0, swy = 0, swxy = 0
+  let count = 0
+
+  for (const p of velocities) {
+    const dt = p.t - centre.t
+    if (Math.abs(dt) > halfWindowS) continue
+    const w = Math.max(1 - Math.abs(dt) / halfWindowS, 0.01)
+    sw += w
+    swx += w * dt
+    swx2 += w * dt * dt
+    swy += w * p.vy
+    swxy += w * dt * p.vy
+    count++
+  }
+  if (count < 2) return 0
+
+  const det = sw * swx2 - swx * swx
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return 0
+  return (sw * swxy - swx * swy) / det
+}
+
 /** One lifting cycle, as indices into the sample array. */
 export interface Rep {
   index: number
@@ -115,6 +151,8 @@ export interface Rep {
   endIndex: number
   /** The top of the lift — end of the concentric half. */
   topIndex: number
+  /** Vertical travel, kept so the set can be compared against its own median. */
+  romPx: number
 }
 
 export interface SegmentOptions {
@@ -123,11 +161,31 @@ export interface SegmentOptions {
   minMovingSpeed?: number
   /** Minimum vertical travel for a cycle to be a rep rather than track noise. */
   minRomPx?: number
+  /**
+   * Minimum travel as a fraction of the set's OWN median rep, on top of minRomPx.
+   *
+   * A fixed pixel floor rejects a different amount of noise depending on how
+   * zoomed-in the footage is: 20 px is most of a rep on a wide shot and a
+   * rounding error on a close one. A real 5-rep squat came back as six reps
+   * because of it — the phantom travelled 3 cm against a 100 cm median, which is
+   * plainly not a rep at any zoom, but cleared 20 px comfortably.
+   *
+   * Same reasoning as the dead-time trim in repMetrics, which is a fraction of
+   * the rep's own peak rather than a fixed speed, and for the same reason.
+   */
+  minRomFraction?: number
 }
 
 const SEGMENT_DEFAULTS: Required<SegmentOptions> = {
   minMovingSpeed: 15,
   minRomPx: 20,
+  minRomFraction: 0.4,
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
 /**
@@ -184,11 +242,61 @@ export function segmentReps(
     }
 
     // Reject anything that barely moved: that is tracker jitter, not a lift.
-    if (Math.abs(samples[startIndex].y - samples[topIndex].y) < opts.minRomPx) continue
+    const romPx = Math.abs(samples[startIndex].y - samples[topIndex].y)
+    if (romPx < opts.minRomPx) continue
 
-    reps.push({ index: reps.length, startIndex, endIndex, topIndex })
+    reps.push({ index: reps.length, startIndex, endIndex, topIndex, romPx })
   }
-  return reps
+
+  // Second pass, once there is a set to compare against: drop cycles far
+  // shorter than the set's own reps. Median rather than mean so one phantom
+  // cannot drag the reference down and save itself.
+  if (reps.length < 2) return reps
+  const floor = median(reps.map((r) => r.romPx)) * opts.minRomFraction
+  return reps.filter((r) => r.romPx >= floor).map((r, index) => ({ ...r, index }))
+}
+
+/**
+ * Peak velocity is the Nth fastest sample, not the single fastest.
+ *
+ * A maximum is a one-sample statistic, so on a noisy track it reports the worst
+ * sample rather than the fastest the bar went. A real 165 kg bench came back
+ * with a 1.69 m/s "peak" — over the 150 ms smoothing window that is the tracked
+ * point moving 25 cm, which is a re-lock, not a barbell. The mean was untouched
+ * at 0.14, because averaging is what makes it robust.
+ *
+ * Every velocity read against a reference table needs that same robustness. A
+ * glitch spans roughly three samples once the smoothing window has spread it, so
+ * this sits low enough to step over one and high enough to stay within a few
+ * percent of the true peak on a clean track, where the top samples all sit near
+ * the top anyway.
+ */
+const PEAK_PERCENTILE = 0.88
+
+/** Linear-interpolated percentile of an unsorted list. 0 for an empty one. */
+function percentile(values: number[], p: number): number {
+  if (!values.length) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const at = (sorted.length - 1) * p
+  const lo = Math.floor(at)
+  const hi = Math.ceil(at)
+  return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (at - lo)
+}
+
+/**
+ * Above this, a rep's peak is so far clear of its mean that the track glitched
+ * rather than the bar moving fast.
+ *
+ * Real reps measured across squat, bench and deadlift sit between about 1.5 and
+ * 3. The glitched bench rep above was 12.
+ */
+export const SUSPECT_PEAK_RATIO = 4
+
+/** Whether a rep looks mistracked and should be struck off or re-tracked. */
+export function looksMistracked(rep: RepMetrics): boolean {
+  const mean = rep.meanVelocity ?? rep.meanVelocityPxS
+  const peak = rep.peakVelocity ?? rep.peakVelocityPxS
+  return mean > 0 && peak / mean > SUSPECT_PEAK_RATIO
 }
 
 export interface RepMetrics {
@@ -204,6 +312,17 @@ export interface RepMetrics {
   romM: number | null
   meanVelocity: number | null
   peakVelocity: number | null
+  /**
+   * Mean PROPULSIVE velocity — averaged over only the driven part of the lift,
+   * stopping where the bar begins decelerating at least as hard as gravity.
+   *
+   * Null without a calibration, and not because of the usual unit-honesty rule:
+   * the phase boundary is literally 9.81 m/s², so it cannot even be located on
+   * an uncalibrated path.
+   */
+  meanPropulsiveVelocity: number | null
+  /** How much of the concentric was propulsive, 0-1. Null when MPV is. */
+  propulsiveFraction: number | null
 }
 
 /**
@@ -232,7 +351,11 @@ export function repMetrics(
   // The threshold is a fraction of this rep's own peak rather than a fixed
   // pixel speed, so it holds regardless of how zoomed-in the footage is.
   const windowSpeeds = velocities.slice(rep.startIndex, to + 1).map((v) => Math.abs(v.vy))
-  const windowPeak = windowSpeeds.length ? Math.max(...windowSpeeds) : 0
+  // The robust peak, not the maximum — see PEAK_PERCENTILE. A glitch would
+  // otherwise raise this threshold above the real bar speed and trim away the
+  // lift itself: on a real 165 kg bench a spurious 1.69 m/s sample put the
+  // threshold at 0.169 m/s, above a bar actually travelling 0.14.
+  const windowPeak = percentile(windowSpeeds, PEAK_PERCENTILE)
   const movingThreshold = windowPeak * 0.1
   let from = rep.startIndex
   while (from < to && Math.abs(velocities[from].vy) < movingThreshold) from++
@@ -241,12 +364,46 @@ export function repMetrics(
   const meanVelocityPxS = speeds.length
     ? speeds.reduce((sum, s) => sum + s, 0) / speeds.length
     : 0
-  const peakVelocityPxS = speeds.length ? Math.max(...speeds) : 0
+  const peakVelocityPxS = percentile(speeds, PEAK_PERCENTILE)
   // Range of motion is measured from the TRUE bottom, not the trimmed start:
   // how far the bar travelled and how fast it moved are different questions,
   // and the trim only ever removes time, never distance.
   const romPx = Math.abs(samples[rep.startIndex].y - samples[to].y)
   const toMetres = (px: number) => (pixelsPerMetre && pixelsPerMetre > 0 ? px / pixelsPerMetre : null)
+
+  // ---- Propulsive phase -----------------------------------------------------
+  //
+  // A barbell is only being driven for part of the concentric. Past a point the
+  // lifter has to slow it so it does not leave the hands, and everything after
+  // that is deceleration the lifter is causing on purpose. Averaging it in is
+  // what makes mean velocity read a bench as far slower than it was: on a 35 cm
+  // bench travel the braking phase is a large share of the lift, on a 100 cm
+  // squat it is a small one. That is the whole reason bench looked like a max
+  // out on every set while squat and deadlift read correctly.
+  //
+  // The boundary is where the bar starts decelerating at least as hard as
+  // gravity. In image coordinates the concentric has vy negative, so upward
+  // speed is -vy and its rate of change is -dvy/dt; decelerating harder than
+  // gravity therefore means dvy/dt >= +9.81 m/s². Searched from the fastest
+  // sample onward, since the bar accelerates before it brakes.
+  let propulsiveEnd = to
+  if (pixelsPerMetre && pixelsPerMetre > 0 && to > from) {
+    let peakIndex = from
+    for (let i = from; i <= to; i++) {
+      if (Math.abs(velocities[i].vy) > Math.abs(velocities[peakIndex].vy)) peakIndex = i
+    }
+    for (let i = peakIndex; i <= to; i++) {
+      const accelMs2 = accelerationAt(velocities, i, 0.075) / pixelsPerMetre
+      if (accelMs2 >= GRAVITY_MS2) {
+        propulsiveEnd = i
+        break
+      }
+    }
+  }
+  const propulsiveSpeeds = velocities.slice(from, propulsiveEnd + 1).map((v) => Math.abs(v.vy))
+  const meanPropulsivePxS = propulsiveSpeeds.length
+    ? propulsiveSpeeds.reduce((sum, s) => sum + s, 0) / propulsiveSpeeds.length
+    : 0
 
   return {
     index: rep.index,
@@ -259,6 +416,11 @@ export function repMetrics(
     romM: toMetres(romPx),
     meanVelocity: toMetres(meanVelocityPxS),
     peakVelocity: toMetres(peakVelocityPxS),
+    meanPropulsiveVelocity: toMetres(meanPropulsivePxS),
+    propulsiveFraction:
+      pixelsPerMetre && pixelsPerMetre > 0 && speeds.length
+        ? propulsiveSpeeds.length / speeds.length
+        : null,
   }
 }
 

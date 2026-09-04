@@ -144,6 +144,28 @@ export async function getAnalysis(id: string): Promise<VideoAnalysisDto | null> 
   return row ? toDto(row as AnalysisRow) : null
 }
 
+/**
+ * Attaches an analysis to an athlete, or detaches it.
+ *
+ * An analysis taken from a local file has no athlete until someone says whose
+ * it is, and before this there was no way to say so afterwards — an orphan
+ * stayed an orphan, invisible to every profile it should have been feeding.
+ */
+export async function setAnalysisAthlete(
+  id: string,
+  athleteId: string | null,
+): Promise<VideoAnalysisDto | null> {
+  const res = await getDb()
+    .updateTable('video_analyses')
+    .set({ athlete_id: athleteId, updated_at: new Date().toISOString() })
+    .where('id', '=', id)
+    .executeTakeFirst()
+  if (Number(res.numUpdatedRows ?? 0n) === 0) return null
+
+  const row = await baseQuery().where('video_analyses.id', '=', id).executeTakeFirst()
+  return row ? toDto(row as AnalysisRow) : null
+}
+
 export async function deleteAnalysis(id: string): Promise<boolean> {
   const res = await getDb().deleteFrom('video_analyses').where('id', '=', id).executeTakeFirst()
   return Number(res.numDeletedRows ?? 0n) > 0
