@@ -13,6 +13,7 @@
     "./discord": "./discord.ts",
     "./scoring": "./scoring.ts",
     "./warmup": "./warmup.ts",
-    "./videoAnalysis": "./videoAnalysis.ts"
+    "./videoAnalysis": "./videoAnalysis.ts",
+    "./vbt": "./vbt.ts"
   }
 }

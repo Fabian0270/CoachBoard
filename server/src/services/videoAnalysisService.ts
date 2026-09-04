@@ -1,3 +1,4 @@
+import { sql } from 'kysely'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db.js'
 import type {
@@ -25,6 +26,9 @@ interface AnalysisRow {
   calibration: string | null
   metrics: string | null
   notes: string | null
+  lift: string | null
+  load_kg: number | null
+  called_rpe: number | null
   created_at: string
   updated_at: string
   athlete_name?: string | null
@@ -57,24 +61,41 @@ function toDto(row: AnalysisRow): VideoAnalysisDto {
     calibration: parseJson<CalibrationDto | null>(row.calibration, null),
     metrics: parseJson<RepMetrics[]>(row.metrics, []),
     notes: row.notes,
+    lift: row.lift,
+    loadKg: row.load_kg,
+    calledRpe: row.called_rpe,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
 }
 
-function baseQuery() {
+/**
+ * `withTrack: false` omits the path itself.
+ *
+ * A track is up to 20 000 points, and the velocity panel lists an athlete's
+ * whole history purely to read the load and per-rep metrics off each row —
+ * shipping every path with it would be megabytes to display a handful of dots.
+ */
+function baseQuery(withTrack = true) {
   return getDb()
     .selectFrom('video_analyses')
     .leftJoin('athletes', 'athletes.id', 'video_analyses.athlete_id')
+    .select(
+      withTrack
+        ? sql<string>`video_analyses.track`.as('track')
+        : sql<string>`'[]'`.as('track'),
+    )
     .select([
       'video_analyses.id as id',
       'video_analyses.media_id as media_id',
       'video_analyses.athlete_id as athlete_id',
       'video_analyses.source_label as source_label',
-      'video_analyses.track as track',
       'video_analyses.calibration as calibration',
       'video_analyses.metrics as metrics',
       'video_analyses.notes as notes',
+      'video_analyses.lift as lift',
+      'video_analyses.load_kg as load_kg',
+      'video_analyses.called_rpe as called_rpe',
       'video_analyses.created_at as created_at',
       'video_analyses.updated_at as updated_at',
       'athletes.name as athlete_name',
@@ -95,6 +116,9 @@ export async function saveAnalysis(input: SaveVideoAnalysisInput): Promise<Video
       calibration: input.calibration ? JSON.stringify(input.calibration) : null,
       metrics: JSON.stringify(input.metrics),
       notes: input.notes,
+      lift: input.lift,
+      load_kg: input.loadKg,
+      called_rpe: input.calledRpe,
       created_at: now,
       updated_at: now,
     })
@@ -105,10 +129,10 @@ export async function saveAnalysis(input: SaveVideoAnalysisInput): Promise<Video
 }
 
 /** Every saved analysis, newest first. Optionally scoped to one video. */
-export async function listAnalyses(opts: { mediaId?: string; athleteId?: string } = {}): Promise<
-  VideoAnalysisDto[]
-> {
-  let q = baseQuery()
+export async function listAnalyses(
+  opts: { mediaId?: string; athleteId?: string; withTrack?: boolean } = {},
+): Promise<VideoAnalysisDto[]> {
+  let q = baseQuery(opts.withTrack ?? true)
   if (opts.mediaId) q = q.where('video_analyses.media_id', '=', opts.mediaId)
   if (opts.athleteId) q = q.where('video_analyses.athlete_id', '=', opts.athleteId)
   const rows = await q.orderBy('video_analyses.created_at', 'desc').execute()

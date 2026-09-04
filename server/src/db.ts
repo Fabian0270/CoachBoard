@@ -231,6 +231,11 @@ export interface VideoAnalysisTable {
   /** JSON: cached per-rep metrics, so a saved analysis lists without recomputing. */
   metrics: string | null
   notes: string | null
+  /** What the set was — see SetContext in shared/videoAnalysis.ts. All nullable:
+   *  a coach looking at a bar path is not made to fill in a form first. */
+  lift: string | null
+  load_kg: number | null
+  called_rpe: number | null
   created_at: string
   updated_at: string
 }
@@ -655,6 +660,12 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
       FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE SET NULL
     )
   `.execute(_db)
+  // Velocity-based training context. Added by ALTER for the same reason as the
+  // 11a columns above: databases from <=1.14.0 converge to a fresh install's shape.
+  await addColumnIfMissing('video_analyses', 'lift', 'TEXT')
+  await addColumnIfMissing('video_analyses', 'load_kg', 'REAL')
+  await addColumnIfMissing('video_analyses', 'called_rpe', 'REAL')
+
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_media ON video_analyses(media_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_athlete ON video_analyses(athlete_id)`.execute(_db)
 

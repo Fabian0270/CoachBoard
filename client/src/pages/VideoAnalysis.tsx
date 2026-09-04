@@ -20,6 +20,13 @@ import {
   PLATE_DIAMETERS_MM,
   type RepMetrics,
 } from 'coachboard-shared/videoAnalysis'
+import { lastRepVelocity, rpeFromLastRepVelocity, zoneFor } from 'coachboard-shared/vbt'
+import VelocityPanel, {
+  rememberedLift,
+  type SetContextState,
+} from '../components/analysis/VelocityPanel'
+import { useVbtHistory, useAthleteMaxes } from '../components/analysis/useVbtHistory'
+import { num } from '../lib/num'
 
 type Phase = 'idle' | 'capturing' | 'tracking' | 'done'
 
@@ -65,6 +72,12 @@ export default function VideoAnalysis() {
   const [offerSave, setOfferSave] = useState(false)
   const [savedId, setSavedId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  /** What the set was — the lift and load every velocity readout is judged against. */
+  const [setContext, setSetContext] = useState<SetContextState>({
+    lift: rememberedLift(),
+    loadText: '',
+    calledRpe: null,
+  })
 
   /**
    * Everything below belongs to ONE video, and React Router keeps this page
@@ -85,6 +98,9 @@ export default function VideoAnalysis() {
     setDuration(0)
     setCurrentTime(0)
     setNotFound(false)
+    // Load and called RPE belong to one set and must not bleed into the next
+    // clip; the lift is kept, because a coach reviews a whole inbox of squats.
+    setSetContext((c) => ({ ...c, loadText: '', calledRpe: null }))
     // Leaving the deep link entirely (back to /analysis) means no video at all,
     // so the picker takes over. A locally-imported file has no id and must
     // survive this, hence only clearing when the param is genuinely absent.
@@ -168,6 +184,19 @@ export default function VideoAnalysis() {
   }
 
   /**
+   * Arms calibration and brings the video back into view.
+   *
+   * Reachable from the velocity panel far below the stage, where the missing
+   * scale is what a coach actually notices — arming the mode without scrolling
+   * would leave them looking at a button that appeared to do nothing.
+   */
+  const startCalibration = () => {
+    setMode('calibrate')
+    setAwaitingSecondPoint(false)
+    videoRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
+  /**
    * Two clicks define the scale line: the first drops one end, the second
    * completes it and returns to placing the tracking point.
    */
@@ -200,6 +229,26 @@ export default function VideoAnalysis() {
   const reps: RepMetrics[] = useMemo(
     () => (samples ? analysePath(samples, pixelsPerMetre).reps : []),
     [samples, pixelsPerMetre],
+  )
+
+  // The load as a number, or null — a half-typed "1" is not a load to save.
+  const parsedLoad = setContext.loadText.trim() ? num(setContext.loadText) : null
+  const loadKg = parsedLoad != null && Number.isFinite(parsedLoad) && parsedLoad > 0 ? parsedLoad : null
+
+
+  // The athlete's own velocity history for this lift. Resolved here rather than
+  // inside the panel because the rep table below reads the same anchors — two
+  // different estimated RPEs for one rep would be worse than none.
+  const athleteId = source?.kind === 'discord' ? source.item.athleteId : null
+  const { anchors: savedAnchors, points: savedPoints } = useVbtHistory(athleteId, setContext.lift)
+  const athleteMaxes = useAthleteMaxes(athleteId)
+  const lastV = pixelsPerMetre !== null ? lastRepVelocity(reps) : null
+  const anchors = useMemo(
+    () =>
+      setContext.calledRpe != null && lastV != null
+        ? [...savedAnchors, { rpe: setContext.calledRpe, velocity: lastV }]
+        : savedAnchors,
+    [savedAnchors, setContext.calledRpe, lastV],
   )
 
   const resizeSeed = (delta: number) => {
@@ -348,6 +397,12 @@ export default function VideoAnalysis() {
           calibration: calibration ? { ...calibration, plateDiameterMm: plateMm } : null,
           metrics: reps,
           notes: null,
+          // Only when the velocity panel was actually on screen. With no reps
+          // detected it is hidden, and storing the lift it happens to remember
+          // would be recording a guess the coach never saw.
+          lift: reps.length > 0 ? setContext.lift : null,
+          loadKg: loadKg,
+          calledRpe: setContext.calledRpe,
         }),
       })
       if (!res.ok) throw new Error('Save failed')
@@ -621,6 +676,8 @@ export default function VideoAnalysis() {
                     {reps.length > 0
                       ? `${reps.length} ${reps.length === 1 ? 'rep' : 'reps'}, bar path and scale are kept.`
                       : 'The bar path is kept.'}
+                    {loadKg != null &&
+                      ` The lift and ${loadKg} kg go with it, so the athlete's velocity profile builds up.`}
                     {source?.kind === 'local' && ' The video itself is not — it stays on your computer.'}
                   </span>
                 </span>
@@ -655,47 +712,75 @@ export default function VideoAnalysis() {
                         <th className="py-1 pr-4 font-medium">Mean</th>
                         <th className="py-1 pr-4 font-medium">Peak</th>
                         <th className="py-1 pr-4 font-medium">Range</th>
-                        <th className="py-1 font-medium">Duration</th>
+                        <th className="py-1 pr-4 font-medium">Duration</th>
+                        {/* Per-rep interpretation. Dropped entirely without a
+                            scale line rather than shown as a column of dashes —
+                            neither an RPE table nor a velocity zone means
+                            anything against a pixels-per-second number. */}
+                        {pixelsPerMetre !== null && (
+                          <>
+                            <th className="py-1 pr-4 font-medium">≈ RPE</th>
+                            <th className="py-1 font-medium">Quality</th>
+                          </>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
-                      {reps.map((r) => (
-                        <tr key={r.index} className="border-b last:border-0">
-                          <td className="py-1 pr-4">{r.index + 1}</td>
-                          <td className="py-1 pr-4 font-medium">
-                            {r.meanVelocity !== null
-                              ? `${r.meanVelocity.toFixed(2)} m/s`
-                              : `${Math.round(r.meanVelocityPxS)} px/s`}
-                          </td>
-                          <td className="py-1 pr-4">
-                            {r.peakVelocity !== null
-                              ? `${r.peakVelocity.toFixed(2)} m/s`
-                              : `${Math.round(r.peakVelocityPxS)} px/s`}
-                          </td>
-                          <td className="py-1 pr-4">
-                            {r.romM !== null ? `${(r.romM * 100).toFixed(0)} cm` : `${Math.round(r.romPx)} px`}
-                          </td>
-                          <td className="py-1">{(r.durationMs / 1000).toFixed(2)} s</td>
-                        </tr>
-                      ))}
+                      {reps.map((r) => {
+                        const reading =
+                          r.meanVelocity !== null
+                            ? rpeFromLastRepVelocity(setContext.lift, r.meanVelocity, { anchors })
+                            : null
+                        const zone = r.meanVelocity !== null ? zoneFor(r.meanVelocity) : null
+                        return (
+                          <tr key={r.index} className="border-b last:border-0">
+                            <td className="py-1 pr-4">{r.index + 1}</td>
+                            <td className="py-1 pr-4 font-medium">
+                              {r.meanVelocity !== null
+                                ? `${r.meanVelocity.toFixed(2)} m/s`
+                                : `${Math.round(r.meanVelocityPxS)} px/s`}
+                            </td>
+                            <td className="py-1 pr-4">
+                              {r.peakVelocity !== null
+                                ? `${r.peakVelocity.toFixed(2)} m/s`
+                                : `${Math.round(r.peakVelocityPxS)} px/s`}
+                            </td>
+                            <td className="py-1 pr-4">
+                              {r.romM !== null
+                                ? `${(r.romM * 100).toFixed(0)} cm`
+                                : `${Math.round(r.romPx)} px`}
+                            </td>
+                            <td className="py-1 pr-4">{(r.durationMs / 1000).toFixed(2)} s</td>
+                            {pixelsPerMetre !== null && (
+                              <>
+                                <td className="py-1 pr-4">{reading ? reading.rpe : '—'}</td>
+                                <td className="py-1 text-muted-foreground">{zone ? zone.label : '—'}</td>
+                              </>
+                            )}
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
-                {reps.length > 1 && (
-                  <p className="text-xs text-muted-foreground">
-                    Velocity loss across the set:{' '}
-                    <span className="font-medium text-foreground">
-                      {(() => {
-                        const speeds = reps.map((r) => r.meanVelocity ?? r.meanVelocityPxS)
-                        const best = Math.max(...speeds)
-                        const last = speeds[speeds.length - 1]
-                        return best > 0 ? `${Math.round((1 - last / best) * 100)}%` : '—'
-                      })()}
-                    </span>{' '}
-                    from the fastest rep to the last.
-                  </p>
-                )}
               </div>
+            )}
+
+            {/* Velocity-based readouts live in their own panel: they need the
+                lift and load, which the tracker cannot know, and they are
+                interpretation rather than measurement. */}
+            {samples && reps.length > 0 && (
+              <VelocityPanel
+                reps={reps}
+                calibrated={pixelsPerMetre !== null}
+                athleteName={source?.kind === 'discord' ? source.item.athleteName : null}
+                anchors={anchors}
+                savedPoints={savedPoints}
+                maxes={athleteMaxes}
+                value={setContext}
+                onChange={setSetContext}
+                onSetScale={startCalibration}
+              />
             )}
 
             {samples && reps.length === 0 && (
