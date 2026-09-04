@@ -115,6 +115,8 @@ export interface Rep {
   endIndex: number
   /** The top of the lift — end of the concentric half. */
   topIndex: number
+  /** Vertical travel, kept so the set can be compared against its own median. */
+  romPx: number
 }
 
 export interface SegmentOptions {
@@ -123,11 +125,31 @@ export interface SegmentOptions {
   minMovingSpeed?: number
   /** Minimum vertical travel for a cycle to be a rep rather than track noise. */
   minRomPx?: number
+  /**
+   * Minimum travel as a fraction of the set's OWN median rep, on top of minRomPx.
+   *
+   * A fixed pixel floor rejects a different amount of noise depending on how
+   * zoomed-in the footage is: 20 px is most of a rep on a wide shot and a
+   * rounding error on a close one. A real 5-rep squat came back as six reps
+   * because of it — the phantom travelled 3 cm against a 100 cm median, which is
+   * plainly not a rep at any zoom, but cleared 20 px comfortably.
+   *
+   * Same reasoning as the dead-time trim in repMetrics, which is a fraction of
+   * the rep's own peak rather than a fixed speed, and for the same reason.
+   */
+  minRomFraction?: number
 }
 
 const SEGMENT_DEFAULTS: Required<SegmentOptions> = {
   minMovingSpeed: 15,
   minRomPx: 20,
+  minRomFraction: 0.4,
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
 /**
@@ -184,11 +206,18 @@ export function segmentReps(
     }
 
     // Reject anything that barely moved: that is tracker jitter, not a lift.
-    if (Math.abs(samples[startIndex].y - samples[topIndex].y) < opts.minRomPx) continue
+    const romPx = Math.abs(samples[startIndex].y - samples[topIndex].y)
+    if (romPx < opts.minRomPx) continue
 
-    reps.push({ index: reps.length, startIndex, endIndex, topIndex })
+    reps.push({ index: reps.length, startIndex, endIndex, topIndex, romPx })
   }
-  return reps
+
+  // Second pass, once there is a set to compare against: drop cycles far
+  // shorter than the set's own reps. Median rather than mean so one phantom
+  // cannot drag the reference down and save itself.
+  if (reps.length < 2) return reps
+  const floor = median(reps.map((r) => r.romPx)) * opts.minRomFraction
+  return reps.filter((r) => r.romPx >= floor).map((r, index) => ({ ...r, index }))
 }
 
 export interface RepMetrics {

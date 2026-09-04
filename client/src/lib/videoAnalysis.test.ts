@@ -106,6 +106,35 @@ describe('segmentReps', () => {
     const samples = linearPath(100, 60, 2)
     expect(segmentReps(samples, verticalVelocity(samples))).toHaveLength(0)
   })
+
+  it('drops a twitch that clears the pixel floor but is nothing like a rep', () => {
+    // A real 5-rep squat came back as six. The phantom travelled 3 cm against a
+    // 100 cm median — plainly not a rep at any zoom, but on close footage that
+    // is well over the 20 px floor, which is why the floor cannot be absolute.
+    const big = repPath(2, 100, 900, 800) // ~800 px of travel per rep
+    const t0 = big[big.length - 1].t
+    const twitch: Sample[] = Array.from({ length: 26 }, (_, i) => ({
+      t: t0 + (i + 1) / 30,
+      x: 100,
+      y: 100 + (i < 13 ? i * 2 : (26 - i) * 2), // 26 px down and back up
+    }))
+    const rest = repPath(2, 100, 900, 800).map((s) => ({
+      ...s,
+      t: s.t + twitch[twitch.length - 1].t + 1 / 30,
+    }))
+    const samples = [...big, ...twitch, ...rest]
+
+    const reps = segmentReps(samples, verticalVelocity(samples))
+    expect(reps).toHaveLength(4)
+    // Indexes are renumbered after the drop, so nothing downstream sees a gap.
+    expect(reps.map((r) => r.index)).toEqual([0, 1, 2, 3])
+  })
+
+  it('keeps a genuinely short set rather than measuring it against a fixed size', () => {
+    // Every rep short is a rep range, not noise: the median moves with them.
+    const samples = repPath(3, 100, 160, 60)
+    expect(segmentReps(samples, verticalVelocity(samples))).toHaveLength(3)
+  })
 })
 
 describe('repMetrics', () => {

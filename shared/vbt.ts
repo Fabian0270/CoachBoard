@@ -573,18 +573,25 @@ export interface VelocityE1RM {
 /**
  * Estimated 1RM from one set's load and bar speed.
  *
- * Deliberately does NOT go via reps and the RPE chart. RPE-to-%1RM is highly
- * individual — a strong lifter routinely has more in reserve than the chart
- * assumes — whereas velocity at a given relative load is the one thing VBT finds
- * consistent. Chaining through reps on a real 205 kg double read 237.5 kg for an
- * athlete who had just squatted 250 in competition; going straight from velocity
- * reads 245.
+ * `velocity` MUST be the set's FASTEST rep, not its last — see bestRepVelocity.
+ * The load-velocity relationship describes how fast a given load moves under
+ * full intent when fresh, so feeding it a fatigued last rep reads the load as
+ * far heavier than it is, and increasingly so the longer the set. A real 180 kg
+ * five-rep squat by a 250 kg squatter: the last rep at 0.39 m/s estimates 201
+ * kg, the first at 0.62 m/s estimates 249. Last-rep velocity answers a different
+ * question — how hard the set was — which is rpeFromLastRepVelocity's job.
+ *
+ * Deliberately does NOT go via reps and the RPE chart either. RPE-to-%1RM is
+ * highly individual — a strong lifter routinely has more in reserve than the
+ * chart assumes — whereas velocity at a given relative load is the one thing VBT
+ * finds consistent.
  *
  * Null when the bar was at or below the MVT (the set was already a max or the
  * scale is wrong) or when the arithmetic would produce a non-positive max.
  */
 export function e1RMFromVelocity(opts: {
   loadKg: number
+  /** The fastest rep of the set, in m/s. */
   velocity: number
   mvt: number
   slope: LvSlope

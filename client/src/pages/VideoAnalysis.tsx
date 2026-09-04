@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Check, Crosshair, Loader2, Palette, RotateCcw, Ruler, Save, Target } from 'lucide-react'
+import {
+  ArrowLeft,
+  Check,
+  Crosshair,
+  Loader2,
+  Palette,
+  RotateCcw,
+  Ruler,
+  Save,
+  Target,
+  Undo2,
+  X,
+} from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
@@ -77,6 +89,7 @@ export default function VideoAnalysis() {
     lift: rememberedLift(),
     loadText: '',
     calledRpe: null,
+    repsText: '',
   })
 
   /**
@@ -100,7 +113,7 @@ export default function VideoAnalysis() {
     setNotFound(false)
     // Load and called RPE belong to one set and must not bleed into the next
     // clip; the lift is kept, because a coach reviews a whole inbox of squats.
-    setSetContext((c) => ({ ...c, loadText: '', calledRpe: null }))
+    setSetContext((c) => ({ ...c, loadText: '', calledRpe: null, repsText: '' }))
     // Leaving the deep link entirely (back to /analysis) means no video at all,
     // so the picker takes over. A locally-imported file has no id and must
     // survive this, hence only clearing when the param is genuinely absent.
@@ -226,10 +239,40 @@ export default function VideoAnalysis() {
   // segmentation), and it MUST sit above the early returns below — a hook after
   // a conditional return changes the hook count between renders, which React
   // rejects outright.
-  const reps: RepMetrics[] = useMemo(
+  const trackedReps: RepMetrics[] = useMemo(
     () => (samples ? analysePath(samples, pixelsPerMetre).reps : []),
     [samples, pixelsPerMetre],
   )
+
+  /**
+   * Reps the coach has struck off, by index into `trackedReps`.
+   *
+   * The segmenter drops obvious noise on its own, but it cannot know that a
+   * re-rack, a failed attempt or a bounced walkout was not a rep. Everything
+   * downstream — velocity loss, the RPE reading, the 1RM estimate, and what gets
+   * saved — reads the filtered list, so one bad cycle cannot quietly skew the
+   * athlete's whole profile.
+   */
+  const [excludedReps, setExcludedReps] = useState<Set<number>>(new Set())
+
+  // A fresh track renumbers everything, so carrying exclusions over would strike
+  // off arbitrary reps of a different set. Keyed on `samples` so every path that
+  // clears or replaces a track is covered, rather than each one remembering to.
+  useEffect(() => {
+    setExcludedReps(new Set())
+  }, [samples])
+
+  const reps: RepMetrics[] = useMemo(
+    () => trackedReps.filter((r) => !excludedReps.has(r.index)),
+    [trackedReps, excludedReps],
+  )
+
+  const toggleRep = (index: number) =>
+    setExcludedReps((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(index)) next.add(index)
+      return next
+    })
 
   // The load as a number, or null — a half-typed "1" is not a load to save.
   const parsedLoad = setContext.loadText.trim() ? num(setContext.loadText) : null
@@ -699,11 +742,21 @@ export default function VideoAnalysis() {
               </p>
             )}
 
-            {samples && reps.length > 0 && (
+            {samples && trackedReps.length > 0 && (
               <div className="space-y-2">
                 <h2 className="text-sm font-medium">
                   Concentric velocity — {reps.length} {reps.length === 1 ? 'rep' : 'reps'}
+                  {excludedReps.size > 0 && (
+                    <span className="ml-1 font-normal text-muted-foreground">
+                      ({excludedReps.size} struck off)
+                    </span>
+                  )}
                 </h2>
+                <p className="text-xs text-muted-foreground">
+                  A cycle that was not a rep — a re-rack, a failed attempt, a bounce in the walkout —
+                  skews everything measured from the set. Strike it off and every number below is
+                  recalculated without it.
+                </p>
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[30rem] text-sm">
                     <thead>
@@ -723,17 +776,25 @@ export default function VideoAnalysis() {
                             <th className="py-1 font-medium">Quality</th>
                           </>
                         )}
+                        <th className="py-1 pl-4 font-medium"></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {reps.map((r) => {
+                      {trackedReps.map((r) => {
+                        const excluded = excludedReps.has(r.index)
                         const reading =
-                          r.meanVelocity !== null
+                          !excluded && r.meanVelocity !== null
                             ? rpeFromLastRepVelocity(setContext.lift, r.meanVelocity, { anchors })
                             : null
-                        const zone = r.meanVelocity !== null ? zoneFor(r.meanVelocity) : null
+                        const zone =
+                          !excluded && r.meanVelocity !== null ? zoneFor(r.meanVelocity) : null
                         return (
-                          <tr key={r.index} className="border-b last:border-0">
+                          <tr
+                            key={r.index}
+                            className={`border-b last:border-0 ${
+                              excluded ? 'text-muted-foreground line-through opacity-60' : ''
+                            }`}
+                          >
                             <td className="py-1 pr-4">{r.index + 1}</td>
                             <td className="py-1 pr-4 font-medium">
                               {r.meanVelocity !== null
@@ -757,6 +818,23 @@ export default function VideoAnalysis() {
                                 <td className="py-1 text-muted-foreground">{zone ? zone.label : '—'}</td>
                               </>
                             )}
+                            <td className="py-1 pl-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => toggleRep(r.index)}
+                                title={excluded ? 'Count this rep again' : 'Not a rep — strike it off'}
+                                aria-label={
+                                  excluded ? `Count rep ${r.index + 1} again` : `Strike off rep ${r.index + 1}`
+                                }
+                                className="rounded p-1 text-muted-foreground no-underline hover:bg-muted hover:text-foreground"
+                              >
+                                {excluded ? (
+                                  <Undo2 className="h-3.5 w-3.5" />
+                                ) : (
+                                  <X className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            </td>
                           </tr>
                         )
                       })}
@@ -783,7 +861,7 @@ export default function VideoAnalysis() {
               />
             )}
 
-            {samples && reps.length === 0 && (
+            {samples && trackedReps.length === 0 && (
               <p className="text-xs text-muted-foreground">
                 No complete rep was detected in this range — the bar needs to travel down and back up
                 for velocity to mean anything. Try widening the start and end points.
