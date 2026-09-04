@@ -127,48 +127,35 @@ export const LRV_TOLERANCE_MS = 0.03
 // Which velocity the tables get read against
 // ---------------------------------------------------------------------------
 
-export type VelocityMetric = 'mean' | 'peak'
+export type VelocityMetric = 'mean' | 'peak' | 'propulsive'
 
 /**
- * Bench is read off PEAK velocity; everything else off MEAN.
+ * Mean PROPULSIVE velocity everywhere, with mean as the fallback.
  *
- * Not from the sources, and not a claim that peak is the "right" metric — the
- * published tables are in mean velocity. It is an empirical correction for a
- * problem that is specific to bench.
+ * This replaces a per-lift table that read bench off peak and everything else
+ * off mean. That table was an empirical patch for a real problem — a large share
+ * of a bench concentric is spent braking the bar so it does not leave the hands,
+ * and over 35 cm of travel that share is big enough to drag the mean well below
+ * what the reference tables describe, where a 100 cm squat barely notices. It
+ * worked on one clean bench clip and then fell over on the next one, because
+ * peak is a near-single-sample statistic and a tracker re-lock lands in it whole.
  *
- * On bench a large share of the concentric is spent decelerating the bar so it
- * does not leave the hands, and on a 35 cm travel that share is big enough to
- * drag the mean well below what the tables describe. On a squat the lifter
- * drives into the floor for most of a 100 cm travel, so the same effect is
- * small. Measured on real clips by a lifter with a 200 kg bench and a 250 kg
- * squat:
+ * MPV fixes the same problem from the other end. It averages, so it is robust
+ * like the mean, and it removes exactly the braking phase each lift actually
+ * has — a lot on bench, little on squat — so no lift needs a special case and
+ * nothing has to be tuned per lift.
  *
- *   bench 170 kg   mean 0.24 -> 175 kg estimated   peak 0.37 -> 195 kg
- *   squat 180 kg   mean 0.62 -> 249 kg estimated   peak 1.06 -> 459 kg
- *
- * So peak rescues bench and destroys squat, which is why this is per-lift and
- * why mean stays the default.
- *
- * Known limitation: the peak-to-mean gap is not constant. It is wider at light
- * loads, where there is more excess speed to shed, and narrows towards a true
- * max. Bench read off peak should therefore run slightly optimistic on light
- * sets and tighten as the load climbs. The principled fix is mean PROPULSIVE
- * velocity — the average over only the driven part of the lift — which corrects
- * each lift by exactly the amount its deceleration phase warrants. That needs
- * acceleration off the tracked path and a decision about which metric the
- * published tables are actually in, neither of which is settled yet.
+ * Falls back to mean, per rep, when there is no MPV to use: the phase boundary
+ * is literally 9.81 m/s², so it cannot be located on an uncalibrated path.
  */
-export const DEFAULT_VELOCITY_METRIC: Partial<Record<VbtLift, VelocityMetric>> = {
-  'bench-press': 'peak',
-}
-
-export function defaultVelocityMetric(lift: VbtLift): VelocityMetric {
-  return DEFAULT_VELOCITY_METRIC[lift] ?? 'mean'
+export function defaultVelocityMetric(_lift: VbtLift): VelocityMetric {
+  return 'propulsive'
 }
 
 export const VELOCITY_METRIC_LABEL: Record<VelocityMetric, string> = {
   mean: 'mean',
   peak: 'peak',
+  propulsive: 'propulsive',
 }
 
 /** How the source labels its three anchors, for UI copy. */
@@ -763,8 +750,17 @@ export function zoneFor(velocity: number): VelocityZone | null {
 // 7. Reading a tracked set
 // ---------------------------------------------------------------------------
 
-const readRep = (rep: RepMetrics, metric: VelocityMetric): number | null =>
-  metric === 'peak' ? rep.peakVelocity : rep.meanVelocity
+/**
+ * The velocity a rep is judged on.
+ *
+ * MPV falls back to the mean rather than to null: an uncalibrated path has no
+ * propulsive phase to find, and on a calibrated one the fallback never fires.
+ */
+export const readRep = (rep: RepMetrics, metric: VelocityMetric): number | null => {
+  if (metric === 'peak') return rep.peakVelocity
+  if (metric === 'propulsive') return rep.meanPropulsiveVelocity ?? rep.meanVelocity
+  return rep.meanVelocity
+}
 
 /**
  * Velocity of the last rep — the number every LRV judgement is made on.

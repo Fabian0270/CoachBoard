@@ -106,6 +106,42 @@ export function verticalVelocity(samples: Sample[], windowMs = 150): VelocitySam
   })
 }
 
+/** Where the propulsive phase ends: the bar decelerating at least as hard as gravity. */
+const GRAVITY_MS2 = 9.81
+
+/**
+ * Vertical acceleration at one sample, in pixels/s², by local weighted linear
+ * regression of velocity against time.
+ *
+ * A plain difference of two velocity samples is far too noisy to threshold
+ * against gravity — the whole point of the phase boundary is that it sits at a
+ * specific number, so the signal has to be smooth enough for that number to
+ * mean something. Regressing against real timestamps for the same reason
+ * verticalVelocity does: phone video is variable-frame-rate.
+ */
+function accelerationAt(velocities: VelocitySample[], index: number, halfWindowS: number): number {
+  const centre = velocities[index]
+  let sw = 0, swx = 0, swx2 = 0, swy = 0, swxy = 0
+  let count = 0
+
+  for (const p of velocities) {
+    const dt = p.t - centre.t
+    if (Math.abs(dt) > halfWindowS) continue
+    const w = Math.max(1 - Math.abs(dt) / halfWindowS, 0.01)
+    sw += w
+    swx += w * dt
+    swx2 += w * dt * dt
+    swy += w * p.vy
+    swxy += w * dt * p.vy
+    count++
+  }
+  if (count < 2) return 0
+
+  const det = sw * swx2 - swx * swx
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return 0
+  return (sw * swxy - swx * swy) / det
+}
+
 /** One lifting cycle, as indices into the sample array. */
 export interface Rep {
   index: number
@@ -276,6 +312,17 @@ export interface RepMetrics {
   romM: number | null
   meanVelocity: number | null
   peakVelocity: number | null
+  /**
+   * Mean PROPULSIVE velocity — averaged over only the driven part of the lift,
+   * stopping where the bar begins decelerating at least as hard as gravity.
+   *
+   * Null without a calibration, and not because of the usual unit-honesty rule:
+   * the phase boundary is literally 9.81 m/s², so it cannot even be located on
+   * an uncalibrated path.
+   */
+  meanPropulsiveVelocity: number | null
+  /** How much of the concentric was propulsive, 0-1. Null when MPV is. */
+  propulsiveFraction: number | null
 }
 
 /**
@@ -324,6 +371,40 @@ export function repMetrics(
   const romPx = Math.abs(samples[rep.startIndex].y - samples[to].y)
   const toMetres = (px: number) => (pixelsPerMetre && pixelsPerMetre > 0 ? px / pixelsPerMetre : null)
 
+  // ---- Propulsive phase -----------------------------------------------------
+  //
+  // A barbell is only being driven for part of the concentric. Past a point the
+  // lifter has to slow it so it does not leave the hands, and everything after
+  // that is deceleration the lifter is causing on purpose. Averaging it in is
+  // what makes mean velocity read a bench as far slower than it was: on a 35 cm
+  // bench travel the braking phase is a large share of the lift, on a 100 cm
+  // squat it is a small one. That is the whole reason bench looked like a max
+  // out on every set while squat and deadlift read correctly.
+  //
+  // The boundary is where the bar starts decelerating at least as hard as
+  // gravity. In image coordinates the concentric has vy negative, so upward
+  // speed is -vy and its rate of change is -dvy/dt; decelerating harder than
+  // gravity therefore means dvy/dt >= +9.81 m/s². Searched from the fastest
+  // sample onward, since the bar accelerates before it brakes.
+  let propulsiveEnd = to
+  if (pixelsPerMetre && pixelsPerMetre > 0 && to > from) {
+    let peakIndex = from
+    for (let i = from; i <= to; i++) {
+      if (Math.abs(velocities[i].vy) > Math.abs(velocities[peakIndex].vy)) peakIndex = i
+    }
+    for (let i = peakIndex; i <= to; i++) {
+      const accelMs2 = accelerationAt(velocities, i, 0.075) / pixelsPerMetre
+      if (accelMs2 >= GRAVITY_MS2) {
+        propulsiveEnd = i
+        break
+      }
+    }
+  }
+  const propulsiveSpeeds = velocities.slice(from, propulsiveEnd + 1).map((v) => Math.abs(v.vy))
+  const meanPropulsivePxS = propulsiveSpeeds.length
+    ? propulsiveSpeeds.reduce((sum, s) => sum + s, 0) / propulsiveSpeeds.length
+    : 0
+
   return {
     index: rep.index,
     startT: samples[from].t,
@@ -335,6 +416,11 @@ export function repMetrics(
     romM: toMetres(romPx),
     meanVelocity: toMetres(meanVelocityPxS),
     peakVelocity: toMetres(peakVelocityPxS),
+    meanPropulsiveVelocity: toMetres(meanPropulsivePxS),
+    propulsiveFraction:
+      pixelsPerMetre && pixelsPerMetre > 0 && speeds.length
+        ? propulsiveSpeeds.length / speeds.length
+        : null,
   }
 }
 

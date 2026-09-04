@@ -36,6 +36,7 @@ import {
 import {
   defaultVelocityMetric,
   lastRepVelocity,
+  readRep,
   rpeFromLastRepVelocity,
   zoneFor,
 } from 'coachboard-shared/vbt'
@@ -777,6 +778,9 @@ export default function VideoAnalysis() {
                         <th className={`py-1 pr-4 font-medium ${metric === 'mean' ? 'text-foreground' : ''}`}>
                           Mean{metric === 'mean' && ' •'}
                         </th>
+                        <th className={`py-1 pr-4 font-medium ${metric === 'propulsive' ? 'text-foreground' : ''}`}>
+                          Propulsive{metric === 'propulsive' && ' •'}
+                        </th>
                         <th className={`py-1 pr-4 font-medium ${metric === 'peak' ? 'text-foreground' : ''}`}>
                           Peak{metric === 'peak' && ' •'}
                         </th>
@@ -801,7 +805,7 @@ export default function VideoAnalysis() {
                         // Whatever velocity the panel reads the tables against,
                         // so one rep never carries two different RPEs.
                         const suspect = looksMistracked(r)
-                        const v = metric === 'peak' ? r.peakVelocity : r.meanVelocity
+                        const v = readRep(r, metric)
                         const reading =
                           !excluded && v !== null
                             ? rpeFromLastRepVelocity(setContext.lift, v, { anchors })
@@ -829,6 +833,16 @@ export default function VideoAnalysis() {
                               {r.meanVelocity !== null
                                 ? `${r.meanVelocity.toFixed(2)} m/s`
                                 : `${Math.round(r.meanVelocityPxS)} px/s`}
+                            </td>
+                            <td className="py-1 pr-4 font-medium">
+                              {r.meanPropulsiveVelocity !== null
+                                ? `${r.meanPropulsiveVelocity.toFixed(2)} m/s`
+                                : '—'}
+                              {r.propulsiveFraction !== null && (
+                                <span className="ml-1 text-xs font-normal text-muted-foreground">
+                                  {Math.round(r.propulsiveFraction * 100)}%
+                                </span>
+                              )}
                             </td>
                             <td className="py-1 pr-4">
                               {r.peakVelocity !== null

@@ -257,6 +257,7 @@ describe('looksMistracked', () => {
       index: 0, startT: 0, endT: 1, durationMs: 1000, romPx: 200,
       meanVelocityPxS: mean * 100, peakVelocityPxS: peak * 100,
       romM: null, meanVelocity: mean, peakVelocity: peak,
+      meanPropulsiveVelocity: mean, propulsiveFraction: 1,
     }) as const
 
   it('flags the bench rep whose peak was twelve times its mean', () => {

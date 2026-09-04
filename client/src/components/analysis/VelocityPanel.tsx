@@ -332,6 +332,7 @@ export default function VelocityPanel({
             onChange={(e) => onChange({ ...value, metric: e.target.value as VelocityMetric })}
             className="rounded-md border bg-background px-2 py-1 text-sm"
           >
+            <option value="propulsive">Propulsive velocity</option>
             <option value="mean">Mean velocity</option>
             <option value="peak">Peak velocity</option>
           </select>

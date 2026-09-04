@@ -17,6 +17,7 @@ import {
   DEFAULT_LV_SLOPE,
   zoneFor,
   velocityLoss,
+  readRep,
   lastRepVelocity,
   bestRepVelocity,
   isVbtLift,
@@ -43,6 +44,10 @@ function rep(meanVelocity: number | null, pxS = 100): RepMetrics {
     peakVelocityPxS: pxS * 1.5,
     romM: null,
     meanVelocity,
+    // Propulsive is the driven part only, so it sits above the mean. 1.25x here
+    // keeps it between the mean and the 1.5x peak, as it is on a real lift.
+    meanPropulsiveVelocity: meanVelocity == null ? null : meanVelocity * 1.25,
+    propulsiveFraction: meanVelocity == null ? null : 0.7,
     peakVelocity: meanVelocity == null ? null : meanVelocity * 1.5,
   }
 }
@@ -536,27 +541,26 @@ describe('reading a set', () => {
     expect(bestRepVelocity(reps, 'peak')).toBeCloseTo(0.75, 9)
   })
 
-  it('defaults bench to peak and everything else to mean', () => {
-    // Measured on real clips: bench 170 kg reads 175 kg off the mean and 195 off
-    // the peak against a 200 kg max, while a squat read off peak estimates 459.
-    expect(defaultVelocityMetric('bench-press')).toBe('peak')
-    expect(defaultVelocityMetric('back-squat')).toBe('mean')
-    expect(defaultVelocityMetric('deadlift-conventional')).toBe('mean')
-    expect(defaultVelocityMetric('other')).toBe('mean')
+  it('reads propulsive velocity everywhere, with no per-lift special case', () => {
+    // The per-lift table this replaced read bench off peak, which worked on one
+    // clean clip and then took a tracker re-lock straight into the answer.
+    for (const lift of ['bench-press', 'back-squat', 'deadlift-conventional', 'other'] as const) {
+      expect(defaultVelocityMetric(lift)).toBe('propulsive')
+    }
   })
 
-  it('turns the bench clip that started this into a believable max', () => {
-    const bench = [rep(0.24, 0)] // peak 0.36 by the helper's 1.5x
-    const off = (metric: 'mean' | 'peak') =>
-      e1RMFromVelocity({
-        loadKg: 170,
-        velocity: bestRepVelocity(bench, metric)!,
-        mvt: 0.2,
-        slope: populationSlope('bench-press'),
-      })!.e1rm
-    // Against a real 200 kg bench.
-    expect(off('mean')).toBeLessThan(180)
-    expect(off('peak')).toBeGreaterThan(190)
+  it('falls back to the mean when there is no propulsive phase to find', () => {
+    // An uncalibrated path cannot locate a boundary defined as 9.81 m/s².
+    const noMpv = { ...rep(0.5), meanPropulsiveVelocity: null, propulsiveFraction: null }
+    expect(readRep(noMpv, 'propulsive')).toBe(0.5)
+    expect(readRep(rep(0.5), 'propulsive')).toBeCloseTo(0.625, 9)
+  })
+
+  it('places propulsive between the mean and the peak', () => {
+    const set = [rep(0.24)]
+    const at = (metric: Parameters<typeof bestRepVelocity>[1]) => bestRepVelocity(set, metric)!
+    expect(at('mean')).toBeLessThan(at('propulsive'))
+    expect(at('propulsive')).toBeLessThan(at('peak'))
   })
 
   it('has no last-rep velocity without a scale', () => {
