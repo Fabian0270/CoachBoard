@@ -13,6 +13,7 @@ import {
   matchesLiftName,
   effectiveRpe,
   defaultMvt,
+  defaultVelocityMetric,
   DEFAULT_LV_SLOPE,
   zoneFor,
   velocityLoss,
@@ -526,6 +527,36 @@ describe('reading a set', () => {
     const reps = [rep(0.5), rep(0.55), rep(0.4)]
     expect(lastRepVelocity(reps)).toBe(0.4)
     expect(bestRepVelocity(reps)).toBe(0.55)
+  })
+
+  it('reads peak when asked, since bench is judged on it', () => {
+    const reps = [rep(0.5), rep(0.4)]
+    // The helper builds peak as 1.5x mean.
+    expect(lastRepVelocity(reps, 'peak')).toBeCloseTo(0.6, 9)
+    expect(bestRepVelocity(reps, 'peak')).toBeCloseTo(0.75, 9)
+  })
+
+  it('defaults bench to peak and everything else to mean', () => {
+    // Measured on real clips: bench 170 kg reads 175 kg off the mean and 195 off
+    // the peak against a 200 kg max, while a squat read off peak estimates 459.
+    expect(defaultVelocityMetric('bench-press')).toBe('peak')
+    expect(defaultVelocityMetric('back-squat')).toBe('mean')
+    expect(defaultVelocityMetric('deadlift-conventional')).toBe('mean')
+    expect(defaultVelocityMetric('other')).toBe('mean')
+  })
+
+  it('turns the bench clip that started this into a believable max', () => {
+    const bench = [rep(0.24, 0)] // peak 0.36 by the helper's 1.5x
+    const off = (metric: 'mean' | 'peak') =>
+      e1RMFromVelocity({
+        loadKg: 170,
+        velocity: bestRepVelocity(bench, metric)!,
+        mvt: 0.2,
+        slope: populationSlope('bench-press'),
+      })!.e1rm
+    // Against a real 200 kg bench.
+    expect(off('mean')).toBeLessThan(180)
+    expect(off('peak')).toBeGreaterThan(190)
   })
 
   it('has no last-rep velocity without a scale', () => {

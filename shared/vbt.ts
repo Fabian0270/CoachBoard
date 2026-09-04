@@ -123,6 +123,54 @@ export const MVT_RANGE: Partial<Record<VbtLift, { novice: number; elite: number 
 /** Agreement band between a called RPE and the bar. Anything inside it is a match. */
 export const LRV_TOLERANCE_MS = 0.03
 
+// ---------------------------------------------------------------------------
+// Which velocity the tables get read against
+// ---------------------------------------------------------------------------
+
+export type VelocityMetric = 'mean' | 'peak'
+
+/**
+ * Bench is read off PEAK velocity; everything else off MEAN.
+ *
+ * Not from the sources, and not a claim that peak is the "right" metric — the
+ * published tables are in mean velocity. It is an empirical correction for a
+ * problem that is specific to bench.
+ *
+ * On bench a large share of the concentric is spent decelerating the bar so it
+ * does not leave the hands, and on a 35 cm travel that share is big enough to
+ * drag the mean well below what the tables describe. On a squat the lifter
+ * drives into the floor for most of a 100 cm travel, so the same effect is
+ * small. Measured on real clips by a lifter with a 200 kg bench and a 250 kg
+ * squat:
+ *
+ *   bench 170 kg   mean 0.24 -> 175 kg estimated   peak 0.37 -> 195 kg
+ *   squat 180 kg   mean 0.62 -> 249 kg estimated   peak 1.06 -> 459 kg
+ *
+ * So peak rescues bench and destroys squat, which is why this is per-lift and
+ * why mean stays the default.
+ *
+ * Known limitation: the peak-to-mean gap is not constant. It is wider at light
+ * loads, where there is more excess speed to shed, and narrows towards a true
+ * max. Bench read off peak should therefore run slightly optimistic on light
+ * sets and tighten as the load climbs. The principled fix is mean PROPULSIVE
+ * velocity — the average over only the driven part of the lift — which corrects
+ * each lift by exactly the amount its deceleration phase warrants. That needs
+ * acceleration off the tracked path and a decision about which metric the
+ * published tables are actually in, neither of which is settled yet.
+ */
+export const DEFAULT_VELOCITY_METRIC: Partial<Record<VbtLift, VelocityMetric>> = {
+  'bench-press': 'peak',
+}
+
+export function defaultVelocityMetric(lift: VbtLift): VelocityMetric {
+  return DEFAULT_VELOCITY_METRIC[lift] ?? 'mean'
+}
+
+export const VELOCITY_METRIC_LABEL: Record<VelocityMetric, string> = {
+  mean: 'mean',
+  peak: 'peak',
+}
+
 /** How the source labels its three anchors, for UI copy. */
 export function effortLabel(rpe: number): string {
   if (rpe >= 9.5) return 'max out'
@@ -715,21 +763,24 @@ export function zoneFor(velocity: number): VelocityZone | null {
 // 7. Reading a tracked set
 // ---------------------------------------------------------------------------
 
+const readRep = (rep: RepMetrics, metric: VelocityMetric): number | null =>
+  metric === 'peak' ? rep.peakVelocity : rep.meanVelocity
+
 /**
  * Velocity of the last rep — the number every LRV judgement is made on.
  *
- * Mean concentric velocity, in m/s, and null on an uncalibrated track: a
- * px/s figure carries no meaning against a published m/s table, and quietly
- * comparing them would produce nonsense with no visible symptom.
+ * In m/s, and null on an uncalibrated track: a px/s figure carries no meaning
+ * against a published m/s table, and quietly comparing them would produce
+ * nonsense with no visible symptom.
  */
-export function lastRepVelocity(reps: RepMetrics[]): number | null {
+export function lastRepVelocity(reps: RepMetrics[], metric: VelocityMetric = 'mean'): number | null {
   const last = reps[reps.length - 1]
-  return last?.meanVelocity ?? null
+  return last ? readRep(last, metric) : null
 }
 
-/** Fastest mean concentric velocity in the set — the load-velocity profile's y value. */
-export function bestRepVelocity(reps: RepMetrics[]): number | null {
-  const speeds = reps.map((r) => r.meanVelocity).filter((v): v is number => v != null)
+/** Fastest rep in the set — the load-velocity profile's y value, and the 1RM estimate's input. */
+export function bestRepVelocity(reps: RepMetrics[], metric: VelocityMetric = 'mean'): number | null {
+  const speeds = reps.map((r) => readRep(r, metric)).filter((v): v is number => v != null)
   return speeds.length ? Math.max(...speeds) : null
 }
 

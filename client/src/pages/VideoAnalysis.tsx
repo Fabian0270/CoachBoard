@@ -32,7 +32,12 @@ import {
   PLATE_DIAMETERS_MM,
   type RepMetrics,
 } from 'coachboard-shared/videoAnalysis'
-import { lastRepVelocity, rpeFromLastRepVelocity, zoneFor } from 'coachboard-shared/vbt'
+import {
+  defaultVelocityMetric,
+  lastRepVelocity,
+  rpeFromLastRepVelocity,
+  zoneFor,
+} from 'coachboard-shared/vbt'
 import VelocityPanel, {
   rememberedLift,
   type SetContextState,
@@ -90,6 +95,7 @@ export default function VideoAnalysis() {
     loadText: '',
     calledRpe: null,
     repsText: '',
+    metric: null,
   })
 
   /**
@@ -113,7 +119,7 @@ export default function VideoAnalysis() {
     setNotFound(false)
     // Load and called RPE belong to one set and must not bleed into the next
     // clip; the lift is kept, because a coach reviews a whole inbox of squats.
-    setSetContext((c) => ({ ...c, loadText: '', calledRpe: null, repsText: '' }))
+    setSetContext((c) => ({ ...c, loadText: '', calledRpe: null, repsText: '', metric: null }))
     // Leaving the deep link entirely (back to /analysis) means no video at all,
     // so the picker takes over. A locally-imported file has no id and must
     // survive this, hence only clearing when the param is genuinely absent.
@@ -283,9 +289,14 @@ export default function VideoAnalysis() {
   // inside the panel because the rep table below reads the same anchors — two
   // different estimated RPEs for one rep would be worse than none.
   const athleteId = source?.kind === 'discord' ? source.item.athleteId : null
-  const { anchors: savedAnchors, points: savedPoints } = useVbtHistory(athleteId, setContext.lift)
+  const metric = setContext.metric ?? defaultVelocityMetric(setContext.lift)
+  const { anchors: savedAnchors, points: savedPoints } = useVbtHistory(
+    athleteId,
+    setContext.lift,
+    metric,
+  )
   const athleteMaxes = useAthleteMaxes(athleteId)
-  const lastV = pixelsPerMetre !== null ? lastRepVelocity(reps) : null
+  const lastV = pixelsPerMetre !== null ? lastRepVelocity(reps, metric) : null
   const anchors = useMemo(
     () =>
       setContext.calledRpe != null && lastV != null
@@ -762,8 +773,12 @@ export default function VideoAnalysis() {
                     <thead>
                       <tr className="border-b text-left text-muted-foreground">
                         <th className="py-1 pr-4 font-medium">Rep</th>
-                        <th className="py-1 pr-4 font-medium">Mean</th>
-                        <th className="py-1 pr-4 font-medium">Peak</th>
+                        <th className={`py-1 pr-4 font-medium ${metric === 'mean' ? 'text-foreground' : ''}`}>
+                          Mean{metric === 'mean' && ' •'}
+                        </th>
+                        <th className={`py-1 pr-4 font-medium ${metric === 'peak' ? 'text-foreground' : ''}`}>
+                          Peak{metric === 'peak' && ' •'}
+                        </th>
                         <th className="py-1 pr-4 font-medium">Range</th>
                         <th className="py-1 pr-4 font-medium">Duration</th>
                         {/* Per-rep interpretation. Dropped entirely without a
@@ -782,12 +797,14 @@ export default function VideoAnalysis() {
                     <tbody>
                       {trackedReps.map((r) => {
                         const excluded = excludedReps.has(r.index)
+                        // Whatever velocity the panel reads the tables against,
+                        // so one rep never carries two different RPEs.
+                        const v = metric === 'peak' ? r.peakVelocity : r.meanVelocity
                         const reading =
-                          !excluded && r.meanVelocity !== null
-                            ? rpeFromLastRepVelocity(setContext.lift, r.meanVelocity, { anchors })
+                          !excluded && v !== null
+                            ? rpeFromLastRepVelocity(setContext.lift, v, { anchors })
                             : null
-                        const zone =
-                          !excluded && r.meanVelocity !== null ? zoneFor(r.meanVelocity) : null
+                        const zone = !excluded && v !== null ? zoneFor(v) : null
                         return (
                           <tr
                             key={r.index}

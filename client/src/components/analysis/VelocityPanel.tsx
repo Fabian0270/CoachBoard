@@ -9,6 +9,7 @@ import {
   bestRepVelocity,
   buildLoadVelocityProfile,
   defaultMvt,
+  defaultVelocityMetric,
   e1RMFromVelocity,
   effectiveRpe,
   effortLabel,
@@ -26,6 +27,7 @@ import {
   type LvWarning,
   type SlopeSource,
   type VbtLift,
+  type VelocityMetric,
 } from 'coachboard-shared/vbt'
 import { num } from '../../lib/num'
 import { Button } from '../ui/button'
@@ -100,6 +102,8 @@ export interface SetContextState {
   calledRpe: number | null
   /** How many reps the set actually had. Empty means "trust the tracker". */
   repsText: string
+  /** Null follows the lift's default — see defaultVelocityMetric. */
+  metric: VelocityMetric | null
 }
 
 interface Props {
@@ -139,8 +143,9 @@ export default function VelocityPanel({
   const loadKg = value.loadText.trim() ? num(value.loadText) : null
   const validLoad = loadKg != null && Number.isFinite(loadKg) && loadKg > 0 ? loadKg : null
 
-  const lastV = calibrated ? lastRepVelocity(reps) : null
-  const bestV = calibrated ? bestRepVelocity(reps) : null
+  const metric = value.metric ?? defaultVelocityMetric(lift)
+  const lastV = calibrated ? lastRepVelocity(reps, metric) : null
+  const bestV = calibrated ? bestRepVelocity(reps, metric) : null
 
   const chart = useMemo(() => lrvChart(lift, allAnchors), [lift, allAnchors])
   const reading = useMemo(
@@ -301,6 +306,20 @@ export default function VelocityPanel({
           </select>
         </label>
 
+        {/* Visible rather than hidden: which velocity produced a number changes
+            it enormously, and bench defaults differently from everything else. */}
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">Read from</span>
+          <select
+            value={metric}
+            onChange={(e) => onChange({ ...value, metric: e.target.value as VelocityMetric })}
+            className="rounded-md border bg-background px-2 py-1 text-sm"
+          >
+            <option value="mean">Mean velocity</option>
+            <option value="peak">Peak velocity</option>
+          </select>
+        </label>
+
         <p className="ml-auto max-w-xs text-xs text-muted-foreground">
           Saved with the analysis, so the profile below builds up over time.
         </p>
@@ -405,7 +424,7 @@ export default function VelocityPanel({
                   </span>{' '}
                   <span className="text-muted-foreground">
                     — this set at {Math.round(estimate.pctOf1RM * 100)}%, from its fastest rep at{' '}
-                    {fmtV(bestV!)} against a {estimate.mvt.toFixed(2)} m/s max velocity ·{' '}
+                    {fmtV(bestV!)} ({metric}) against a {estimate.mvt.toFixed(2)} m/s max velocity ·{' '}
                     {SLOPE_SOURCE[slope.source]}
                   </span>
                   {pctOfRecorded != null && knownMax != null && (
