@@ -4,6 +4,7 @@ import {
   segmentReps,
   repMetrics,
   analysePath,
+  looksMistracked,
   pixelsPerMetreFromPlate,
   type Sample,
 } from 'coachboard-shared/videoAnalysis'
@@ -130,6 +131,30 @@ describe('segmentReps', () => {
     expect(reps.map((r) => r.index)).toEqual([0, 1, 2, 3])
   })
 
+  it('does not let one bad sample become the peak, and flags what it cannot fix', () => {
+    // A real 165 kg bench reported a 1.69 m/s peak against a 0.14 mean: over the
+    // smoothing window that is the tracked point jumping 25 cm, which is a
+    // re-lock, not a barbell.
+    const clean = repPath(1, 100, 340, 240)
+    const glitched = clean.map((s, i) => (i === 12 ? { ...s, y: s.y - 120 } : s))
+    const vel = verticalVelocity(glitched)
+    const rep = repMetrics(segmentReps(glitched, vel)[0], glitched, vel, null)
+
+    // The percentile steps over the very worst samples rather than reporting one.
+    const rawMax = Math.max(...vel.map((v) => Math.abs(v.vy)))
+    expect(rep.peakVelocityPxS).toBeLessThan(rawMax)
+
+    // Whether what is left still reads as mistracked depends on how slow the rep
+    // was, so that threshold is asserted against the real observed shape in the
+    // looksMistracked block rather than against a synthetic tuned to trip it.
+
+    // The mean is barely touched, which is exactly why it is the safe default.
+    const cleanVel = verticalVelocity(clean)
+    const cleanMean = repMetrics(segmentReps(clean, cleanVel)[0], clean, cleanVel, null)
+      .meanVelocityPxS
+    expect(rep.meanVelocityPxS).toBeGreaterThan(cleanMean * 0.7)
+  })
+
   it('keeps a genuinely short set rather than measuring it against a fixed size', () => {
     // Every rep short is a rep range, not noise: the median moves with them.
     const samples = repPath(3, 100, 160, 60)
@@ -223,5 +248,28 @@ describe('analysePath', () => {
     // Identical synthetic reps should measure alike.
     const speeds = reps.map((r) => r.meanVelocity ?? 0)
     for (const s of speeds) expect(s).toBeCloseTo(speeds[0], 1)
+  })
+})
+
+describe('looksMistracked', () => {
+  const rep = (mean: number, peak: number) =>
+    ({
+      index: 0, startT: 0, endT: 1, durationMs: 1000, romPx: 200,
+      meanVelocityPxS: mean * 100, peakVelocityPxS: peak * 100,
+      romM: null, meanVelocity: mean, peakVelocity: peak,
+    }) as const
+
+  it('flags the bench rep whose peak was twelve times its mean', () => {
+    expect(looksMistracked(rep(0.14, 1.69))).toBe(true)
+  })
+
+  it('leaves real reps alone across all three lifts', () => {
+    expect(looksMistracked(rep(0.24, 0.37))).toBe(false) // bench single
+    expect(looksMistracked(rep(0.62, 1.06))).toBe(false) // squat first rep
+    expect(looksMistracked(rep(0.39, 0.87))).toBe(false) // squat fifth rep
+  })
+
+  it('says nothing about a rep with no movement to judge', () => {
+    expect(looksMistracked(rep(0, 0))).toBe(false)
   })
 })

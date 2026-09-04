@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Gauge, Ruler, TrendingDown, TriangleAlert } from 'lucide-react'
 import { RPE_VALUES } from 'coachboard-shared/rpe'
-import type { RepMetrics } from 'coachboard-shared/videoAnalysis'
+import { looksMistracked, type RepMetrics } from 'coachboard-shared/videoAnalysis'
 import {
   VBT_LIFTS,
   LRV_TOLERANCE_MS,
@@ -144,8 +144,25 @@ export default function VelocityPanel({
   const validLoad = loadKg != null && Number.isFinite(loadKg) && loadKg > 0 ? loadKg : null
 
   const metric = value.metric ?? defaultVelocityMetric(lift)
-  const lastV = calibrated ? lastRepVelocity(reps, metric) : null
-  const bestV = calibrated ? bestRepVelocity(reps, metric) : null
+
+  /**
+   * Reps whose peak is wildly out of line with their mean.
+   *
+   * Peak is a near-single-sample statistic, so a tracker re-lock lands in it
+   * whole: a real 165 kg bench reported 1.69 m/s, which the panel then read as
+   * "RPE 5, easy" on a set called at 8.5. The page already refuses to show a
+   * track it does not trust, and this is the same rule one level down — no
+   * reading at all beats a confident wrong one.
+   */
+  const mistracked = useMemo(() => reps.filter(looksMistracked), [reps])
+  const trusted = useMemo(
+    () => reps.filter((r) => !looksMistracked(r)),
+    [reps],
+  )
+  const readable = metric === 'peak' ? trusted : reps
+
+  const lastV = calibrated ? lastRepVelocity(readable, metric) : null
+  const bestV = calibrated ? bestRepVelocity(readable, metric) : null
 
   const chart = useMemo(() => lrvChart(lift, allAnchors), [lift, allAnchors])
   const reading = useMemo(
@@ -324,6 +341,24 @@ export default function VelocityPanel({
           Saved with the analysis, so the profile below builds up over time.
         </p>
       </div>
+
+      {mistracked.length > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <p>
+            {mistracked.length === 1 ? 'Rep' : 'Reps'}{' '}
+            {mistracked.map((r) => r.index + 1).join(', ')}{' '}
+            {mistracked.length === 1 ? 'has a peak' : 'have peaks'} far out of line with{' '}
+            {mistracked.length === 1 ? 'its' : 'their'} mean — the tracker jumped rather than the bar
+            moving.{' '}
+            <span className="text-muted-foreground">
+              {metric === 'peak'
+                ? 'Left out of everything below, since peak is what this lift is read from. Strike them off or track the clip again.'
+                : 'The mean survives a jump, so the readings below still stand — but check the path sits on the plate.'}
+            </span>
+          </p>
+        </div>
+      )}
 
       {repMismatch && (
         <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">

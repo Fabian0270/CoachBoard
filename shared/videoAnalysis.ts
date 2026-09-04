@@ -220,6 +220,49 @@ export function segmentReps(
   return reps.filter((r) => r.romPx >= floor).map((r, index) => ({ ...r, index }))
 }
 
+/**
+ * Peak velocity is the Nth fastest sample, not the single fastest.
+ *
+ * A maximum is a one-sample statistic, so on a noisy track it reports the worst
+ * sample rather than the fastest the bar went. A real 165 kg bench came back
+ * with a 1.69 m/s "peak" — over the 150 ms smoothing window that is the tracked
+ * point moving 25 cm, which is a re-lock, not a barbell. The mean was untouched
+ * at 0.14, because averaging is what makes it robust.
+ *
+ * Every velocity read against a reference table needs that same robustness. A
+ * glitch spans roughly three samples once the smoothing window has spread it, so
+ * this sits low enough to step over one and high enough to stay within a few
+ * percent of the true peak on a clean track, where the top samples all sit near
+ * the top anyway.
+ */
+const PEAK_PERCENTILE = 0.88
+
+/** Linear-interpolated percentile of an unsorted list. 0 for an empty one. */
+function percentile(values: number[], p: number): number {
+  if (!values.length) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const at = (sorted.length - 1) * p
+  const lo = Math.floor(at)
+  const hi = Math.ceil(at)
+  return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (at - lo)
+}
+
+/**
+ * Above this, a rep's peak is so far clear of its mean that the track glitched
+ * rather than the bar moving fast.
+ *
+ * Real reps measured across squat, bench and deadlift sit between about 1.5 and
+ * 3. The glitched bench rep above was 12.
+ */
+export const SUSPECT_PEAK_RATIO = 4
+
+/** Whether a rep looks mistracked and should be struck off or re-tracked. */
+export function looksMistracked(rep: RepMetrics): boolean {
+  const mean = rep.meanVelocity ?? rep.meanVelocityPxS
+  const peak = rep.peakVelocity ?? rep.peakVelocityPxS
+  return mean > 0 && peak / mean > SUSPECT_PEAK_RATIO
+}
+
 export interface RepMetrics {
   index: number
   startT: number
@@ -261,7 +304,11 @@ export function repMetrics(
   // The threshold is a fraction of this rep's own peak rather than a fixed
   // pixel speed, so it holds regardless of how zoomed-in the footage is.
   const windowSpeeds = velocities.slice(rep.startIndex, to + 1).map((v) => Math.abs(v.vy))
-  const windowPeak = windowSpeeds.length ? Math.max(...windowSpeeds) : 0
+  // The robust peak, not the maximum — see PEAK_PERCENTILE. A glitch would
+  // otherwise raise this threshold above the real bar speed and trim away the
+  // lift itself: on a real 165 kg bench a spurious 1.69 m/s sample put the
+  // threshold at 0.169 m/s, above a bar actually travelling 0.14.
+  const windowPeak = percentile(windowSpeeds, PEAK_PERCENTILE)
   const movingThreshold = windowPeak * 0.1
   let from = rep.startIndex
   while (from < to && Math.abs(velocities[from].vy) < movingThreshold) from++
@@ -270,7 +317,7 @@ export function repMetrics(
   const meanVelocityPxS = speeds.length
     ? speeds.reduce((sum, s) => sum + s, 0) / speeds.length
     : 0
-  const peakVelocityPxS = speeds.length ? Math.max(...speeds) : 0
+  const peakVelocityPxS = percentile(speeds, PEAK_PERCENTILE)
   // Range of motion is measured from the TRUE bottom, not the trimmed start:
   // how far the bar travelled and how fast it moved are different questions,
   // and the trim only ever removes time, never distance.

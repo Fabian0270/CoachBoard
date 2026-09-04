@@ -28,6 +28,7 @@ import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
 import { TRACKER_COLORS, useTrackerColor } from '../components/analysis/trackerColor'
 import {
   analysePath,
+  looksMistracked,
   pixelsPerMetreFromPlate,
   PLATE_DIAMETERS_MM,
   type RepMetrics,
@@ -799,6 +800,7 @@ export default function VideoAnalysis() {
                         const excluded = excludedReps.has(r.index)
                         // Whatever velocity the panel reads the tables against,
                         // so one rep never carries two different RPEs.
+                        const suspect = looksMistracked(r)
                         const v = metric === 'peak' ? r.peakVelocity : r.meanVelocity
                         const reading =
                           !excluded && v !== null
@@ -812,7 +814,17 @@ export default function VideoAnalysis() {
                               excluded ? 'text-muted-foreground line-through opacity-60' : ''
                             }`}
                           >
-                            <td className="py-1 pr-4">{r.index + 1}</td>
+                            <td className="py-1 pr-4">
+                              {r.index + 1}
+                              {suspect && !excluded && (
+                                <span
+                                  className="ml-1.5 text-amber-500"
+                                  title="The peak is far out of line with the mean — the tracker probably jumped here. Strike this rep off or track it again."
+                                >
+                                  ⚠
+                                </span>
+                              )}
+                            </td>
                             <td className="py-1 pr-4 font-medium">
                               {r.meanVelocity !== null
                                 ? `${r.meanVelocity.toFixed(2)} m/s`
