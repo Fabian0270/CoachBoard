@@ -8,11 +8,7 @@ import { Calculator, Flame } from 'lucide-react'
 import type { Sex, Equipment, MeetEvent } from 'coachboard-shared/scoring'
 import { allScores } from 'coachboard-shared/scoring'
 import { warmupPlan, platesPerSide } from 'coachboard-shared/warmup'
-
-function num(value: string): number {
-  // Accept Swedish comma decimals like the rest of the app.
-  return Number(value.replace(',', '.'))
-}
+import { num } from '../lib/num'
 
 function fmtScore(value: number | null): string {
   return value == null ? '—' : value.toFixed(2)

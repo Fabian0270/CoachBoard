@@ -269,8 +269,26 @@ export interface CalibrationDto {
   plateDiameterMm: number
 }
 
+/**
+ * What the set was, as the coach entered it.
+ *
+ * Not measurable from the footage and not guessable from it either, but every
+ * velocity-based reading needs it: an m/s figure means nothing until you know
+ * which lift produced it, and a load-velocity profile needs the load. All three
+ * are nullable because a coach who just wants to look at a bar path should not
+ * have to fill in a form first.
+ */
+export interface SetContext {
+  /** A `VbtLift` id — kept as a plain string here so this module stays free of
+   *  the VBT tables, which import from it. */
+  lift: string | null
+  loadKg: number | null
+  /** The RPE the athlete called, to compare against what the bar says. */
+  calledRpe: number | null
+}
+
 /** A saved analysis as it travels over HTTP. */
-export interface VideoAnalysisDto {
+export interface VideoAnalysisDto extends SetContext {
   id: string
   mediaId: string | null
   athleteId: string | null
@@ -284,7 +302,7 @@ export interface VideoAnalysisDto {
   updatedAt: string
 }
 
-export interface SaveVideoAnalysisInput {
+export interface SaveVideoAnalysisInput extends SetContext {
   mediaId: string | null
   athleteId: string | null
   sourceLabel: string

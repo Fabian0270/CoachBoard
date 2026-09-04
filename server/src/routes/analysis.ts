@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { VBT_LIFTS } from 'coachboard-shared/vbt'
 import {
   saveAnalysis,
   listAnalyses,
@@ -10,6 +11,10 @@ import {
 const router = Router()
 
 const pointSchema = z.object({ x: z.number(), y: z.number() })
+
+// Derived from the lift table rather than restated, so a lift added there cannot
+// be silently rejected here.
+const VBT_LIFT_IDS = VBT_LIFTS.map((l) => l.id) as [string, ...string[]]
 
 const saveSchema = z.object({
   mediaId: z.string().nullable(),
@@ -26,12 +31,27 @@ const saveSchema = z.object({
     .nullable(),
   metrics: z.array(z.record(z.string(), z.unknown())).max(200),
   notes: z.string().max(2000).nullable(),
+  // What the set was. Optional rather than nullable-and-required so an older
+  // client — or the retention fixture in the tests — keeps posting successfully.
+  lift: z.enum(VBT_LIFT_IDS).nullable().optional(),
+  loadKg: z.number().positive().max(1000).nullable().optional(),
+  // Half steps on the 5-10 scale, matching RPE_VALUES in shared/rpe.ts.
+  calledRpe: z
+    .number()
+    .min(5)
+    .max(10)
+    .refine((v) => Number.isInteger(v * 2), 'RPE must be a half step')
+    .nullable()
+    .optional(),
 })
 
 router.get('/', async (req, res) => {
   const mediaId = typeof req.query.mediaId === 'string' ? req.query.mediaId : undefined
   const athleteId = typeof req.query.athleteId === 'string' ? req.query.athleteId : undefined
-  res.json(await listAnalyses({ mediaId, athleteId }))
+  // The velocity panel lists a whole history for its load and metrics only, and
+  // the paths would dwarf everything else it needs.
+  const withTrack = req.query.withTrack !== '0'
+  res.json(await listAnalyses({ mediaId, athleteId, withTrack }))
 })
 
 router.get('/:id', async (req, res) => {
@@ -52,6 +72,9 @@ router.post('/', async (req, res) => {
   res.status(201).json(
     await saveAnalysis({
       ...parsed.data,
+      lift: parsed.data.lift ?? null,
+      loadKg: parsed.data.loadKg ?? null,
+      calledRpe: parsed.data.calledRpe ?? null,
       // Metrics are a cache of what the client already computed; they are
       // displayed, never recomputed from, so the loose shape is fine here.
       metrics: parsed.data.metrics as never,
