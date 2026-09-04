@@ -4,7 +4,7 @@ import os from 'os'
 import path from 'path'
 import { initializeDatabase, getDb } from '../db.js'
 import { configureSecureStore } from './secureStore.js'
-import { saveAnalysis, listAnalyses, getAnalysis } from './videoAnalysisService.js'
+import { saveAnalysis, listAnalyses, getAnalysis, setAnalysisAthlete } from './videoAnalysisService.js'
 import type { SaveVideoAnalysisInput } from 'coachboard-shared/videoAnalysis'
 
 let tmpDir: string
@@ -106,5 +106,44 @@ describe('listAnalyses withTrack', () => {
 
     const [row] = await listAnalyses({ athleteId })
     expect(row.track).toHaveLength(3)
+  })
+})
+
+describe('setAnalysisAthlete', () => {
+  it('attaches an orphan to an athlete after the fact', async () => {
+    // A local file saves with no athlete, so it feeds nobody's profile until
+    // someone says whose it is. Before this there was no way to say so.
+    const athleteId = await createAthlete('a-3')
+    const saved = await saveAnalysis(input({ lift: 'back-squat', loadKg: 180 }))
+    expect(saved.athleteId).toBeNull()
+
+    const attached = await setAnalysisAthlete(saved.id, athleteId)
+    expect(attached?.athleteId).toBe(athleteId)
+    expect(attached?.athleteName).toBe('Test Lifter')
+
+    // And it now shows up in that athlete's history, which is the point.
+    const rows = await listAnalyses({ athleteId, withTrack: false })
+    expect(rows.map((r) => r.id)).toContain(saved.id)
+  })
+
+  it('detaches when given null', async () => {
+    const athleteId = await createAthlete('a-4')
+    const saved = await saveAnalysis(input({ athleteId }))
+    expect((await setAnalysisAthlete(saved.id, null))?.athleteId).toBeNull()
+  })
+
+  it('leaves the measurement alone', async () => {
+    // Only the athlete is mutable — a path and its metrics are what was tracked.
+    const athleteId = await createAthlete('a-5')
+    const saved = await saveAnalysis(input({ lift: 'bench-press', loadKg: 170, calledRpe: 8 }))
+    const attached = await setAnalysisAthlete(saved.id, athleteId)
+    expect(attached?.lift).toBe('bench-press')
+    expect(attached?.loadKg).toBe(170)
+    expect(attached?.calledRpe).toBe(8)
+    expect(attached?.track).toHaveLength(3)
+  })
+
+  it('reports a miss rather than pretending', async () => {
+    expect(await setAnalysisAthlete('does-not-exist', null)).toBeNull()
   })
 })

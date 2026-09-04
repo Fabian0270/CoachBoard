@@ -11,6 +11,7 @@ import {
   Save,
   Target,
   Undo2,
+  UserRound,
   X,
 } from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
@@ -45,6 +46,7 @@ import VelocityPanel, {
   type SetContextState,
 } from '../components/analysis/VelocityPanel'
 import { useVbtHistory, useAthleteMaxes } from '../components/analysis/useVbtHistory'
+import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import { num } from '../lib/num'
 
 type Phase = 'idle' | 'capturing' | 'tracking' | 'done'
@@ -91,6 +93,17 @@ export default function VideoAnalysis() {
   const [offerSave, setOfferSave] = useState(false)
   const [savedId, setSavedId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  /**
+   * Who this set belongs to.
+   *
+   * Was previously taken from the Discord clip alone, so a local file always
+   * saved with no athlete — orphaned, invisible to every profile it should have
+   * fed, and impossible to attach afterwards. Null means "not chosen yet";
+   * 'none' is the coach explicitly saying this is a throwaway look.
+   */
+  const [athleteChoice, setAthleteChoice] = useState<string | null>(null)
+  const [roster, setRoster] = useState<{ id: string; name: string }[]>([])
+  const [savedCount, setSavedCount] = useState(0)
   /** What the set was — the lift and load every velocity readout is judged against. */
   const [setContext, setSetContext] = useState<SetContextState>({
     lift: rememberedLift(),
@@ -122,11 +135,31 @@ export default function VideoAnalysis() {
     // Load and called RPE belong to one set and must not bleed into the next
     // clip; the lift is kept, because a coach reviews a whole inbox of squats.
     setSetContext((c) => ({ ...c, loadText: '', calledRpe: null, repsText: '', metric: null }))
+    setAthleteChoice(null)
     // Leaving the deep link entirely (back to /analysis) means no video at all,
     // so the picker takes over. A locally-imported file has no id and must
     // survive this, hence only clearing when the param is genuinely absent.
     if (!mediaId) setSource(null)
   }, [mediaId])
+
+  // The roster, for attaching a local clip to whoever is in it.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/athletes')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: { id: string; name: string; archived?: number }[]) => {
+        if (cancelled) return
+        setRoster(
+          (Array.isArray(data) ? data : [])
+            .filter((a) => !a.archived)
+            .map((a) => ({ id: a.id, name: a.name })),
+        )
+      })
+      .catch(() => !cancelled && setRoster([]))
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Deep-linked from a video's player dialog: resolve that one and skip the picker.
   useEffect(() => {
@@ -290,7 +323,14 @@ export default function VideoAnalysis() {
   // The athlete's own velocity history for this lift. Resolved here rather than
   // inside the panel because the rep table below reads the same anchors — two
   // different estimated RPEs for one rep would be worse than none.
-  const athleteId = source?.kind === 'discord' ? source.item.athleteId : null
+  const clipAthleteId = source?.kind === 'discord' ? source.item.athleteId : null
+  // An explicit choice wins; otherwise fall back to whoever posted the clip.
+  // 'none' is a deliberate "do not attach this one".
+  const athleteId =
+    athleteChoice === 'none' ? null : (athleteChoice ?? clipAthleteId)
+  const athleteName =
+    roster.find((a) => a.id === athleteId)?.name ??
+    (source?.kind === 'discord' ? source.item.athleteName : null)
   const metric = setContext.metric ?? defaultVelocityMetric(setContext.lift)
   const { anchors: savedAnchors, points: savedPoints } = useVbtHistory(
     athleteId,
@@ -447,7 +487,7 @@ export default function VideoAnalysis() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mediaId: source?.kind === 'discord' ? source.item.id : null,
-          athleteId: source?.kind === 'discord' ? source.item.athleteId : null,
+          athleteId,
           sourceLabel: sourceLabel,
           track: samples,
           calibration: calibration ? { ...calibration, plateDiameterMm: plateMm } : null,
@@ -465,6 +505,7 @@ export default function VideoAnalysis() {
       const saved = (await res.json()) as { id: string }
       setSavedId(saved.id)
       setOfferSave(false)
+      setSavedCount((n) => n + 1)
       toast.success('Analysis saved')
     } catch {
       toast.error('Could not save that analysis.')
@@ -520,7 +561,13 @@ export default function VideoAnalysis() {
         {mediaId ? (
           <p className="text-sm text-muted-foreground">Loading video…</p>
         ) : (
-          <VideoPicker onPick={setSource} />
+          <>
+            <VideoPicker onPick={setSource} />
+            <div className="space-y-2">
+              <h2 className="text-sm font-medium">Saved analyses</h2>
+              <SavedAnalyses limit={10} athletes={roster} refreshKey={savedCount} />
+            </div>
+          </>
         )}
       </div>
     )
@@ -724,20 +771,50 @@ export default function VideoAnalysis() {
             {/* Asked, never assumed: an analysis is only stored if the coach
                 says so, so a throwaway look at a clip leaves nothing behind. */}
             {offerSave && samples && (
-              <div className="flex flex-wrap items-center gap-3 rounded-md border border-primary/40 bg-primary/5 p-3">
-                <Save className="h-4 w-4 text-primary" />
-                <span className="text-sm">
-                  Save this analysis?
-                  <span className="ml-1 text-muted-foreground">
-                    {reps.length > 0
-                      ? `${reps.length} ${reps.length === 1 ? 'rep' : 'reps'}, bar path and scale are kept.`
-                      : 'The bar path is kept.'}
-                    {loadKg != null &&
-                      ` The lift and ${loadKg} kg go with it, so the athlete's velocity profile builds up.`}
-                    {source?.kind === 'local' && ' The video itself is not — it stays on your computer.'}
+              <div className="space-y-3 rounded-md border border-primary/40 bg-primary/5 p-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Save className="h-4 w-4 text-primary" />
+                  <span className="text-sm">
+                    Save this analysis?
+                    <span className="ml-1 text-muted-foreground">
+                      {reps.length > 0
+                        ? `${reps.length} ${reps.length === 1 ? 'rep' : 'reps'}, bar path and scale are kept.`
+                        : 'The bar path is kept.'}
+                      {loadKg != null &&
+                        ` The lift and ${loadKg} kg go with it, so the athlete's velocity profile builds up.`}
+                      {source?.kind === 'local' && ' The video itself is not — it stays on your computer.'}
+                    </span>
                   </span>
-                </span>
-                <div className="ml-auto flex gap-2">
+                </div>
+
+                {/* Who it belongs to, asked before it is stored rather than
+                    inferred from where the clip came from. A saved analysis with
+                    no athlete feeds nobody's profile and is invisible on every
+                    page that would show it. */}
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <UserRound className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-muted-foreground">Athlete</span>
+                  <select
+                    value={athleteChoice ?? clipAthleteId ?? ''}
+                    onChange={(e) => setAthleteChoice(e.target.value || 'none')}
+                    className="rounded-md border bg-background px-2 py-1 text-sm"
+                  >
+                    <option value="">Don&rsquo;t attach — just this once</option>
+                    {roster.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                  {athleteId == null && (
+                    <span className="text-xs text-muted-foreground">
+                      Saved without an athlete it counts towards nobody&rsquo;s velocity profile. You
+                      can attach it later from the list below.
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex gap-2">
                   <Button size="sm" onClick={saveAnalysis} disabled={saving}>
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                     Save
@@ -894,7 +971,7 @@ export default function VideoAnalysis() {
               <VelocityPanel
                 reps={reps}
                 calibrated={pixelsPerMetre !== null}
-                athleteName={source?.kind === 'discord' ? source.item.athleteName : null}
+                athleteName={athleteName}
                 anchors={anchors}
                 savedPoints={savedPoints}
                 maxes={athleteMaxes}
