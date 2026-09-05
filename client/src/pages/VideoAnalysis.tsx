@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
   Check,
+  Columns2,
   Crosshair,
   Loader2,
   Palette,
@@ -567,10 +568,21 @@ export default function VideoAnalysis() {
     return (
       <div className="space-y-6 p-6">
         <div>
-          <h1 className="text-lg font-semibold">Bar path analysis</h1>
-          <p className="text-sm text-muted-foreground">
-            Track the bar through a lift to see its path and per-rep velocity.
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h1 className="text-lg font-semibold">Bar path analysis</h1>
+              <p className="text-sm text-muted-foreground">
+                Track the bar through a lift to see its path and per-rep velocity.
+              </p>
+            </div>
+            {/* Beside picking a clip rather than under the saved list: comparing
+                two lifts is a way to START, not an afterthought once you have
+                scrolled past everything else. */}
+            <Button variant="outline" size="sm" onClick={() => navigate('/analysis/compare')}>
+              <Columns2 className="h-4 w-4" />
+              Compare two lifts
+            </Button>
+          </div>
         </div>
         {mediaId ? (
           <p className="text-sm text-muted-foreground">Loading video…</p>

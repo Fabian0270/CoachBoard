@@ -83,7 +83,45 @@ export default function AnalysisStage({
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const frameRef = useRef<number | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
+  /** mediaTime of the frame the compositor last put on screen. */
+  const presentedRef = useRef<number | null>(null)
   const [fullscreen, setFullscreen] = useState(false)
+
+  /**
+   * Follows the frames actually being shown, so the overlay can be drawn
+   * against them rather than against the playback clock.
+   *
+   * A paused video presents no frames and so never fires this — which is fine
+   * and is why the draw falls back to currentTime: the two agree while nothing
+   * is moving. Seeking resets it on `seeked`, or the dot would sit on the frame
+   * before the seek until playback resumed.
+   */
+  useEffect(() => {
+    const video = videoRef.current
+    const rvfc = (
+      video as (HTMLVideoElement & {
+        requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number
+      }) | null
+    )?.requestVideoFrameCallback
+    if (!video || typeof rvfc !== 'function') return
+
+    let stopped = false
+    const onFrame = (_now: number, meta: { mediaTime: number }) => {
+      if (stopped) return
+      presentedRef.current = meta.mediaTime
+      rvfc.call(video, onFrame)
+    }
+    rvfc.call(video, onFrame)
+
+    const clear = () => {
+      presentedRef.current = null
+    }
+    video.addEventListener('seeking', clear)
+    return () => {
+      stopped = true
+      video.removeEventListener('seeking', clear)
+    }
+  }, [videoRef, src])
 
   /**
    * The real Fullscreen API, not a fixed-position stand-in.
@@ -115,22 +153,28 @@ export default function AnalysisStage({
     if (!canvas || !video || !video.videoWidth) return
 
     const rect = video.getBoundingClientRect()
-    if (canvas.width !== Math.round(rect.width) || canvas.height !== Math.round(rect.height)) {
-      canvas.width = Math.round(rect.width)
-      canvas.height = Math.round(rect.height)
+    // The canvas covers the WRAPPER, not the video. On the page the two are the
+    // same box because the wrapper shrink-wraps the clip; in fullscreen the
+    // wrapper is the whole screen and the video is centred inside it, so sizing
+    // the canvas to the video while anchoring it to the wrapper drew the path
+    // hundreds of pixels to the left of the lift.
+    const wrap = wrapRef.current?.getBoundingClientRect() ?? rect
+    if (canvas.width !== Math.round(wrap.width) || canvas.height !== Math.round(wrap.height)) {
+      canvas.width = Math.round(wrap.width)
+      canvas.height = Math.round(wrap.height)
     }
-    // The picture is not always the element. In fullscreen the element becomes
-    // the whole screen and the clip letterboxes inside it, so the overlay has to
-    // be drawn against the picture's own box or the path drifts off the bar.
+    // Two offsets stack: where the video sits inside the wrapper, and where the
+    // picture sits inside the video (object-fit: contain letterboxes it when the
+    // aspect ratios differ).
     const picture = pictureRect(rect.width, rect.height, video.videoWidth, video.videoHeight)
     const { scale } = picture
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-    // Origin at the picture's top-left, so every existing `x * scale` below
-    // stays correct without threading the offset through each one.
+    // Origin at the picture's top-left, so every `x * scale` below stays
+    // correct without threading the offset through each one.
     ctx.save()
-    ctx.translate(picture.left, picture.top)
+    ctx.translate(rect.left - wrap.left + picture.left, rect.top - wrap.top + picture.top)
 
     // Finished path if there is one, otherwise whatever tracking has produced
     // so far — so the line grows as the clip plays.
@@ -158,11 +202,17 @@ export default function AnalysisStage({
       trace()
     }
 
-    // The dot, riding the bar: whichever sample is nearest the playhead. While
-    // tracking, that is simply the newest point — which IS the current frame.
+    // The dot, riding the bar: whichever sample is nearest the frame ON SCREEN.
+    // Not video.currentTime — that is the playback clock, which runs ahead of
+    // the frame the compositor has actually presented, so the dot led the bar by
+    // a frame or two and looked like it was lagging behind the lift on the way
+    // up. requestVideoFrameCallback reports the presented frame's own mediaTime,
+    // which is exactly what the coach is looking at. Falls back to the clock
+    // where rVFC is unavailable or while paused.
+    const playhead = presentedRef.current ?? video.currentTime
     const marker = samples?.length
       ? samples.reduce((best, s) =>
-          Math.abs(s.t - video.currentTime) < Math.abs(best.t - video.currentTime) ? s : best,
+          Math.abs(s.t - playhead) < Math.abs(best.t - playhead) ? s : best,
         )
       : (path?.[path.length - 1] ?? null)
     const point = marker ?? seed
@@ -272,8 +322,8 @@ export default function AnalysisStage({
         onDoubleClick={toggleFullscreen}
         className={
           fullscreen
-            ? 'group relative flex h-full w-full items-center justify-center bg-black'
-            : 'group relative'
+            ? 'relative flex h-full w-full items-center justify-center bg-black'
+            : 'relative'
         }
       >
         <video
@@ -290,20 +340,19 @@ export default function AnalysisStage({
         />
         {/* Click target stops short of the native controls, so play and scrub
             keep working while the frame itself is clickable. The bar is taller
-            in fullscreen, so the carve-out grows with it. */}
+            in fullscreen, so the carve-out grows with it.
+            When there is nothing to place — a saved analysis, or the live page
+            mid-track — the layer stops intercepting entirely, so a click reaches
+            the video and plays it. It used to swallow the click and do nothing,
+            which made a reopened analysis feel broken. */}
         <div
           onClick={handleClick}
           className={`absolute inset-x-0 top-0 ${fullscreen ? 'bottom-20' : 'bottom-12'} ${
-            disabled ? '' : 'cursor-crosshair'
+            disabled ? 'pointer-events-none' : 'cursor-crosshair'
           }`}
         >
           <canvas ref={canvasRef} className="pointer-events-none absolute left-0 top-0" />
         </div>
-        {!fullscreen && (
-          <span className="pointer-events-none absolute right-2 top-2 rounded bg-black/60 px-2 py-1 text-[11px] text-white/80 opacity-0 transition-opacity group-hover:opacity-100">
-            Double-click for fullscreen
-          </span>
-        )}
       </div>
     </div>
   )

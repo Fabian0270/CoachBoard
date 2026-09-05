@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Columns2, LineChart, Trash2, UserPlus } from 'lucide-react'
+import { LineChart, Trash2, UserPlus } from 'lucide-react'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
-import { isVbtLift, lastRepVelocity, liftLabel } from 'coachboard-shared/vbt'
+import {
+  defaultVelocityMetric,
+  isVbtLift,
+  isVelocityMetric,
+  lastRepVelocity,
+  liftLabel,
+} from 'coachboard-shared/vbt'
 import { Button } from '../ui/button'
 import { useToast } from '../ui/toast'
 import { useConfirm } from '../ui/confirm-dialog'
@@ -89,18 +95,7 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
   }
 
   return (
-    <div className="space-y-2">
-      {/* Two saved sets is the point at which comparing them becomes a question
-          the coach can actually ask. */}
-      {rows.length > 1 && (
-        <div className="flex justify-end">
-          <Button variant="outline" size="sm" onClick={() => navigate('/analysis/compare')}>
-            <Columns2 className="h-4 w-4" />
-            Compare two
-          </Button>
-        </div>
-      )}
-      <div className="overflow-x-auto">
+    <div className="overflow-x-auto">
       <table className="w-full min-w-[38rem] text-sm">
         <thead>
           <tr className="border-b text-left text-muted-foreground">
@@ -116,8 +111,13 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
         <tbody>
           {rows.slice(0, limit).map((row) => {
             const metrics = row.metrics ?? []
-            // Propulsive where it exists, so the list agrees with the panel.
-            const last = lastRepVelocity(metrics, 'propulsive') ?? lastRepVelocity(metrics)
+            // Read with the metric the set was saved with, so this list, the
+            // saved view and the live panel never show one set three ways.
+            const rowLift = isVbtLift(row.lift) ? row.lift : 'back-squat'
+            const last = lastRepVelocity(
+              metrics,
+              isVelocityMetric(row.metric) ? row.metric : defaultVelocityMetric(rowLift),
+            )
             const lift = isVbtLift(row.lift) ? liftLabel(row.lift) : '—'
             return (
               <tr key={row.id} className="border-b last:border-0">
@@ -178,7 +178,6 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
           })}
         </tbody>
       </table>
-      </div>
     </div>
   )
 }
