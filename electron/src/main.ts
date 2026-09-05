@@ -14,7 +14,20 @@ import fs from 'fs'
 import { createServer, type RequestListener } from 'http'
 import { autoUpdater } from 'electron-updater'
 
-const isDev = process.env.NODE_ENV === 'development'
+/**
+ * Dev means "running from source", which is exactly what app.isPackaged says.
+ *
+ * This used to read NODE_ENV, which the dev script never set — so `npm run dev`
+ * started Vite, then loaded the *built* bundle from the Express server instead.
+ * There was no error: the app opened, and every edit silently did nothing
+ * because the window was showing whatever the last `npm run build` produced. An
+ * Electron window has no address bar either, so there was no way to see which
+ * one you had. Deriving it removes the trap rather than documenting it.
+ *
+ * To exercise the built client, package it — see the packaging notes in
+ * docs/ROADMAP.md for why that is the only trustworthy check anyway.
+ */
+const isDev = !app.isPackaged
 const SERVER_PORT = 3001
 
 /**
