@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Download, Mail, MessageSquare, Trash2 } from 'lucide-react'
+import { Check, Download, Mail, MessageSquare, Trash2 } from 'lucide-react'
 import { Button } from '../ui/button'
 import SendPanel from './SendPanel'
 import { blockedReason, deliveryFitness, formatBytes } from './recorder.core'
@@ -7,10 +7,14 @@ import { blockedReason, deliveryFitness, formatBytes } from './recorder.core'
 // ---------------------------------------------------------------------------
 // Watch it back, then decide what happens to it.
 //
-// The recording is deleted when this closes unless the coach saved it — which is
-// why the copy says so plainly rather than leaving them to find out. Discord and
-// email land in 11c-2; the buttons are here, disabled, because a coach who can
-// see where this is going will not go looking for it elsewhere.
+// The working copy is deleted when this closes, so the dialog says so plainly
+// rather than leaving the coach to find out. Sending deletes it immediately;
+// saving to PC deliberately does not, because the download and the delete would
+// race — the launch sweep collects it instead.
+//
+// Which is why the closing action is named for what the coach just did. Once
+// they have their own copy, "Discard" describes the temporary file they never
+// knew existed, and reads as if it will destroy the video they just saved.
 // ---------------------------------------------------------------------------
 
 interface Props {
@@ -31,6 +35,8 @@ export default function ReviewDialog({
   onDiscard,
 }: Props) {
   const [sending, setSending] = useState<'discord' | 'email' | null>(null)
+  /** True once the coach has their own copy, which changes what closing means. */
+  const [kept, setKept] = useState(false)
   const fitness = deliveryFitness(bytes)
   const src = `/api/recorder/recordings/${recordingId}/file`
 
@@ -43,6 +49,7 @@ export default function ReviewDialog({
     document.body.appendChild(a)
     a.click()
     a.remove()
+    setKept(true)
     onSaved()
   }
 
@@ -77,9 +84,21 @@ export default function ReviewDialog({
             <Mail className="h-4 w-4" />
             Email it
           </Button>
+          {/* Same action either way — it always removes the working copy. Only
+              the name changes, because after a save that copy is not the
+              coach's video, and calling it "Discard" implies it is. */}
           <Button variant="ghost" className="ml-auto" onClick={onDiscard}>
-            <Trash2 className="h-4 w-4" />
-            Discard
+            {kept ? (
+              <>
+                <Check className="h-4 w-4" />
+                Done
+              </>
+            ) : (
+              <>
+                <Trash2 className="h-4 w-4" />
+                Discard
+              </>
+            )}
           </Button>
         </div>
 
@@ -101,7 +120,9 @@ export default function ReviewDialog({
         )}
 
         <p className="mt-4 text-xs text-muted-foreground">
-          This recording is deleted when you close this window unless you save it.
+          {kept
+            ? 'Saved to your PC. Closing removes CoachBoard’s working copy — your saved file is untouched.'
+            : 'This recording is deleted when you close this window unless you save it.'}
         </p>
       </div>
     </div>
