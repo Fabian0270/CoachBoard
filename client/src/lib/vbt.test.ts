@@ -14,6 +14,7 @@ import {
   effectiveRpe,
   defaultMvt,
   defaultVelocityMetric,
+  checkScale,
   DEFAULT_LV_SLOPE,
   zoneFor,
   velocityLoss,
@@ -541,11 +542,13 @@ describe('reading a set', () => {
     expect(bestRepVelocity(reps, 'peak')).toBeCloseTo(0.75, 9)
   })
 
-  it('reads propulsive velocity everywhere, with no per-lift special case', () => {
-    // The per-lift table this replaced read bench off peak, which worked on one
-    // clean clip and then took a tracker re-lock straight into the answer.
-    for (const lift of ['bench-press', 'back-squat', 'deadlift-conventional', 'other'] as const) {
-      expect(defaultVelocityMetric(lift)).toBe('propulsive')
+  it('keeps the metric a property of the lift', () => {
+    // Reading propulsive velocity everywhere was tried and reverted: it was
+    // never reconciled with DEFAULT_LV_SLOPE, a MEAN-velocity slope, so every
+    // lift read high. The peak-for-bench pairing has real clips behind it.
+    expect(defaultVelocityMetric('bench-press')).toBe('peak')
+    for (const lift of ['back-squat', 'deadlift-conventional', 'other'] as const) {
+      expect(defaultVelocityMetric(lift)).toBe('mean')
     }
   })
 
@@ -575,5 +578,55 @@ describe('isVbtLift', () => {
     expect(isVbtLift('back-squat')).toBe(true)
     expect(isVbtLift('squat')).toBe(false)
     expect(isVbtLift(null)).toBe(false)
+  })
+})
+
+describe('defaultVelocityMetric', () => {
+  // The pairing is empirical and its evidence is real clips: peak rescues bench
+  // (0.37 -> 195 kg against a real 200) and destroys squat (1.06 -> 459 against
+  // a real 250). A spell of reading mean propulsive velocity for everything was
+  // never reconciled with DEFAULT_LV_SLOPE, which is a MEAN-velocity slope, so
+  // every lift read high — a 205 kg double came back at 272 kg.
+  it('reads bench off peak and everything else off mean', () => {
+    expect(defaultVelocityMetric('bench-press')).toBe('peak')
+    expect(defaultVelocityMetric('back-squat')).toBe('mean')
+    expect(defaultVelocityMetric('deadlift-conventional')).toBe('mean')
+    expect(defaultVelocityMetric('deadlift-sumo')).toBe('mean')
+  })
+
+  it('never defaults to propulsive while the slope is a mean-velocity slope', () => {
+    for (const lift of ['back-squat', 'bench-press', 'deadlift-conventional'] as const) {
+      expect(defaultVelocityMetric(lift)).not.toBe('propulsive')
+    }
+  })
+})
+
+describe('checkScale', () => {
+  // The bug this exists for: a mis-drawn plate line scales every velocity, and
+  // e1RM divides by a percentage derived from velocity, so the error grows
+  // rather than passing through. Range of motion is checkable because anatomy
+  // fixes the answer.
+  it('passes an ordinary squat', () => {
+    expect(checkScale('back-squat', 0.55)?.verdict).toBe('ok')
+  })
+
+  it('catches the 3x scale error that produced a 470 kg double', () => {
+    const check = checkScale('back-squat', 0.55 * 3)
+    expect(check?.verdict).toBe('suspect')
+    expect(check!.factor).toBeGreaterThan(1.5)
+  })
+
+  it('catches a scale that is too small as well as too large', () => {
+    expect(checkScale('back-squat', 0.05)?.verdict).toBe('suspect')
+  })
+
+  it('is generous enough not to flag a tall lifter or a short bench stroke', () => {
+    expect(checkScale('back-squat', 0.95)?.verdict).toBe('ok')
+    expect(checkScale('bench-press', 0.18)?.verdict).toBe('ok')
+  })
+
+  it('returns null — meaning unknown, never fine — with nothing to check', () => {
+    expect(checkScale('back-squat', null)).toBeNull()
+    expect(checkScale('back-squat', 0)).toBeNull()
   })
 })

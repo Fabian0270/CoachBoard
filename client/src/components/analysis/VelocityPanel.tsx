@@ -11,6 +11,7 @@ import {
   defaultMvt,
   defaultVelocityMetric,
   e1RMFromVelocity,
+  checkScale,
   effectiveRpe,
   effortLabel,
   recordedMaxFor,
@@ -229,6 +230,28 @@ export default function VelocityPanel({
   )
 
   /**
+   * Does the scale survive contact with anatomy?
+   *
+   * Every reading on this panel is metres because the coach drew a line across
+   * a plate. Get that wrong and nothing complains — velocity scales with the
+   * error and e1RM divides by a percentage derived from velocity, so the error
+   * grows. A 3x scale mistake turned a 205 kg double into a 470 kg estimate.
+   *
+   * Range of motion is checkable in a way velocity is not: a squat moves the bar
+   * a distance human anatomy decides. Median rather than mean, so one mistracked
+   * rep cannot raise the alarm on its own.
+   */
+  const scale = useMemo(() => {
+    if (!lift) return null
+    const roms = trusted
+      .map((r) => r.romM)
+      .filter((m): m is number => m != null && Number.isFinite(m) && m > 0)
+      .sort((a, b) => a - b)
+    if (roms.length === 0) return null
+    return checkScale(lift, roms[Math.floor(roms.length / 2)])
+  }, [lift, trusted])
+
+  /**
    * What the coach counted, against what survived tracking.
    *
    * Only a disagreement is worth saying anything about — and it is worth saying
@@ -445,6 +468,31 @@ export default function VelocityPanel({
                       </span>{' '}
                       than it felt.
                     </>
+                  )}
+                </p>
+              )}
+
+              {/* Above the estimate, not below it: by the time the coach has
+                  read a number they believe it, and this is the one fault that
+                  makes every number on the panel wrong at once. */}
+              {scale?.verdict === 'suspect' && (
+                <p className="mt-2 border-t pt-2 text-sm text-destructive">
+                  <span className="font-medium">Check the plate scale.</span>{' '}
+                  <span>
+                    These reps measure {Math.round(scale.measuredM * 100)} cm of bar travel, where
+                    this lift is normally {Math.round(scale.expected.min * 100)}–
+                    {Math.round(scale.expected.max * 100)} cm. Every speed and estimate below is
+                    off by roughly the same factor
+                    {scale.factor >= 1.3 ? ` (about ${scale.factor.toFixed(1)}×)` : ''}, because
+                    they are all derived from that measurement.
+                  </span>
+                  {onSetScale && (
+                    <button
+                      onClick={onSetScale}
+                      className="ml-1 underline underline-offset-2 hover:no-underline"
+                    >
+                      Redo the scale
+                    </button>
                   )}
                 </p>
               )}

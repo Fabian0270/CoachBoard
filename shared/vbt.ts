@@ -124,32 +124,92 @@ export const MVT_RANGE: Partial<Record<VbtLift, { novice: number; elite: number 
 export const LRV_TOLERANCE_MS = 0.03
 
 // ---------------------------------------------------------------------------
+// Is the scale believable?
+// ---------------------------------------------------------------------------
+//
+// Every number downstream of the tracker is in metres because the coach drew a
+// line across a plate and said how big it was. Get that line wrong and nothing
+// complains: velocity scales linearly with the error, and e1RM divides by a
+// percentage derived from velocity, so the error GROWS. A 3x scale mistake on a
+// 205 kg double produced a 470 kg estimate, which is arithmetically faithful and
+// physically nonsense.
+//
+// Range of motion is the honest check, because unlike velocity it has a known
+// answer: a barbell lift moves the bar a distance set by human anatomy. If the
+// bar reportedly travelled two metres in a squat, the scale is wrong — no
+// judgement about the lifter required.
+
+/** Generous per-lift bar travel in metres. Wide on purpose: this catches scale errors, not technique. */
+export const ROM_RANGE: Partial<Record<VbtLift, { min: number; max: number }>> = {
+  'back-squat': { min: 0.25, max: 1.0 },
+  'front-squat': { min: 0.25, max: 1.0 },
+  'bench-press': { min: 0.15, max: 0.7 },
+  'deadlift-conventional': { min: 0.3, max: 1.0 },
+  'deadlift-sumo': { min: 0.25, max: 0.95 },
+  'deadlift-trapbar': { min: 0.3, max: 1.0 },
+  'barbell-row': { min: 0.15, max: 0.9 },
+  'overhead-press': { min: 0.25, max: 0.95 },
+}
+
+export interface ScaleCheck {
+  /** How far off the nearest plausible bound the measurement is, as a ratio. */
+  factor: number
+  measuredM: number
+  expected: { min: number; max: number }
+  verdict: 'ok' | 'suspect'
+}
+
+/**
+ * Sanity-checks the plate calibration against the range of motion it produced.
+ *
+ * Returns null when there is nothing to check — no calibration, no reps, or a
+ * lift with no published travel to compare against. A null is "unknown", never
+ * "fine": the caller must not treat it as a pass.
+ */
+export function checkScale(lift: VbtLift, romM: number | null | undefined): ScaleCheck | null {
+  const expected = ROM_RANGE[lift]
+  if (!expected || romM == null || !Number.isFinite(romM) || romM <= 0) return null
+  const factor = romM > expected.max ? romM / expected.max : romM < expected.min ? expected.min / romM : 1
+  return { factor, measuredM: romM, expected, verdict: factor > 1 ? 'suspect' : 'ok' }
+}
+
+// ---------------------------------------------------------------------------
 // Which velocity the tables get read against
 // ---------------------------------------------------------------------------
 
 export type VelocityMetric = 'mean' | 'peak' | 'propulsive'
 
 /**
- * Mean PROPULSIVE velocity everywhere, with mean as the fallback.
+ * Peak for bench, mean for everything else.
  *
- * This replaces a per-lift table that read bench off peak and everything else
- * off mean. That table was an empirical patch for a real problem — a large share
- * of a bench concentric is spent braking the bar so it does not leave the hands,
- * and over 35 cm of travel that share is big enough to drag the mean well below
- * what the reference tables describe, where a 100 cm squat barely notices. It
- * worked on one clean bench clip and then fell over on the next one, because
- * peak is a near-single-sample statistic and a tracker re-lock lands in it whole.
+ * A brief detour read mean PROPULSIVE velocity for every lift instead. The
+ * theory was sound — MPV removes exactly the braking phase each lift has, a lot
+ * on bench and little on squat, so no lift needs a special case — but it was
+ * never reconciled with DEFAULT_LV_SLOPE, which is a slope for MEAN velocity
+ * (see the note on that constant). MPV is faster than mean by construction, so
+ * every lift read high, and because e1RM divides by the derived %1RM the error
+ * grew rather than passed through: a real 205 kg double came back at 272 kg,
+ * and a worse-tracked one at 470 kg.
  *
- * MPV fixes the same problem from the other end. It averages, so it is robust
- * like the mean, and it removes exactly the braking phase each lift actually
- * has — a lot on bench, little on squat — so no lift needs a special case and
- * nothing has to be tuned per lift.
+ * The per-lift table below is empirical, and its evidence is real clips:
  *
- * Falls back to mean, per rep, when there is no MPV to use: the phase boundary
- * is literally 9.81 m/s², so it cannot be located on an uncalibrated path.
+ *   bench 170 kg   mean 0.24 -> 175 kg    peak 0.37 -> 195 kg   (real 200)
+ *   squat 180 kg   mean 0.62 -> 249 kg    peak 1.06 -> 459 kg   (real 250)
+ *
+ * So peak rescues bench and destroys squat, and the metric is a property of the
+ * lift. Bench spends a large share of a 35 cm concentric braking the bar so it
+ * does not leave the hands; a 100 cm squat barely notices the same effect.
+ *
+ * This is a judgement call, not a claim that peak is the right quantity — which
+ * is why it stays visible and overridable in the UI, and why MPV is still
+ * computed and shown per rep. The principled fix remains MPV read against a
+ * slope actually derived for MPV; that needs a source for the slope, not a
+ * guess, and until it exists the pairing above is the one with evidence behind
+ * it. `peakVelocity` is a percentile rather than the single fastest sample, so
+ * a tracker re-lock cannot land in it whole — see repMetrics.
  */
-export function defaultVelocityMetric(_lift: VbtLift): VelocityMetric {
-  return 'propulsive'
+export function defaultVelocityMetric(lift: VbtLift): VelocityMetric {
+  return lift === 'bench-press' ? 'peak' : 'mean'
 }
 
 export const VELOCITY_METRIC_LABEL: Record<VelocityMetric, string> = {
