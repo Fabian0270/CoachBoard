@@ -52,6 +52,7 @@ interface ServerBundle {
   setUpdateState?(state: { status: string; version?: string | null; message?: string | null }): void
   runStartupBackup?(): Promise<string | null>
   sweepRecordings?(): Promise<number>
+  sweepAnalysisVideos?(): Promise<number>
   initDiscordSync?(opts: { launchDelayMs: number }): void | Promise<void>
 }
 
@@ -168,6 +169,13 @@ async function startServer(): Promise<void> {
   // configureSecureStore above for the userData path.
   const swept = await bundle.sweepRecordings?.().catch(() => 0)
   if (swept) log(`Swept ${swept} abandoned recording(s)`)
+
+  // Analysis videos are the opposite of recordings — kept until the coach
+  // deletes the analysis — so this only collects files whose row is already
+  // gone. It exists because deleting a file can fail while a player holds it
+  // open on Windows, which would otherwise strand it forever.
+  const orphans = await bundle.sweepAnalysisVideos?.().catch(() => 0)
+  if (orphans) log(`Swept ${orphans} orphaned analysis video(s)`)
 
   const expressApp = bundle.createApp(staticDir, logPath)
 

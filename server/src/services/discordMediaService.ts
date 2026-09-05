@@ -3,6 +3,7 @@ import type { DiscordMediaTable } from '../db.js'
 import { computeSuggestedWorkoutId, ensureDmChannel, disableDmChannel, stopAutoSync } from './discordSyncService.js'
 import { clearSettings } from './discordSettingsService.js'
 import { deleteAllFilesFor } from './mediaStore.js'
+import { countAnalysesForMedia } from './videoAnalysisService.js'
 import { parseCaption } from './captionMatcher.js'
 import type {
   DiscordMediaItem,
@@ -226,10 +227,24 @@ export async function getStorageUsage(): Promise<{ bytes: number; files: number 
   return { bytes: Number(row?.bytes ?? 0), files: Number(row?.files ?? 0) }
 }
 
+/** Thrown rather than silently refusing, so the route can explain the refusal. */
+export class MediaHasAnalysisError extends Error {
+  constructor(public readonly analyses: number) {
+    super('This video has a saved bar-path analysis')
+    this.name = 'MediaHasAnalysisError'
+  }
+}
+
 /**
  * Deletes a media item entirely — the file on disk (best-effort; a file open
  * in the player may be locked on Windows) and the DB row. Sent-message replies
  * survive via ON DELETE SET NULL. Returns false if the row didn't exist.
+ *
+ * Refuses when a saved analysis depends on the video. Automatic retention has
+ * exempted these all along (see deleteMediaBefore), but this manual path did
+ * not: the FK nulls video_analyses.media_id, so the analysis survived and
+ * quietly lost the footage it was measured from. A saved analysis is deliberate
+ * work, and the coach should delete that first if they really mean it.
  */
 export async function deleteMedia(mediaId: string): Promise<boolean> {
   const db = getDb()
@@ -239,6 +254,10 @@ export async function deleteMedia(mediaId: string): Promise<boolean> {
     .where('id', '=', mediaId)
     .executeTakeFirst()
   if (!row) return false
+
+  const analyses = await countAnalysesForMedia(mediaId)
+  if (analyses > 0) throw new MediaHasAnalysisError(analyses)
+
   await deleteAllFilesFor(row)
   await db.deleteFrom('discord_media').where('id', '=', mediaId).execute()
   return true

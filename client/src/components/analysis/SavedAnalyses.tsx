@@ -50,7 +50,8 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
   const remove = async (row: VideoAnalysisDto) => {
     const ok = await confirm({
       title: 'Delete this analysis?',
-      description: 'The bar path and its numbers are removed. The video itself is untouched.',
+      description:
+        'The bar path, its numbers and the kept copy of the video are all removed. A synced Discord clip stays in your library.',
       confirmLabel: 'Delete',
       destructive: true,
     })

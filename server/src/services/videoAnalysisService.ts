@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db.js'
+import { deleteVideo, sweepOrphanVideos, videoPath } from './analysisVideoStore.js'
 import type {
   CalibrationDto,
   SaveVideoAnalysisInput,
@@ -29,6 +30,9 @@ interface AnalysisRow {
   lift: string | null
   load_kg: number | null
   called_rpe: number | null
+  metric: string | null
+  video_path: string | null
+  video_bytes: number | null
   created_at: string
   updated_at: string
   athlete_name?: string | null
@@ -64,6 +68,11 @@ function toDto(row: AnalysisRow): VideoAnalysisDto {
     lift: row.lift,
     loadKg: row.load_kg,
     calledRpe: row.called_rpe,
+    metric: row.metric,
+    // Either form of ownership counts. The path is deliberately not exposed:
+    // the client asks for /api/analysis/:id/video and never handles a filesystem
+    // path, which keeps the file route the only way to reach the bytes.
+    hasVideo: !!row.video_path || !!row.media_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -96,6 +105,9 @@ function baseQuery(withTrack = true) {
       'video_analyses.lift as lift',
       'video_analyses.load_kg as load_kg',
       'video_analyses.called_rpe as called_rpe',
+      'video_analyses.metric as metric',
+      'video_analyses.video_path as video_path',
+      'video_analyses.video_bytes as video_bytes',
       'video_analyses.created_at as created_at',
       'video_analyses.updated_at as updated_at',
       'athletes.name as athlete_name',
@@ -119,6 +131,9 @@ export async function saveAnalysis(input: SaveVideoAnalysisInput): Promise<Video
       lift: input.lift,
       load_kg: input.loadKg,
       called_rpe: input.calledRpe,
+      metric: input.metric,
+      video_path: input.videoPath ?? null,
+      video_bytes: input.videoBytes ?? null,
       created_at: now,
       updated_at: now,
     })
@@ -166,12 +181,30 @@ export async function setAnalysisAthlete(
   return row ? toDto(row as AnalysisRow) : null
 }
 
+/**
+ * Deletes the analysis and the video it owns.
+ *
+ * The file is read BEFORE the row goes, or its path is gone with it and the
+ * video is stranded on disk forever. A Discord clip is untouched — the analysis
+ * only referenced it, and the coach's synced library is not this function's to
+ * delete from.
+ */
 export async function deleteAnalysis(id: string): Promise<boolean> {
+  const owned = await getDb()
+    .selectFrom('video_analyses')
+    .select('video_path')
+    .where('id', '=', id)
+    .executeTakeFirst()
+
   const res = await getDb().deleteFrom('video_analyses').where('id', '=', id).executeTakeFirst()
-  return Number(res.numDeletedRows ?? 0n) > 0
+  const deleted = Number(res.numDeletedRows ?? 0n) > 0
+  // Only after the row is actually gone: a failed delete must not leave a row
+  // pointing at a file that no longer exists.
+  if (deleted) await deleteVideo(owned?.video_path)
+  return deleted
 }
 
-/** Whether a video has any saved analysis — used by the retention carve-out. */
+/** Whether a video has any saved analysis — the retention and delete carve-out. */
 export async function countAnalysesForMedia(mediaId: string): Promise<number> {
   const row = await getDb()
     .selectFrom('video_analyses')
@@ -179,4 +212,31 @@ export async function countAnalysesForMedia(mediaId: string): Promise<number> {
     .where('media_id', '=', mediaId)
     .executeTakeFirst()
   return Number(row?.n ?? 0)
+}
+
+/** Absolute path of the analysis's OWN copy, or null if it has none on disk. */
+export async function ownedVideoPath(id: string): Promise<string | null> {
+  const row = await getDb()
+    .selectFrom('video_analyses')
+    .select('video_path')
+    .where('id', '=', id)
+    .executeTakeFirst()
+  return row?.video_path ? videoPath(row.video_path) : null
+}
+
+/**
+ * Deletes stored videos no analysis claims any more.
+ *
+ * Needed because deleting a file can legitimately fail while a player still
+ * holds it open on Windows, which would otherwise strand it forever — the same
+ * reason sweepOrphanThumbs exists. Runs at launch rather than with the Discord
+ * sync, since an analysis video has nothing to do with whether Discord is set up.
+ */
+export async function sweepAnalysisVideos(): Promise<number> {
+  const rows = await getDb()
+    .selectFrom('video_analyses')
+    .select('video_path')
+    .where('video_path', 'is not', null)
+    .execute()
+  return sweepOrphanVideos(new Set(rows.map((r) => r.video_path as string)))
 }

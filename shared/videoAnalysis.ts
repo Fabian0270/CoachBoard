@@ -447,6 +447,11 @@ export interface SetContext {
   loadKg: number | null
   /** The RPE the athlete called, to compare against what the bar says. */
   calledRpe: number | null
+  /** Which velocity the set was read from ('mean' | 'peak' | 'propulsive').
+   *  Null follows the lift's default — see defaultVelocityMetric. Stored so a
+   *  reopened analysis cannot report the same set differently from the page it
+   *  was tracked on. */
+  metric: string | null
 }
 
 /** A saved analysis as it travels over HTTP. */
@@ -460,6 +465,9 @@ export interface VideoAnalysisDto extends SetContext {
   calibration: CalibrationDto | null
   metrics: RepMetrics[]
   notes: string | null
+  /** True when the analysis can be replayed — from its own stored copy, or from
+   *  the Discord clip it references. False means only the path survives. */
+  hasVideo: boolean
   createdAt: string
   updatedAt: string
 }
@@ -472,6 +480,10 @@ export interface SaveVideoAnalysisInput extends SetContext {
   calibration: CalibrationDto | null
   metrics: RepMetrics[]
   notes: string | null
+  /** Relative path of an already-uploaded copy, from POST /api/analysis/video.
+   *  Null for a Discord clip, which needs no copy. */
+  videoPath?: string | null
+  videoBytes?: number | null
 }
 
 /**

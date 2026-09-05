@@ -237,6 +237,15 @@ export interface VideoAnalysisTable {
   lift: string | null
   load_kg: number | null
   called_rpe: number | null
+  /** Which velocity the set was read from, so reopening it cannot disagree with
+   *  the live panel. Null follows the lift's default. */
+  metric: string | null
+  /** The analysis's OWN copy of the video, for a locally imported clip. Null
+   *  for a Discord clip, whose bytes stay under discord_media.local_path —
+   *  copying them would duplicate hundreds of megabytes to own a second
+   *  identical file. Either way the analysis can be replayed. */
+  video_path: string | null
+  video_bytes: number | null
   created_at: string
   updated_at: string
 }
@@ -670,6 +679,13 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await addColumnIfMissing('video_analyses', 'lift', 'TEXT')
   await addColumnIfMissing('video_analyses', 'load_kg', 'REAL')
   await addColumnIfMissing('video_analyses', 'called_rpe', 'REAL')
+  // Keeping the footage: the analysis owns a copy for a local import, and
+  // references discord_media for a synced clip. `metric` joins them because a
+  // reopened analysis that reads the set differently from the live panel shows
+  // the same lift two ways.
+  await addColumnIfMissing('video_analyses', 'metric', 'TEXT')
+  await addColumnIfMissing('video_analyses', 'video_path', 'TEXT')
+  await addColumnIfMissing('video_analyses', 'video_bytes', 'INTEGER')
 
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_media ON video_analyses(media_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_athlete ON video_analyses(athlete_id)`.execute(_db)

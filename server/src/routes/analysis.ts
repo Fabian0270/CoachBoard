@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import express from 'express'
 import { z } from 'zod'
 import { VBT_LIFTS } from 'coachboard-shared/vbt'
 import {
@@ -7,7 +8,10 @@ import {
   getAnalysis,
   setAnalysisAthlete,
   deleteAnalysis,
+  ownedVideoPath,
 } from '../services/videoAnalysisService.js'
+import { appendVideoChunk, beginVideo, finishVideo } from '../services/analysisVideoStore.js'
+import { fail } from '../lib/httpError.js'
 
 const router = Router()
 
@@ -44,6 +48,17 @@ const saveSchema = z.object({
     .refine((v) => Number.isInteger(v * 2), 'RPE must be a half step')
     .nullable()
     .optional(),
+  metric: z.enum(['mean', 'peak', 'propulsive']).nullable().optional(),
+  // Produced by POST /video, never composed by the client. Constrained to the
+  // shape this server writes so a crafted body cannot point a row at some other
+  // file — resolveMediaAbsPath would refuse an escape, but a row pointing at an
+  // unrelated media file would still be wrong.
+  videoPath: z
+    .string()
+    .regex(/^analyses\/[0-9a-f-]{36}\.[a-z0-9]{2,4}$/, 'Not a stored video path')
+    .nullable()
+    .optional(),
+  videoBytes: z.number().int().positive().nullable().optional(),
 })
 
 router.get('/', async (req, res) => {
@@ -53,6 +68,79 @@ router.get('/', async (req, res) => {
   // the paths would dwarf everything else it needs.
   const withTrack = req.query.withTrack !== '0'
   res.json(await listAnalyses({ mediaId, athleteId, withTrack }))
+})
+
+// --- Keeping the footage ---------------------------------------------------
+//
+// Registered BEFORE '/:id' so the literal path wins: Express matches in order
+// and ':id' would otherwise swallow '/video'. Same trap as routes/discord.ts.
+//
+// The upload is separate from the save because express.json() is global with a
+// 100 kb default — a video cannot ride the save body — and chunked because a
+// lift clip runs to hundreds of megabytes.
+
+router.post('/video', async (req, res) => {
+  const filename = typeof req.query.filename === 'string' ? req.query.filename : undefined
+  try {
+    res.json(await beginVideo(filename))
+  } catch (err) {
+    fail(res, 'Could not start the upload', err)
+  }
+})
+
+router.post(
+  '/video/:id/chunk',
+  express.raw({ type: 'application/octet-stream', limit: '32mb' }),
+  async (req, res) => {
+    const ext = typeof req.query.ext === 'string' ? req.query.ext : ''
+    const body = req.body
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      res.status(400).json({ error: 'Expected a video body' })
+      return
+    }
+    try {
+      res.json({ bytes: await appendVideoChunk(req.params.id, ext, body) })
+    } catch (err) {
+      // The renderer is still uploading, so it needs to know now — every later
+      // chunk would fail the same way.
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Chunk rejected' })
+    }
+  },
+)
+
+router.post('/video/:id/finish', async (req, res) => {
+  const ext = typeof req.query.ext === 'string' ? req.query.ext : ''
+  try {
+    res.json(await finishVideo(req.params.id, ext))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not finish' })
+  }
+})
+
+/**
+ * Plays a saved analysis back.
+ *
+ * One route for both kinds of ownership, so the client never has to know which
+ * it is looking at: a local import streams the analysis's own copy, a Discord
+ * clip redirects to the media route that already serves the synced file.
+ */
+router.get('/:id/video', async (req, res) => {
+  const found = await getAnalysis(req.params.id)
+  if (!found) {
+    res.status(404).json({ error: 'Analysis not found' })
+    return
+  }
+  const owned = await ownedVideoPath(req.params.id)
+  if (owned) {
+    // sendFile handles Range/206 natively — required for seeking.
+    res.sendFile(owned, { acceptRanges: true, headers: { 'Content-Type': 'video/mp4' } })
+    return
+  }
+  if (found.mediaId) {
+    res.redirect(`/api/discord/media/${found.mediaId}/file`)
+    return
+  }
+  res.status(404).json({ error: 'No video kept for this analysis' })
 })
 
 router.get('/:id', async (req, res) => {
@@ -76,6 +164,7 @@ router.post('/', async (req, res) => {
       lift: parsed.data.lift ?? null,
       loadKg: parsed.data.loadKg ?? null,
       calledRpe: parsed.data.calledRpe ?? null,
+      metric: parsed.data.metric ?? null,
       // Metrics are a cache of what the client already computed; they are
       // displayed, never recomputed from, so the loose shape is fine here.
       metrics: parsed.data.metrics as never,

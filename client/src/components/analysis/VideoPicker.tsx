@@ -7,14 +7,15 @@ import { Input } from '../ui/input'
 /**
  * Where a clip being analysed came from.
  *
- * Local files are held as an object URL rather than uploaded: the analyser runs
- * entirely in the renderer, so there is nothing for the server to do with the
- * bytes, and a coach checking a one-off video should not have it silently
- * copied into their library.
+ * A local file is played from an object URL — the analyser runs entirely in the
+ * renderer, so nothing is uploaded merely to look at a lift. The `File` is kept
+ * alongside it because saving an analysis now stores the video too, and by that
+ * point the object URL is only a handle to bytes the page can no longer read.
+ * Nothing is copied anywhere until the coach actually saves.
  */
 export type AnalysisSource =
   | { kind: 'discord'; item: DiscordMediaItem }
-  | { kind: 'local'; name: string; url: string }
+  | { kind: 'local'; name: string; url: string; file: File }
 
 function fmtDuration(ms: number): string {
   const total = Math.round(ms / 1000)
@@ -50,7 +51,7 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
 
   const takeFile = (file: File | undefined) => {
     if (!file) return
-    onPick({ kind: 'local', name: file.name, url: URL.createObjectURL(file) })
+    onPick({ kind: 'local', name: file.name, url: URL.createObjectURL(file), file })
   }
 
   const filtered = useMemo(() => {
@@ -85,7 +86,8 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
         <div>
           <p className="font-medium">Analyse a video from your computer</p>
           <p className="text-sm text-muted-foreground">
-            Drop a file here, or choose one. It stays on your machine — nothing is uploaded.
+            Drop a file here, or choose one. Nothing is copied anywhere unless you save the
+            analysis.
           </p>
         </div>
         <Button variant="outline" onClick={() => fileRef.current?.click()}>

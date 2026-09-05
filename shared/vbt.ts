@@ -251,6 +251,11 @@ export function checkScale(
 
 export type VelocityMetric = 'mean' | 'peak' | 'propulsive'
 
+/** Narrows a stored string, which may predate the column or be hand-edited. */
+export function isVelocityMetric(value: unknown): value is VelocityMetric {
+  return value === 'mean' || value === 'peak' || value === 'propulsive'
+}
+
 /**
  * Peak for bench, mean for everything else.
  *

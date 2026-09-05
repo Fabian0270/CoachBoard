@@ -48,6 +48,7 @@ import VelocityPanel, {
 import { useVbtHistory, useAthleteMaxes } from '../components/analysis/useVbtHistory'
 import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import { num } from '../lib/num'
+import { uploadVideo } from '../lib/uploadAnalysisVideo'
 
 type Phase = 'idle' | 'capturing' | 'tracking' | 'done'
 
@@ -485,6 +486,12 @@ export default function VideoAnalysis() {
     if (!samples) return
     setSaving(true)
     try {
+      // A Discord clip is already on disk and the analysis just references it.
+      // A local import is the only one that needs a copy, and it is uploaded
+      // BEFORE the row is written so a failed upload leaves nothing behind —
+      // better a save the coach can retry than a row pointing at no video.
+      const stored = source?.kind === 'local' ? await uploadVideo(source.file) : null
+
       const res = await fetch('/api/analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -502,6 +509,10 @@ export default function VideoAnalysis() {
           lift: reps.length > 0 ? setContext.lift : null,
           loadKg: loadKg,
           calledRpe: setContext.calledRpe,
+          // Stored so reopening reads the set the same way this page did.
+          metric: reps.length > 0 ? metric : null,
+          videoPath: stored?.relPath ?? null,
+          videoBytes: stored?.bytes ?? null,
         }),
       })
       if (!res.ok) throw new Error('Save failed')
@@ -785,7 +796,8 @@ export default function VideoAnalysis() {
                         : 'The bar path is kept.'}
                       {loadKg != null &&
                         ` The lift and ${loadKg} kg go with it, so the athlete's velocity profile builds up.`}
-                      {source?.kind === 'local' && ' The video itself is not — it stays on your computer.'}
+                      {source?.kind === 'local' &&
+                        ' The video is copied into CoachBoard too, so you can watch it back later.'}
                     </span>
                   </span>
                 </div>

@@ -15,6 +15,7 @@ import {
   listUsers,
   disconnect,
   deleteMedia,
+  MediaHasAnalysisError,
   applyRetention,
   applyMessageRetention,
   clearCache,
@@ -23,6 +24,7 @@ import {
   markConversationRead,
   listUnreadThreads,
 } from './discordMediaService.js'
+import { saveAnalysis } from './videoAnalysisService.js'
 import { resolveMediaAbsPath } from './mediaStore.js'
 
 let tmpDir: string
@@ -159,6 +161,38 @@ describe('deleteMedia', () => {
 
   it('returns false for a missing id', async () => {
     expect(await deleteMedia(uuidv4())).toBe(false)
+  })
+
+  it('refuses when a saved analysis depends on the video', async () => {
+    // Automatic retention has exempted these all along, but this manual path
+    // did not: the FK nulled video_analyses.media_id, so the analysis survived
+    // and quietly lost the footage it was measured from.
+    const rel = 'media/discord/2026-07/analysed.mp4'
+    const abs = resolveMediaAbsPath(rel)
+    fs.mkdirSync(path.dirname(abs), { recursive: true })
+    fs.writeFileSync(abs, 'bytes')
+    const id = await createDownloadedMedia({ userId: 'u1', postedAt: now(), bytes: 5, relPath: rel })
+    await saveAnalysis({
+      mediaId: id,
+      athleteId: null,
+      sourceLabel: 'analysed.mp4',
+      track: [
+        { t: 0, x: 1, y: 2 },
+        { t: 1, x: 1, y: 3 },
+      ],
+      calibration: null,
+      metrics: [],
+      notes: null,
+      lift: null,
+      loadKg: null,
+      calledRpe: null,
+      metric: null,
+    })
+
+    await expect(deleteMedia(id)).rejects.toThrow(MediaHasAnalysisError)
+    // Nothing was destroyed on the way to refusing.
+    expect(fs.existsSync(abs)).toBe(true)
+    expect(await getDb().selectFrom('discord_media').selectAll().execute()).toHaveLength(1)
   })
 })
 
