@@ -11,6 +11,7 @@ export interface AthleteTable {
   email: string | null
   sport: string | null
   weight_class: string | null   // powerlifting weight class, e.g. '83' (kg); free where not applicable
+  height_cm: number | null      // standing height; bar-path uses it to sanity-check the plate scale
   date_of_birth: string | null
   notes: string | null
   archived: number   // 0/1 — archived athletes are hidden from the active roster
@@ -382,6 +383,10 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
 
   await addColumnIfMissing('athletes', 'archived', 'INTEGER NOT NULL DEFAULT 0')
   await addColumnIfMissing('athletes', 'weight_class', 'TEXT')
+  // Feature 11b follow-up: bar-path readings are only as good as the plate
+  // scale, and nothing checked it. Height gives an independent expectation for
+  // how far the bar should travel, which is checkable in a way velocity is not.
+  await addColumnIfMissing('athletes', 'height_cm', 'INTEGER')
   await addColumnIfMissing('programs', 'enabled_columns', 'TEXT')
   await addColumnIfMissing('programs', 'focus', 'TEXT')
   await addColumnIfMissing('programs', 'export_layout', 'TEXT')

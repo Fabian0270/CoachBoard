@@ -102,7 +102,7 @@ export default function VideoAnalysis() {
    * 'none' is the coach explicitly saying this is a throwaway look.
    */
   const [athleteChoice, setAthleteChoice] = useState<string | null>(null)
-  const [roster, setRoster] = useState<{ id: string; name: string }[]>([])
+  const [roster, setRoster] = useState<{ id: string; name: string; height_cm: number | null }[]>([])
   const [savedCount, setSavedCount] = useState(0)
   /** What the set was — the lift and load every velocity readout is judged against. */
   const [setContext, setSetContext] = useState<SetContextState>({
@@ -147,12 +147,12 @@ export default function VideoAnalysis() {
     let cancelled = false
     fetch('/api/athletes')
       .then((r) => (r.ok ? r.json() : []))
-      .then((data: { id: string; name: string; archived?: number }[]) => {
+      .then((data: { id: string; name: string; height_cm: number | null; archived?: number }[]) => {
         if (cancelled) return
         setRoster(
           (Array.isArray(data) ? data : [])
             .filter((a) => !a.archived)
-            .map((a) => ({ id: a.id, name: a.name })),
+            .map((a) => ({ id: a.id, name: a.name, height_cm: a.height_cm ?? null })),
         )
       })
       .catch(() => !cancelled && setRoster([]))
@@ -331,6 +331,9 @@ export default function VideoAnalysis() {
   const athleteName =
     roster.find((a) => a.id === athleteId)?.name ??
     (source?.kind === 'discord' ? source.item.athleteName : null)
+  // Lets the panel judge the plate scale against how far this lifter's bar
+  // should actually travel, instead of a band wide enough to cover everyone.
+  const athleteHeightCm = roster.find((a) => a.id === athleteId)?.height_cm ?? null
   const metric = setContext.metric ?? defaultVelocityMetric(setContext.lift)
   const { anchors: savedAnchors, points: savedPoints } = useVbtHistory(
     athleteId,
@@ -972,6 +975,7 @@ export default function VideoAnalysis() {
                 reps={reps}
                 calibrated={pixelsPerMetre !== null}
                 athleteName={athleteName}
+                athleteHeightCm={athleteHeightCm}
                 anchors={anchors}
                 savedPoints={savedPoints}
                 maxes={athleteMaxes}

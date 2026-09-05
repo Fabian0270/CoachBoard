@@ -139,7 +139,7 @@ export const LRV_TOLERANCE_MS = 0.03
 // bar reportedly travelled two metres in a squat, the scale is wrong — no
 // judgement about the lifter required.
 
-/** Generous per-lift bar travel in metres. Wide on purpose: this catches scale errors, not technique. */
+/** Generous per-lift bar travel in metres, for when the athlete's height is unknown. */
 export const ROM_RANGE: Partial<Record<VbtLift, { min: number; max: number }>> = {
   'back-squat': { min: 0.25, max: 1.0 },
   'front-squat': { min: 0.25, max: 1.0 },
@@ -151,26 +151,98 @@ export const ROM_RANGE: Partial<Record<VbtLift, { min: number; max: number }>> =
   'overhead-press': { min: 0.25, max: 0.95 },
 }
 
+/**
+ * Bar travel as a fraction of standing height.
+ *
+ * Rules of thumb, not measurements — which is why each carries a band rather
+ * than only a midpoint, and why the band is what the check uses. Two lifters of
+ * the same height with different femur lengths squat different distances, and
+ * depth, stance and grip move all of these.
+ *
+ * They predict unevenly, and the bands say so:
+ *   deadlift  — best. The bar starts at a fixed height and finishes at the hip.
+ *   squat     — decent, though depth and femur length move it.
+ *   bench     — weakest. Arch, chest depth and grip width matter more than
+ *               stature, so its band is deliberately the widest relative to
+ *               its midpoint.
+ */
+export const ROM_PER_HEIGHT: Partial<Record<VbtLift, { mid: number; min: number; max: number }>> = {
+  'back-squat': { mid: 0.30, min: 0.20, max: 0.40 },
+  'front-squat': { mid: 0.30, min: 0.20, max: 0.40 },
+  'bench-press': { mid: 0.22, min: 0.13, max: 0.30 },
+  'deadlift-conventional': { mid: 0.38, min: 0.30, max: 0.46 },
+  'deadlift-sumo': { mid: 0.32, min: 0.25, max: 0.40 },
+  'deadlift-trapbar': { mid: 0.36, min: 0.28, max: 0.44 },
+  'barbell-row': { mid: 0.22, min: 0.12, max: 0.32 },
+  'overhead-press': { mid: 0.28, min: 0.20, max: 0.36 },
+}
+
 export interface ScaleCheck {
   /** How far off the nearest plausible bound the measurement is, as a ratio. */
   factor: number
   measuredM: number
   expected: { min: number; max: number }
+  /** Best single guess at the true travel. Only present when height is known. */
+  expectedM: number | null
+  /** What the scale should probably be multiplied by. Null without a height. */
+  suggestedCorrection: number | null
+  /** Whether the athlete's height narrowed the band, so the UI can say so. */
+  usedHeight: boolean
   verdict: 'ok' | 'suspect'
 }
 
 /**
  * Sanity-checks the plate calibration against the range of motion it produced.
  *
- * Returns null when there is nothing to check — no calibration, no reps, or a
- * lift with no published travel to compare against. A null is "unknown", never
- * "fine": the caller must not treat it as a pass.
+ * The plate stays the primary reference — it sits in the bar's own plane, so it
+ * suffers least from perspective. This is the second opinion, and it exists
+ * because nothing checked the first one: a mis-drawn line rescales every
+ * reading, velocity scales with the error, and e1RM divides by a percentage
+ * derived from velocity, so the error grows rather than passing through.
+ *
+ * Range of motion is checkable in a way velocity is not, because a barbell lift
+ * moves the bar a distance anatomy decides. With the athlete's height that band
+ * tightens a long way — a 180 cm lifter's squat is about 54 cm, not "somewhere
+ * between 25 and 100" — which is what turns this from catching only absurdities
+ * into catching a 1.4x mistake.
+ *
+ * Returns null when there is nothing to check. A null is "unknown", never
+ * "fine": callers must not treat it as a pass.
  */
-export function checkScale(lift: VbtLift, romM: number | null | undefined): ScaleCheck | null {
-  const expected = ROM_RANGE[lift]
-  if (!expected || romM == null || !Number.isFinite(romM) || romM <= 0) return null
-  const factor = romM > expected.max ? romM / expected.max : romM < expected.min ? expected.min / romM : 1
-  return { factor, measuredM: romM, expected, verdict: factor > 1 ? 'suspect' : 'ok' }
+export function checkScale(
+  lift: VbtLift,
+  romM: number | null | undefined,
+  heightCm?: number | null,
+): ScaleCheck | null {
+  if (romM == null || !Number.isFinite(romM) || romM <= 0) return null
+
+  const ratio = ROM_PER_HEIGHT[lift]
+  const usableHeight =
+    heightCm != null && Number.isFinite(heightCm) && heightCm >= 120 && heightCm <= 230
+
+  const expected =
+    usableHeight && ratio
+      ? { min: (heightCm! / 100) * ratio.min, max: (heightCm! / 100) * ratio.max }
+      : ROM_RANGE[lift]
+  if (!expected) return null
+
+  const expectedM = usableHeight && ratio ? (heightCm! / 100) * ratio.mid : null
+
+  const factor =
+    romM > expected.max ? romM / expected.max : romM < expected.min ? expected.min / romM : 1
+
+  return {
+    factor,
+    measuredM: romM,
+    expected,
+    expectedM,
+    // Only offered against the midpoint, and only when height is known: without
+    // one there is no defensible number to scale towards, and a correction the
+    // coach cannot sanity-check is worse than no correction at all.
+    suggestedCorrection: expectedM != null && factor > 1 ? expectedM / romM : null,
+    usedHeight: usableHeight && !!ratio,
+    verdict: factor > 1 ? 'suspect' : 'ok',
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +375,21 @@ export function resolveAnchors(
     (a) => Number.isFinite(a.rpe) && Number.isFinite(a.velocity) && a.velocity > 0,
   )
   const distinctRpe = new Set(usable.map((a) => a.rpe)).size
-  if (usable.length >= 3 && distinctRpe >= 2) return { anchors: usable, source: 'personal' }
+
+  // A personal chart has to slope the right way to be a chart at all: harder
+  // effort means a slower bar, so velocity must FALL as RPE rises. Three sets
+  // that happen to slope upwards are not a steeper truth, they are a set of
+  // mislabelled anchors — and the chart built from them reads a 0.09 m/s grind
+  // as "RPE 5, easy, add load", which is the exact opposite of what happened.
+  //
+  // The same rule already guards the load-velocity profile as 'positive-slope'.
+  // This is that rule one level down, and the fallback is the published table
+  // rather than nothing, because a population chart beats an inverted personal
+  // one every time.
+  const fit = usable.length >= 3 && distinctRpe >= 2 ? fitLine(
+    usable.map((a) => ({ x: a.rpe, y: a.velocity })),
+  ) : null
+  if (fit && fit.slope < 0) return { anchors: usable, source: 'personal' }
 
   const published = LRV_ANCHORS[lift]
   return published ? { anchors: published, source: 'published' } : null

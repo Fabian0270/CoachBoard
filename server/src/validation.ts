@@ -16,6 +16,27 @@ const optionalIsoDate = z.preprocess(emptyToNull, isoDate.nullable().optional())
 const optionalFocus = z.preprocess(emptyToNull, focusEnum.nullable().optional())
 const optionalEmail = z.preprocess(emptyToNull, z.email().max(200).nullable().optional())
 
+/**
+ * Standing height in whole centimetres.
+ *
+ * Bounded because bar-path uses it to judge whether the plate scale is right, so
+ * a typo here would quietly discredit a correct calibration. The range covers
+ * every plausible adult lifter and rejects the common slips — a height entered
+ * in metres (1.8), in inches (71), or with a digit dropped.
+ */
+const optionalHeightCm = z.preprocess(
+  // The athlete form posts every field as a string, so a numeric one arrives as
+  // "180". Coerced here rather than at the one call site, so a future caller
+  // cannot reintroduce a 400 that reads to the coach as "saving failed".
+  (v) => {
+    const emptied = emptyToNull(v)
+    if (typeof emptied !== 'string') return emptied
+    const n = Number(emptied)
+    return Number.isFinite(n) ? n : emptied
+  },
+  z.number().int().min(120).max(230).nullable().optional(),
+)
+
 const dateRangeValid = (data: { start_date?: string | null; end_date?: string | null }) =>
   !data.start_date || !data.end_date || data.start_date <= data.end_date
 const dateRangeIssue = { message: 'end_date must be on or after start_date', path: ['end_date'] }
@@ -27,6 +48,7 @@ export const schemas = {
       email: optionalEmail,
       sport: optionalString(100),
       weight_class: optionalString(20),
+      height_cm: optionalHeightCm,
       date_of_birth: optionalIsoDate,
       notes: optionalString(2000),
       // Set when creating a minimal owner for a historical back-catalogue import.
@@ -37,6 +59,7 @@ export const schemas = {
       email: optionalEmail,
       sport: optionalString(100),
       weight_class: optionalString(20),
+      height_cm: optionalHeightCm,
       date_of_birth: optionalIsoDate,
       notes: optionalString(2000),
     }),

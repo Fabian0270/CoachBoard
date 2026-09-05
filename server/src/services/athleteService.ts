@@ -18,6 +18,7 @@ export async function createAthlete(data: {
   email?: string | null
   sport?: string | null
   weight_class?: string | null
+  height_cm?: number | null
   date_of_birth?: string | null
   notes?: string | null
   archived?: boolean
@@ -31,6 +32,7 @@ export async function createAthlete(data: {
       email: data.email ?? null,
       sport: data.sport ?? null,
       weight_class: data.weight_class ?? null,
+      height_cm: data.height_cm ?? null,
       date_of_birth: data.date_of_birth ?? null,
       notes: data.notes ?? null,
       archived: data.archived ? 1 : 0,
@@ -48,6 +50,7 @@ export async function updateAthlete(
     email?: string | null
     sport?: string | null
     weight_class?: string | null
+  height_cm?: number | null
     date_of_birth?: string | null
     notes?: string | null
   },
@@ -59,6 +62,7 @@ export async function updateAthlete(
       ...(data.email !== undefined ? { email: data.email ?? null } : {}),
       ...(data.sport !== undefined ? { sport: data.sport ?? null } : {}),
       ...(data.weight_class !== undefined ? { weight_class: data.weight_class ?? null } : {}),
+      ...(data.height_cm !== undefined ? { height_cm: data.height_cm ?? null } : {}),
       ...(data.date_of_birth !== undefined ? { date_of_birth: data.date_of_birth ?? null } : {}),
       ...(data.notes !== undefined ? { notes: data.notes ?? null } : {}),
       updated_at: new Date().toISOString(),

@@ -144,3 +144,49 @@ describe('discord_media gains the Feature 11a thumbnail columns', () => {
     expect(updated?.duration_ms).toBe(5000)
   })
 })
+
+describe('athletes.height_cm migration', () => {
+  it('adds the column to an existing roster without disturbing it', async () => {
+    // A pre-feature athletes table: everything the old code wrote, nothing more.
+    const legacyPath = join(dir, 'athletes-legacy.sqlite')
+    const raw = openSqlite(legacyPath)
+    raw.exec(`
+      CREATE TABLE athletes (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT,
+        sport TEXT,
+        weight_class TEXT,
+        date_of_birth TEXT,
+        notes TEXT,
+        archived INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO athletes (id, name, email, sport, weight_class, created_at, updated_at)
+      VALUES ('a1', 'Fabian Olsson', 'f@example.com', 'Powerlifting', '105',
+              '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    `)
+    const before = raw.prepare('PRAGMA table_info(athletes)').all() as { name: string }[]
+    expect(before.map((c) => c.name)).not.toContain('height_cm')
+    raw.close()
+
+    await initializeDatabase(legacyPath)
+    const db = getDb()
+
+    const cols = await sql<{ name: string }>`PRAGMA table_info(athletes)`.execute(db)
+    expect(cols.rows.map((c) => c.name)).toContain('height_cm')
+
+    // The existing athlete survives untouched, with the new column empty —
+    // height is optional, and an unknown height must not become a wrong one.
+    const row = await db.selectFrom('athletes').selectAll().where('id', '=', 'a1').executeTakeFirst()
+    expect(row?.name).toBe('Fabian Olsson')
+    expect(row?.weight_class).toBe('105')
+    expect(row?.height_cm).toBeNull()
+
+    // And it is writable, so the athlete editor has somewhere to put a height.
+    await db.updateTable('athletes').set({ height_cm: 180 }).where('id', '=', 'a1').execute()
+    const updated = await db.selectFrom('athletes').selectAll().where('id', '=', 'a1').executeTakeFirst()
+    expect(updated?.height_cm).toBe(180)
+  })
+})

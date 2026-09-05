@@ -474,12 +474,29 @@ export interface SaveVideoAnalysisInput extends SetContext {
   notes: string | null
 }
 
-/** Standard competition and training plate diameters. */
+/**
+ * Plate diameters to calibrate against, largest first.
+ *
+ * Named by the plate the coach is looking at rather than by a bare number,
+ * because picking the wrong one silently rescales every reading downstream and
+ * "450 mm" is not what anyone sees when they look at a loaded bar.
+ *
+ * The useful fact for powerlifting: an IPF 25 kg and an IPF 20 kg are BOTH
+ * 450 mm. They differ in thickness, not diameter (the Technical Rulebook caps
+ * the largest disc at 450 mm), so the biggest disc on a competition bar is
+ * 450 mm whichever of the two it is — and the biggest disc is the one whose
+ * edge is visible to click. Standard training bumpers are also 450 mm.
+ *
+ * Verified against Eleiko's IPF competition plate data sheets. The smaller
+ * competition discs are deliberately absent: their diameters could not be
+ * verified from a primary source, and they are never the outermost silhouette
+ * on a loaded bar anyway, so they are not what a coach would measure across.
+ */
 export const PLATE_DIAMETERS_MM = [
-  { label: '450 mm — competition', value: 450 },
-  { label: '400 mm', value: 400 },
-  { label: '350 mm', value: 350 },
-  { label: '325 mm', value: 325 },
+  { label: '450 mm — IPF 25 kg or 20 kg, or a standard bumper', value: 450 },
+  { label: '400 mm — smaller bumper', value: 400 },
+  { label: '350 mm — training plate', value: 350 },
+  { label: '325 mm — training plate', value: 325 },
 ] as const
 
 /**

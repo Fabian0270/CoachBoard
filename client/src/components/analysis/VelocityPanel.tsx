@@ -111,6 +111,8 @@ interface Props {
   reps: RepMetrics[]
   calibrated: boolean
   athleteName: string | null
+  /** Tightens the scale check: bar travel scales with stature. Null is fine. */
+  athleteHeightCm?: number | null
   /** Every anchor for this lift, this set included — resolved by the page so its
    *  rep table and this panel never disagree about the same rep. */
   anchors: LrvAnchor[]
@@ -130,6 +132,7 @@ export default function VelocityPanel({
   reps,
   calibrated,
   athleteName,
+  athleteHeightCm,
   anchors: allAnchors,
   savedPoints,
   maxes,
@@ -248,8 +251,8 @@ export default function VelocityPanel({
       .filter((m): m is number => m != null && Number.isFinite(m) && m > 0)
       .sort((a, b) => a - b)
     if (roms.length === 0) return null
-    return checkScale(lift, roms[Math.floor(roms.length / 2)])
-  }, [lift, trusted])
+    return checkScale(lift, roms[Math.floor(roms.length / 2)], athleteHeightCm)
+  }, [lift, trusted, athleteHeightCm])
 
   /**
    * What the coach counted, against what survived tracking.
@@ -479,13 +482,23 @@ export default function VelocityPanel({
                 <p className="mt-2 border-t pt-2 text-sm text-destructive">
                   <span className="font-medium">Check the plate scale.</span>{' '}
                   <span>
-                    These reps measure {Math.round(scale.measuredM * 100)} cm of bar travel, where
-                    this lift is normally {Math.round(scale.expected.min * 100)}–
-                    {Math.round(scale.expected.max * 100)} cm. Every speed and estimate below is
-                    off by roughly the same factor
+                    These reps measure {Math.round(scale.measuredM * 100)} cm of bar travel, where{' '}
+                    {scale.usedHeight && athleteName
+                      ? `${athleteName} should be around ${Math.round(scale.expectedM! * 100)} cm`
+                      : `this lift is normally ${Math.round(scale.expected.min * 100)}–${Math.round(scale.expected.max * 100)} cm`}
+                    . Every speed and estimate below is off by roughly the same factor
                     {scale.factor >= 1.3 ? ` (about ${scale.factor.toFixed(1)}×)` : ''}, because
                     they are all derived from that measurement.
                   </span>
+                  {/* Without a height there is no defensible number to scale
+                      towards, so no correction is offered rather than a made-up
+                      one the coach cannot sanity-check. */}
+                  {!scale.usedHeight && (
+                    <span className="block text-muted-foreground">
+                      Add {athleteName ?? 'this athlete'}&rsquo;s height on their page and this
+                      check gets much tighter — bar travel scales with build.
+                    </span>
+                  )}
                   {onSetScale && (
                     <button
                       onClick={onSetScale}
