@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { pictureRect } from 'coachboard-shared/videoAnalysis'
 import type { Sample } from './tracker.core'
 
 /** A point in ORIGINAL video pixels. Everything the coach sees is display
@@ -81,6 +82,32 @@ export default function AnalysisStage({
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const frameRef = useRef<number | null>(null)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const [fullscreen, setFullscreen] = useState(false)
+
+  /**
+   * The real Fullscreen API, not a fixed-position stand-in.
+   *
+   * A `position: fixed` overlay would still sit inside Layout's
+   * `h-screen overflow-hidden` root and under the sidebar; only the top layer
+   * escapes both. Deliberately NOT gated on `disabled`, or a saved analysis —
+   * which is always disabled — could never be viewed fullscreen, and that is
+   * the main place a coach wants it.
+   */
+  const toggleFullscreen = useCallback(() => {
+    const wrap = wrapRef.current
+    if (!wrap) return
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
+    else void wrap.requestFullscreen().catch(() => {})
+  }, [])
+
+  // Escape and the browser's own exit both bypass our handler, so the flag
+  // follows the document rather than our own call.
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === wrapRef.current)
+    document.addEventListener('fullscreenchange', sync)
+    return () => document.removeEventListener('fullscreenchange', sync)
+  }, [])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -92,10 +119,18 @@ export default function AnalysisStage({
       canvas.width = Math.round(rect.width)
       canvas.height = Math.round(rect.height)
     }
-    const scale = rect.width / video.videoWidth
+    // The picture is not always the element. In fullscreen the element becomes
+    // the whole screen and the clip letterboxes inside it, so the overlay has to
+    // be drawn against the picture's own box or the path drifts off the bar.
+    const picture = pictureRect(rect.width, rect.height, video.videoWidth, video.videoHeight)
+    const { scale } = picture
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.clearRect(0, 0, canvas.width, canvas.height)
+    // Origin at the picture's top-left, so every existing `x * scale` below
+    // stays correct without threading the offset through each one.
+    ctx.save()
+    ctx.translate(picture.left, picture.top)
 
     // Finished path if there is one, otherwise whatever tracking has produced
     // so far — so the line grows as the clip plays.
@@ -185,6 +220,7 @@ export default function AnalysisStage({
     // No search-box outline. The circle already shows where the tracker is
     // looking and the +/- buttons change its size, so the extra rectangle only
     // added clutter over the lift.
+    ctx.restore()
   }, [samples, seed, videoRef, color, calibration, livePathRef])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
@@ -203,37 +239,71 @@ export default function AnalysisStage({
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const video = videoRef.current
     if (!video || !video.videoWidth || disabled) return
+    // The second click of a double-click is the fullscreen gesture, not a seed.
+    // Without this, going fullscreen also drops a tracking point or a
+    // calibration endpoint wherever the coach happened to double-click.
+    if (e.detail > 1) return
     const rect = video.getBoundingClientRect()
-    const scale = video.videoWidth / rect.width
-    const point = { x: (e.clientX - rect.left) * scale, y: (e.clientY - rect.top) * scale }
+    const picture = pictureRect(rect.width, rect.height, video.videoWidth, video.videoHeight)
+    // Inverse of draw(): out of the letterboxed picture, back to video pixels.
+    const point = {
+      x: (e.clientX - rect.left - picture.left) / picture.scale,
+      y: (e.clientY - rect.top - picture.top) / picture.scale,
+    }
+    // A click in the letterbox bars is not on the lift.
+    if (point.x < 0 || point.y < 0 || point.x > video.videoWidth || point.y > video.videoHeight) {
+      return
+    }
     if (mode === 'calibrate') onCalibratePoint(point)
     else onPlaceSeed(point)
   }
 
   return (
-    <div className="flex justify-center bg-black/90">
+    <div className="flex items-center justify-center bg-black/90">
       {/* Shrink-wraps the video so the overlay's origin is the video's own
           top-left, not the container's — otherwise a portrait clip in a wide
-          panel puts every drawn point off to one side. */}
-      <div className="relative">
+          panel puts every drawn point off to one side.
+          This is also the element that goes fullscreen: the canvas is a
+          descendant, so it travels into the top layer with the video. Sending
+          the <video> itself would leave the overlay behind, which is the whole
+          bug — the path disappeared exactly when the coach wanted a closer look. */}
+      <div
+        ref={wrapRef}
+        onDoubleClick={toggleFullscreen}
+        className={
+          fullscreen
+            ? 'group relative flex h-full w-full items-center justify-center bg-black'
+            : 'group relative'
+        }
+      >
         <video
           ref={videoRef}
           src={src}
           controls
           preload="metadata"
           playsInline
-          className="block max-h-[62vh] w-auto"
+          // 62vh keeps the panel below the fold in the page; in fullscreen it
+          // would cap the picture at 62% of the screen for no reason.
+          className={fullscreen ? 'block max-h-screen w-auto' : 'block max-h-[62vh] w-auto'}
           onLoadedMetadata={(e) => onLoadedMetadata(e.currentTarget)}
           onTimeUpdate={(e) => onTimeUpdate(e.currentTarget.currentTime)}
         />
         {/* Click target stops short of the native controls, so play and scrub
-            keep working while the frame itself is clickable. */}
+            keep working while the frame itself is clickable. The bar is taller
+            in fullscreen, so the carve-out grows with it. */}
         <div
           onClick={handleClick}
-          className={`absolute inset-x-0 top-0 bottom-12 ${disabled ? '' : 'cursor-crosshair'}`}
+          className={`absolute inset-x-0 top-0 ${fullscreen ? 'bottom-20' : 'bottom-12'} ${
+            disabled ? '' : 'cursor-crosshair'
+          }`}
         >
           <canvas ref={canvasRef} className="pointer-events-none absolute left-0 top-0" />
         </div>
+        {!fullscreen && (
+          <span className="pointer-events-none absolute right-2 top-2 rounded bg-black/60 px-2 py-1 text-[11px] text-white/80 opacity-0 transition-opacity group-hover:opacity-100">
+            Double-click for fullscreen
+          </span>
+        )}
       </div>
     </div>
   )

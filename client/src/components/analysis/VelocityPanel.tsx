@@ -275,9 +275,12 @@ export default function VelocityPanel({
 
   const setLift = (next: VbtLift) => {
     rememberLift(next)
-    onChange({ ...value, lift: next })
-    // The MVT belongs to a lift, so a leftover override from the previous one
-    // would be silently wrong.
+    // Both overrides below belong to a LIFT, so a leftover from the previous one
+    // is silently wrong. The metric was the one that got missed: picking "mean"
+    // on a squat and then switching to bench kept reading bench off the mean,
+    // which is the exact case defaultVelocityMetric exists to prevent. Null
+    // means "follow the lift's default", so bench goes back to peak.
+    onChange({ ...value, lift: next, metric: null })
     setMvtText('')
   }
 

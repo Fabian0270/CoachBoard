@@ -499,6 +499,53 @@ export const PLATE_DIAMETERS_MM = [
   { label: '325 mm — training plate', value: 325 },
 ] as const
 
+/** Where the picture actually sits inside a video element's box, in CSS pixels. */
+export interface PictureRect {
+  left: number
+  top: number
+  width: number
+  height: number
+  /** Display pixels per video pixel. */
+  scale: number
+}
+
+/**
+ * The letterboxed picture inside a `<video>` element.
+ *
+ * A video element paints with `object-fit: contain`, so the picture only fills
+ * the whole element when their aspect ratios happen to match. Normally the
+ * difference is invisible, because the stage sizes the element to the clip. In
+ * FULLSCREEN it is not: the element becomes the whole screen and a portrait lift
+ * gets wide black bars either side.
+ *
+ * That matters because the overlay is drawn in display pixels derived from the
+ * element's own rect. Taking `rect.width / videoWidth` as the scale silently
+ * assumes no letterboxing, so in fullscreen every drawn point stretches and
+ * shifts — the path drifts off the bar, which reads as a tracking failure rather
+ * than a display bug. Same arithmetic in reverse for mapping a click back.
+ */
+export function pictureRect(
+  elementWidth: number,
+  elementHeight: number,
+  videoWidth: number,
+  videoHeight: number,
+): PictureRect {
+  if (!(videoWidth > 0) || !(videoHeight > 0) || !(elementWidth > 0) || !(elementHeight > 0)) {
+    return { left: 0, top: 0, width: elementWidth, height: elementHeight, scale: 1 }
+  }
+  // contain: whichever axis runs out first decides the scale.
+  const scale = Math.min(elementWidth / videoWidth, elementHeight / videoHeight)
+  const width = videoWidth * scale
+  const height = videoHeight * scale
+  return {
+    left: (elementWidth - width) / 2,
+    top: (elementHeight - height) / 2,
+    width,
+    height,
+    scale,
+  }
+}
+
 /**
  * Pixels per metre, from a plate of known diameter measured on screen.
  *
