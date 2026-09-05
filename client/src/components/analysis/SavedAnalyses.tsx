@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LineChart, Trash2, UserPlus } from 'lucide-react'
+import { Columns2, LineChart, Trash2, UserPlus } from 'lucide-react'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
 import { isVbtLift, lastRepVelocity, liftLabel } from 'coachboard-shared/vbt'
 import { Button } from '../ui/button'
@@ -89,7 +89,18 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="space-y-2">
+      {/* Two saved sets is the point at which comparing them becomes a question
+          the coach can actually ask. */}
+      {rows.length > 1 && (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={() => navigate('/analysis/compare')}>
+            <Columns2 className="h-4 w-4" />
+            Compare two
+          </Button>
+        </div>
+      )}
+      <div className="overflow-x-auto">
       <table className="w-full min-w-[38rem] text-sm">
         <thead>
           <tr className="border-b text-left text-muted-foreground">
@@ -167,6 +178,7 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
           })}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }

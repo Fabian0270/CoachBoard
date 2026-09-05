@@ -26,13 +26,11 @@ import { useTrackerColor } from '../components/analysis/trackerColor'
 // ---------------------------------------------------------------------------
 // A saved analysis, reopened.
 //
-// Rebuilt entirely from the stored row — path, calibration, per-rep metrics —
-// so it works for a locally imported clip whose video was never uploaded, and
-// for a Discord clip whose video has since been purged by retention.
-//
-// The coach can point it back at the original file if they still have it, which
-// replays the path over the footage without the video ever being copied
-// anywhere. That keeps the promise the save prompt makes.
+// Everything a coach reads here is rebuilt from the stored row — path,
+// calibration, per-rep metrics — so the analysis survives whatever happened to
+// the footage. Saving now keeps the video as well, so the usual case replays it
+// straight away; the re-pick input below is what rescues the rows saved before
+// that, and any whose file has since gone missing.
 // ---------------------------------------------------------------------------
 
 export default function SavedAnalysis() {

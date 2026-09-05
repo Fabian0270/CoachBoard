@@ -19,6 +19,7 @@ import Settings from './pages/Settings'
 import DiscordInbox from './pages/DiscordInbox'
 import VideoAnalysis from './pages/VideoAnalysis'
 import SavedAnalysis from './pages/SavedAnalysis'
+import CompareAnalyses from './pages/CompareAnalyses'
 
 export default function App() {
   return (
@@ -45,6 +46,8 @@ export default function App() {
             <Route path="/styles" element={<ExportStyles />} />
             <Route path="/discord-inbox" element={<DiscordInbox />} />
             <Route path="/analysis" element={<VideoAnalysis />} />
+            {/* Before /analysis/:mediaId, or the param would swallow it. */}
+            <Route path="/analysis/compare" element={<CompareAnalyses />} />
             <Route path="/analysis/saved/:id" element={<SavedAnalysis />} />
             <Route path="/analysis/:mediaId" element={<VideoAnalysis />} />
             <Route path="/settings" element={<Settings />} />
