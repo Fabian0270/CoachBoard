@@ -11,6 +11,7 @@ import {
   createAthleteMax,
   deleteAthleteMax,
 } from '../services/athleteService.js'
+import { getAthleteMvts, setAthleteMvt } from '../services/athleteMvtService.js'
 import { fail } from '../lib/httpError.js'
 
 const router = Router()
@@ -74,6 +75,36 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
 // ---------------------------------------------------------------------------
 // Maxes (PRs)
 // ---------------------------------------------------------------------------
+
+/**
+ * The athlete's own measured 1RM bar speeds, keyed by lift.
+ *
+ * Returned as a map rather than a list: the bar-path panel needs exactly one
+ * lookup by lift, and a list would make every caller do the same reduce.
+ */
+router.get('/:id/mvt', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const athlete = await findAthleteById(String(req.params.id))
+    if (!athlete) { res.status(404).json({ error: 'Athlete not found' }); return }
+    res.json(await getAthleteMvts(athlete.id))
+  } catch (err) {
+    fail(res, 'Failed to fetch 1RM velocities', err)
+  }
+})
+
+router.put('/:id/mvt', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.athleteMvt.set, req.body, res)
+  if (!body) return
+  try {
+    const athlete = await findAthleteById(String(req.params.id))
+    if (!athlete) { res.status(404).json({ error: 'Athlete not found' }); return }
+    await setAthleteMvt(athlete.id, body.lift, body.velocity ?? null)
+    res.json(await getAthleteMvts(athlete.id))
+  } catch (err) {
+    // A rejected value is the coach's typo, not a server fault.
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid velocity' })
+  }
+})
 
 router.get('/:id/maxes', async (req: Request, res: Response): Promise<void> => {
   try {

@@ -17,9 +17,13 @@ import {
 // for tens of seconds — no spinner, no paint, nothing. In a worker the page
 // stays live and can honestly say it is still preparing.
 //
-// It must be a CLASSIC worker, not a module one: importScripts does not exist in
-// module workers, and opencv.js is an Emscripten script rather than an ES
-// module. Vite's default worker.format ('iife') gives us that.
+// opencv.js is an Emscripten script, not an ES module, so it has to be run
+// rather than imported. In the BUILD that is importScripts, because Vite's
+// default worker.format ('iife') produces a classic worker. Vite's DEV server
+// serves every worker as a module worker instead, where importScripts does not
+// exist at all — so loadCv handles both. That difference stayed invisible for a
+// long time because `npm run dev` was silently serving the built bundle; the
+// moment dev mode started working for real, tracking stopped loading.
 //
 // Two build-specific quirks live in this file, each diagnosed by running the
 // real thing rather than reading the config, and each invisible until it was:
@@ -141,30 +145,54 @@ function loadCvWrapped(): Promise<{ value: unknown }> {
 
     patchDataUriFetch()
 
-    try {
-      // Served straight from client/public — never bundled, never from a CDN.
-      self.importScripts('/vendor/opencv/opencv.js')
-    } catch (err) {
-      fail(new Error(`Could not load opencv.js: ${(err as Error).message}`))
-      return
-    }
+    runOpencvScript().then(() => {
+      const loaded = self.cv as CvModule | undefined
+      if (!loaded) {
+        fail(new Error('opencv.js did not define cv'))
+        return
+      }
 
-    const loaded = self.cv as CvModule | undefined
-    if (!loaded) {
-      fail(new Error('opencv.js did not define cv'))
-      return
-    }
-
-    if (typeof loaded.then === 'function') {
-      // The path this build actually takes — see the class doc comment above.
-      loaded.then((module) => succeed(module as CvModule), fail)
-    } else if (typeof loaded.calcOpticalFlowPyrLK === 'function') {
-      succeed(loaded) // already initialised
-    } else {
-      // Fallback for a build that uses the documented hook instead.
-      loaded.onRuntimeInitialized = () => succeed(self.cv as CvModule)
-    }
+      if (typeof loaded.then === 'function') {
+        // The path this build actually takes — see the class doc comment above.
+        loaded.then((module) => succeed(module as CvModule), fail)
+      } else if (typeof loaded.calcOpticalFlowPyrLK === 'function') {
+        succeed(loaded) // already initialised
+      } else {
+        // Fallback for a build that uses the documented hook instead.
+        loaded.onRuntimeInitialized = () => succeed(self.cv as CvModule)
+      }
+    }, fail)
   })
+}
+
+/**
+ * Runs the vendored opencv.js in the worker's global scope.
+ *
+ * Served straight from client/public — never bundled, never from a CDN.
+ *
+ * Two ways in, because the two builds give us two kinds of worker. A classic
+ * worker (the production build) has importScripts. A module worker (Vite's dev
+ * server) does not have it at all, so the script is fetched and evaluated
+ * instead. Indirect eval is deliberate: a direct one would evaluate in this
+ * function's scope, and an Emscripten bundle that assigns to `self.cv` would
+ * quietly define nothing. The app's CSP already allows 'unsafe-eval', which is
+ * what opencv.js needs to compile its wasm regardless.
+ */
+async function runOpencvScript(): Promise<void> {
+  const url = '/vendor/opencv/opencv.js'
+  try {
+    // Attempted rather than feature-detected: a module worker still EXPOSES
+    // importScripts and throws only when it is called ("Module scripts don't
+    // support importScripts()"), so `typeof self.importScripts === 'function'`
+    // is true in exactly the case it needs to be false.
+    self.importScripts(url)
+    return
+  } catch {
+    /* module worker — fall through */
+  }
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Could not fetch opencv.js: HTTP ${res.status}`)
+  ;(0, eval)(await res.text())
 }
 
 /** The in-flight streaming track, if any. Only one runs at a time. */

@@ -97,6 +97,15 @@ export interface AthleteMaxTable {
   notes: string | null
 }
 
+/** One athlete's measured 1RM bar speed for one lift. See the CREATE below. */
+export interface AthleteMvtTable {
+  athlete_id: string
+  /** A `VbtLift` id. */
+  lift: string
+  velocity: number
+  updated_at: string
+}
+
 export interface PaymentTable {
   id: string
   athlete_id: string
@@ -257,6 +266,7 @@ export interface DB {
   exercises: ExerciseTable
   progress_records: ProgressRecordTable
   athlete_maxes: AthleteMaxTable
+  athlete_mvt: AthleteMvtTable
   payments: PaymentTable
   export_styles: ExportStyleTable
   discord_channels: DiscordChannelTable
@@ -487,6 +497,24 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   `.execute(_db)
 
   await sql`CREATE INDEX IF NOT EXISTS idx_athlete_maxes_athlete_id ON athlete_maxes(athlete_id)`.execute(_db)
+
+  // The velocity an athlete's bar actually moves at on a true 1RM, per lift.
+  //
+  // The published MVT band is a population figure, and the whole point of
+  // velocity-based training is that this number is personal — a coach who has
+  // measured it once should never retype it. CASCADE, unlike video_analyses:
+  // this is a property OF the athlete, not the coach's separate work about them,
+  // so it has no meaning once they are gone.
+  await sql`
+    CREATE TABLE IF NOT EXISTS athlete_mvt (
+      athlete_id TEXT NOT NULL,
+      lift TEXT NOT NULL,
+      velocity REAL NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (athlete_id, lift),
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+    )
+  `.execute(_db)
 
   await sql`
     CREATE TABLE IF NOT EXISTS payments (

@@ -164,6 +164,15 @@ export const schemas = {
     exerciseIds: z.array(z.string().uuid()).min(1).max(200),
   }),
 
+  athleteMvt: {
+    // A null velocity clears the stored value — "not measured" is a real state,
+    // and only it should fall back to the published band.
+    set: z.object({
+      lift: z.string().min(1).max(60),
+      velocity: z.number().positive().max(2).nullable().optional(),
+    }),
+  },
+
   athleteMax: {
     create: z.object({
       lift_name: z.string().min(1).max(100),

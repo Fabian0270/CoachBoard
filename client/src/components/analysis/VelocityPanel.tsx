@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Gauge, Ruler, TrendingDown, TriangleAlert } from 'lucide-react'
 import { RPE_VALUES } from 'coachboard-shared/rpe'
 import { looksMistracked, type RepMetrics } from 'coachboard-shared/videoAnalysis'
@@ -111,6 +111,8 @@ interface Props {
   reps: RepMetrics[]
   calibrated: boolean
   athleteName: string | null
+  /** Whose measured 1RM velocity to load and save. Null = nothing remembered. */
+  athleteId?: string | null
   /** Tightens the scale check: bar travel scales with stature. Null is fine. */
   athleteHeightCm?: number | null
   /** Every anchor for this lift, this set included — resolved by the page so its
@@ -132,6 +134,7 @@ export default function VelocityPanel({
   reps,
   calibrated,
   athleteName,
+  athleteId,
   athleteHeightCm,
   anchors: allAnchors,
   savedPoints,
@@ -182,6 +185,46 @@ export default function VelocityPanel({
   const shownRpe = reading ? effectiveRpe(reading, value.calledRpe) : 0
 
   const knownMax = useMemo(() => recordedMaxFor(lift, maxes), [lift, maxes])
+
+  /**
+   * The coach's own measured 1RM velocity for THIS athlete and THIS lift.
+   *
+   * The published band is a population figure and the personal number is the
+   * whole point of velocity-based training, so it is remembered rather than
+   * retyped on every clip. Keyed by athlete and lift together, because it is a
+   * property of the pair — a lifter's squat and bench do not share one.
+   */
+  useEffect(() => {
+    if (!athleteId) return
+    let cancelled = false
+    fetch(`/api/athletes/${athleteId}/mvt`)
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((byLift: Record<string, number>) => {
+        if (cancelled) return
+        const stored = byLift[lift]
+        // Only ever fills a blank. Overwriting what the coach is looking at
+        // because a fetch landed late would be worse than showing nothing.
+        setMvtText(stored != null ? String(stored) : '')
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [athleteId, lift])
+
+  const rememberMvt = useCallback(
+    async (text: string) => {
+      if (!athleteId) return
+      const parsed = text.trim() ? num(text) : null
+      const velocity = parsed != null && Number.isFinite(parsed) && parsed > 0 ? parsed : null
+      await fetch(`/api/athletes/${athleteId}/mvt`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lift, velocity }),
+      }).catch(() => {})
+    },
+    [athleteId, lift],
+  )
 
   const suggestedMvt = useMemo(() => defaultMvt(lift, allAnchors), [lift, allAnchors])
   const mvt = mvtText.trim() && Number.isFinite(num(mvtText)) ? num(mvtText) : suggestedMvt
@@ -281,6 +324,8 @@ export default function VelocityPanel({
     // which is the exact case defaultVelocityMetric exists to prevent. Null
     // means "follow the lift's default", so bench goes back to peak.
     onChange({ ...value, lift: next, metric: null })
+    // Cleared here for the no-athlete case; where there IS an athlete the load
+    // effect immediately replaces it with whatever was measured for the new lift.
     setMvtText('')
   }
 
@@ -606,6 +651,10 @@ export default function VelocityPanel({
                 <input
                   value={mvtText}
                   onChange={(e) => setMvtText(e.target.value)}
+                  // Saved on blur rather than per keystroke: "0.1" is a valid
+                  // prefix of "0.12", and storing every intermediate would
+                  // record numbers the coach never meant.
+                  onBlur={() => void rememberMvt(mvtText)}
                   placeholder={suggestedMvt ? suggestedMvt.toFixed(2) : '—'}
                   inputMode="decimal"
                   className="w-16 rounded-md border bg-background px-1.5 py-0.5 text-right text-xs"

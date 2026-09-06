@@ -106,3 +106,19 @@
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/*
+ * The bar-path stage hides the video's own fullscreen button.
+ *
+ * That button calls requestFullscreen on the <video> element, which by
+ * definition promotes only the video into the top layer — the overlay canvas is
+ * a sibling and stays behind, so the coach got a fullscreen lift with no bar
+ * path on it. Double-clicking fullscreens the wrapper instead, which takes the
+ * canvas with it. Leaving a control that produces a broken result is worse than
+ * removing it.
+ *
+ * Scoped to the stage so ordinary video playback elsewhere keeps its button.
+ */
+.stage-video::-webkit-media-controls-fullscreen-button {
+  display: none;
+}

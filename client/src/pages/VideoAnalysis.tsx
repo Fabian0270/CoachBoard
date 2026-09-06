@@ -999,6 +999,7 @@ export default function VideoAnalysis() {
                 reps={reps}
                 calibrated={pixelsPerMetre !== null}
                 athleteName={athleteName}
+                athleteId={athleteId}
                 athleteHeightCm={athleteHeightCm}
                 anchors={anchors}
                 savedPoints={savedPoints}

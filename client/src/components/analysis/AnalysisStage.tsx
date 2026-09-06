@@ -142,10 +142,23 @@ export default function AnalysisStage({
   // Escape and the browser's own exit both bypass our handler, so the flag
   // follows the document rather than our own call.
   useEffect(() => {
-    const sync = () => setFullscreen(document.fullscreenElement === wrapRef.current)
+    const sync = () => {
+      // If anything managed to fullscreen the VIDEO rather than the wrapper,
+      // the overlay is left behind — so hand it back to the wrapper. The native
+      // fullscreen button is hidden (see index.css) precisely because it does
+      // this, but the redirect stays as a net for any route that reaches it.
+      if (document.fullscreenElement && document.fullscreenElement === videoRef.current) {
+        void document
+          .exitFullscreen()
+          .then(() => wrapRef.current?.requestFullscreen())
+          .catch(() => {})
+        return
+      }
+      setFullscreen(document.fullscreenElement === wrapRef.current)
+    }
     document.addEventListener('fullscreenchange', sync)
     return () => document.removeEventListener('fullscreenchange', sync)
-  }, [])
+  }, [videoRef])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -334,7 +347,8 @@ export default function AnalysisStage({
           playsInline
           // 62vh keeps the panel below the fold in the page; in fullscreen it
           // would cap the picture at 62% of the screen for no reason.
-          className={fullscreen ? 'block max-h-screen w-auto' : 'block max-h-[62vh] w-auto'}
+          // stage-video hides the native fullscreen button — see index.css.
+          className={`stage-video block w-auto ${fullscreen ? 'max-h-screen' : 'max-h-[62vh]'}`}
           onLoadedMetadata={(e) => onLoadedMetadata(e.currentTarget)}
           onTimeUpdate={(e) => onTimeUpdate(e.currentTarget.currentTime)}
         />
