@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { initializeDatabase, getDb, closeDatabase } from '../db.js'
+import { initializeDatabase, getDb } from '../db.js'
 import { createAthlete } from './athleteService.js'
 import { getAthleteMvts, setAthleteMvt } from './athleteMvtService.js'
 
@@ -10,7 +10,6 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-mvt-'))
 
 afterAll(() => {
   try {
-    closeDatabase()
     fs.rmSync(dir, { recursive: true, force: true })
   } catch {
     /* best effort */
