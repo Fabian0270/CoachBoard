@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, FileVideo, LineChart } from 'lucide-react'
+import { ArrowLeft, FileVideo, LineChart, PersonStanding } from 'lucide-react'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
 import { pixelsPerMetreFromPlate } from 'coachboard-shared/videoAnalysis'
 import {
@@ -18,9 +18,19 @@ import {
   zoneFor,
   type VbtLift,
 } from 'coachboard-shared/vbt'
+import {
+  applyCorrections,
+  anglesAgainstBar,
+  frameAngles,
+  type PoseFrame,
+} from 'coachboard-shared/pose'
+import { analysePath } from 'coachboard-shared/videoAnalysis'
 import { Button } from '../components/ui/button'
+import { useToast } from '../components/ui/toast'
 import AnalysisStage from '../components/analysis/AnalysisStage'
 import PathPlot from '../components/analysis/PathPlot'
+import JointAngleChart from '../components/analysis/JointAngleChart'
+import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
 import { useTrackerColor } from '../components/analysis/trackerColor'
 import { useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
 
@@ -34,12 +44,25 @@ import { useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHisto
 // that, and any whose file has since gone missing.
 // ---------------------------------------------------------------------------
 
+/** Pixels per metre for a saved analysis, or null when it was never calibrated. */
+function analysisPixelsPerMetre(analysis: VideoAnalysisDto): number | null {
+  if (!analysis.calibration) return null
+  return pixelsPerMetreFromPlate(
+    Math.hypot(
+      analysis.calibration.b.x - analysis.calibration.a.x,
+      analysis.calibration.b.y - analysis.calibration.a.y,
+    ),
+    analysis.calibration.plateDiameterMm,
+  )
+}
+
 export default function SavedAnalysis() {
   const { id } = useParams()
   const navigate = useNavigate()
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const emptyLivePath = useRef<never[]>([])
   const [color] = useTrackerColor()
+  const toast = useToast()
 
   const [analysis, setAnalysis] = useState<VideoAnalysisDto | null>(null)
   const [missing, setMissing] = useState(false)
@@ -80,6 +103,90 @@ export default function SavedAnalysis() {
   const { anchors } = useVbtHistory(athleteId, lift, metric)
   const { byLift: mvtByLift } = useAthleteMvt(athleteId)
 
+  /**
+   * The stored skeleton, if this analysis has one.
+   *
+   * Fetched separately from the analysis, and only here — it is ~238 KB and the
+   * list view has no use for it, the same reasoning that keeps tracked paths out
+   * of list responses.
+   *
+   * `measured` and `corrections` are kept apart so a fix can be taken back
+   * without re-fetching, and so nothing ever writes an edit over the
+   * measurement. `poseRef` is what the overlay draws, and is a ref for the same
+   * reason it is on the live page.
+   */
+  const [pose, setPose] = useState<LoadedPose | null>(null)
+  const poseRef = useRef<PoseFrame[]>([])
+  const [showPose, setShowPose] = useState(true)
+
+  useEffect(() => {
+    if (!id) return
+    let cancelled = false
+    loadPose(id)
+      .then((loaded) => {
+        if (cancelled) return
+        setPose(loaded)
+        poseRef.current = loaded?.frames ?? []
+      })
+      // No skeleton is the ordinary case, and a failed fetch reads the same way:
+      // the bar path is what this page is for.
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [id])
+
+  /**
+   * Moves one landmark and keeps it.
+   *
+   * Applied locally first so the drag lands immediately, then persisted. The
+   * correction is layered over `measured` rather than written into it — the
+   * measurement stays exactly what the model produced.
+   */
+  const correctLandmark = useCallback(
+    async (frameIndex: number, landmark: number, x: number, y: number) => {
+      if (!id) return
+      setPose((prev) => {
+        if (!prev) return prev
+        const corrections = [
+          ...prev.corrections.filter(
+            (c) => c.frameIndex !== frameIndex || c.landmark !== landmark,
+          ),
+          { frameIndex, landmark, x, y },
+        ]
+        const next = { ...prev, corrections, frames: applyCorrections(prev.measured, corrections) }
+        poseRef.current = next.frames
+        return next
+      })
+      try {
+        await putCorrection(id, { frameIndex, landmark, x, y })
+      } catch {
+        toast.error('That correction could not be saved.')
+      }
+    },
+    [id, toast],
+  )
+
+  /**
+   * Joint angles beside the bar's own speed, on one time axis.
+   *
+   * Computed above the early returns because hooks cannot run after one, and
+   * derived rather than stored — angles are a function of the landmarks plus the
+   * corrections, like payment_end and unlike the cached per-rep metrics. Storing
+   * them would mean a coach's correction could leave a stale number behind.
+   */
+  const poseSeries = useMemo(() => {
+    if (!analysis || !pose || pose.frames.length === 0) return null
+    const scale = analysisPixelsPerMetre(analysis)
+    const { velocities } = analysePath(analysis.track ?? [], scale)
+    // verticalVelocity works in pixels; convert once here so the chart's axis
+    // and its unit label cannot disagree.
+    const inUnits = scale
+      ? velocities.map((v) => ({ t: v.t, vy: v.vy / scale }))
+      : velocities.map((v) => ({ t: v.t, vy: v.vy }))
+    return anglesAgainstBar(frameAngles(pose.frames), inUnits)
+  }, [analysis, pose])
+
   if (missing) {
     return (
       <div className="p-8">
@@ -93,15 +200,9 @@ export default function SavedAnalysis() {
   if (!analysis) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>
 
   const metrics = analysis.metrics ?? []
-  const pixelsPerMetre = analysis.calibration
-    ? pixelsPerMetreFromPlate(
-        Math.hypot(
-          analysis.calibration.b.x - analysis.calibration.a.x,
-          analysis.calibration.b.y - analysis.calibration.a.y,
-        ),
-        analysis.calibration.plateDiameterMm,
-      )
-    : null
+  // `lift` is declared above the early returns now — the pose hooks need it, and
+  // hooks cannot run after a conditional return.
+  const pixelsPerMetre = analysisPixelsPerMetre(analysis)
 
   const lastV = lastRepVelocity(metrics, metric)
   const bestV = metrics.length ? Math.max(...metrics.map((m) => readRep(m, metric) ?? 0)) : 0
@@ -171,9 +272,49 @@ export default function SavedAnalysis() {
           mode="seed"
           calibration={analysis.calibration}
           onCalibratePoint={() => {}}
+          poseRef={poseRef}
+          showPose={showPose}
+          onCorrectLandmark={correctLandmark}
         />
       ) : (
         <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} />
+      )}
+
+      {/* Only offered when there is a skeleton to show. A checkbox for something
+          this analysis does not have would just be a dead control. */}
+      {pose && pose.frames.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={showPose}
+              onChange={(e) => setShowPose(e.target.checked)}
+              className="h-3.5 w-3.5 accent-cyan-400"
+            />
+            <PersonStanding className="h-4 w-4 text-muted-foreground" />
+            Skeleton
+          </label>
+          {showPose && videoSrc && (
+            <span className="text-xs text-muted-foreground">
+              Drag a joint to correct it — the model&rsquo;s own reading is kept underneath.
+            </span>
+          )}
+          {pose.corrections.length > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {pose.corrections.length} correction{pose.corrections.length === 1 ? '' : 's'}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* The coaching payoff: what the body was doing when the bar stalled.
+          Both series already share a clock and a coordinate space, so there is
+          no alignment step — see anglesAgainstBar. */}
+      {poseSeries && poseSeries.length > 1 && (
+        <div className="space-y-2 rounded-md border p-4">
+          <h2 className="text-sm font-medium">Joint angles against the bar</h2>
+          <JointAngleChart series={poseSeries} calibrated={pixelsPerMetre !== null} />
+        </div>
       )}
 
       {/* Only when nothing plays. Analyses saved before videos were kept have no

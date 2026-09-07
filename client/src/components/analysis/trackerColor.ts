@@ -55,6 +55,41 @@ export function useTrackerColor(): [string, (color: string) => void] {
   return [color, setColor]
 }
 
+const POSE_STORAGE_KEY = 'coachboard-show-pose'
+
+/**
+ * Whether to run pose estimation alongside tracking, remembered across sessions.
+ *
+ * DEFAULTS OFF, unlike the colour above. Pose costs a 5.8 MB model download on
+ * first use and ~32 ms of CPU on every frame the tracker reads — real money for
+ * a coach who only wants the bar path, which is what this page was built for.
+ * Remembered because the coaches who do want it want it on every clip.
+ *
+ * It has to be decided BEFORE tracking starts: frames are read once, at playback
+ * speed, and the fan-out in captureFrames is set up at the start of that pass.
+ * Turning it on afterwards means tracking the clip again.
+ */
+export function useShowPose(): [boolean, (next: boolean) => void] {
+  const [show, setShowState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(POSE_STORAGE_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  const setShow = useCallback((next: boolean) => {
+    setShowState(next)
+    try {
+      localStorage.setItem(POSE_STORAGE_KEY, String(next))
+    } catch {
+      /* not worth surfacing */
+    }
+  }, [])
+
+  return [show, setShow]
+}
+
 /** Same colour at reduced opacity, for the dashed search box. */
 export function withAlpha(hex: string, alpha: number): string {
   const clean = hex.replace('#', '')

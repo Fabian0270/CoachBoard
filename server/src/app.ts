@@ -48,6 +48,18 @@ export function createApp(staticDir?: string, logPath?: string) {
 
   if (staticDir) {
     app.use(express.static(staticDir))
+
+    // A missing VENDORED asset must 404 rather than fall through to the SPA
+    // catch-all below. Same reasoning as the /api guard above, and it was found
+    // the expensive way: the packaged build excludes the MediaPipe files it does
+    // not load, and a request for one of the excluded ones came back
+    // `200 text/html, 1073 bytes` — index.html. A loader handed that does not
+    // report a missing file; it reports a corrupt one, from a URL that looks
+    // like it worked. Nothing under /vendor is ever a client route.
+    app.use('/vendor', (_req, res) => {
+      res.status(404).json({ error: 'Not found' })
+    })
+
     // Catch-all: serve index.html for any non-API path (HashRouter handles client routing)
     app.use((_req, res) => {
       res.sendFile(join(staticDir, 'index.html'))
