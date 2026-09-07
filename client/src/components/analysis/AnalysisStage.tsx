@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Maximize, Minimize } from 'lucide-react'
 import { pictureRect } from 'coachboard-shared/videoAnalysis'
 import { isDrawable, simplify, type Point, type Stroke } from './annotations'
 import type { Sample } from './tracker.core'
@@ -104,16 +105,12 @@ export default function AnalysisStage({
   const frameRef = useRef<number | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   /**
-   * The video's own box — the picture plus the browser's control bar, and
-   * nothing else.
-   *
-   * Everything drawn or clicked is positioned against THIS rather than the
-   * wrapper. On the page the two are the same box; in fullscreen the wrapper is
-   * the whole screen and the video is centred inside it, so anchoring to the
-   * wrapper put the overlay over the letterbox bars and, worse, laid the click
-   * layer over the control bar of a clip that did not fill the screen.
+   * The element the overlay is positioned INSIDE. Only its origin is used —
+   * every size comes from the video's own rect, measured each frame. See draw().
    */
   const boxRef = useRef<HTMLDivElement | null>(null)
+  /** The click and draw target, laid over the video by the draw loop. */
+  const layerRef = useRef<HTMLDivElement | null>(null)
   /** mediaTime of the frame the compositor last put on screen. */
   const presentedRef = useRef<number | null>(null)
   /**
@@ -166,31 +163,6 @@ export default function AnalysisStage({
   }, [videoRef, src])
 
   /**
-   * Leaves fullscreen completely, however many levels deep it is.
-   *
-   * Redirecting the video's own button leaves TWO elements on the fullscreen
-   * stack — the video, then the wrapper on top of it — and one exitFullscreen()
-   * pops only the top one. Measured, not assumed: a single exit lands back on
-   * the video being fullscreen, which is the stranded-overlay state this whole
-   * effect exists to avoid. Escape is fine on its own; the spec makes it a full
-   * exit, and Chromium does that.
-   */
-  const exitingRef = useRef(false)
-  const exitFullscreenFully = useCallback(async () => {
-    exitingRef.current = true
-    try {
-      // Bounded: a browser that refuses to exit must not spin here.
-      for (let i = 0; i < 4 && document.fullscreenElement; i++) {
-        await document.exitFullscreen()
-      }
-    } catch {
-      // Nothing better to do — the coach still has Escape.
-    } finally {
-      exitingRef.current = false
-    }
-  }, [])
-
-  /**
    * The real Fullscreen API, not a fixed-position stand-in.
    *
    * A `position: fixed` overlay would still sit inside Layout's
@@ -202,47 +174,19 @@ export default function AnalysisStage({
   const toggleFullscreen = useCallback(() => {
     const wrap = wrapRef.current
     if (!wrap) return
-    if (document.fullscreenElement) void exitFullscreenFully()
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
     else void wrap.requestFullscreen().catch(() => {})
-  }, [exitFullscreenFully])
+  }, [])
 
-  /**
-   * Whatever fullscreens the VIDEO is redirected up to the wrapper.
-   *
-   * The video's own button — and the Fullscreen item Chromium tucks into the ⋮
-   * menu when a narrow clip overflows its controls — both call
-   * requestFullscreen on the <video>, which promotes only the video and leaves
-   * the overlay canvas behind. Hiding the button never fixed that, because no
-   * CSS reaches the overflow menu.
-   *
-   * So the request is not blocked, it is followed: asking for the wrapper while
-   * the video is already fullscreen PUSHES it on top, and the canvas comes with
-   * it. Note this is not the exitFullscreen()-then-request pattern that was
-   * tried before and refused — Chromium blocks that one as a fullscreen loop.
-   * Nothing is exited here, and it resolves.
-   *
-   * Direction matters. Coming UP from nothing is the coach entering fullscreen,
-   * so redirect. Coming DOWN from the wrapper is the browser popping our own
-   * push as they leave — redirecting there would trap them in fullscreen — so
-   * finish the exit instead.
-   */
-  const previousRef = useRef<Element | null>(null)
+  // Escape and the browser's own exit both bypass our handler, so the flag
+  // follows the document rather than our own call. Nothing tries to correct a
+  // fullscreen VIDEO here: every way of doing that was measured and none of them
+  // renders — see the note in index.css, which is why its button is hidden.
   useEffect(() => {
-    const sync = () => {
-      const el = document.fullscreenElement
-      const wrap = wrapRef.current
-      if (el && el === videoRef.current && !exitingRef.current) {
-        if (previousRef.current === wrap) void exitFullscreenFully()
-        else void wrap?.requestFullscreen().catch(() => {})
-      }
-      previousRef.current = el
-      // Escape and the browser's own exit both bypass our handler, so the flag
-      // follows the document rather than our own call.
-      setFullscreen(el === wrap)
-    }
+    const sync = () => setFullscreen(document.fullscreenElement === wrapRef.current)
     document.addEventListener('fullscreenchange', sync)
     return () => document.removeEventListener('fullscreenchange', sync)
-  }, [videoRef, exitFullscreenFully])
+  }, [])
 
   /**
    * Whether a pointer is over the browser's control bar rather than the lift.
@@ -267,18 +211,43 @@ export default function AnalysisStage({
     if (!canvas || !video || !video.videoWidth) return
 
     const rect = video.getBoundingClientRect()
-    // Sized and anchored to the video's own box, which is what the canvas is
-    // positioned inside. Anchoring to one element while measuring another is
-    // what once drew the path hundreds of pixels to the left of the lift in
-    // fullscreen, so the two are deliberately the same element here.
     const box = boxRef.current?.getBoundingClientRect() ?? rect
-    if (canvas.width !== Math.round(box.width) || canvas.height !== Math.round(box.height)) {
-      canvas.width = Math.round(box.width)
-      canvas.height = Math.round(box.height)
+
+    // EVERYTHING FOLLOWS THE VIDEO'S OWN RECTANGLE, measured every frame.
+    //
+    // Not the wrapper, and not the box that contains it. When the browser's own
+    // fullscreen button is used, the video stays on the fullscreen stack under
+    // our wrapper, so it keeps matching :fullscreen and the UA styles it
+    // `position: fixed; width: 100%; height: 100%`. That takes it out of flow —
+    // the box around it collapses to ZERO height, and a canvas sized from the
+    // box is zero pixels tall, which is exactly how the bar path vanished the
+    // moment a coach went fullscreen. Double-clicking produces the opposite
+    // geometry, with the video laid out by our own classes.
+    //
+    // The video's rect is right in both, so it is the only thing measured. The
+    // offsets below place the overlay back over it, whatever its box is doing.
+    const offsetX = rect.left - box.left
+    const offsetY = rect.top - box.top
+
+    if (canvas.width !== Math.round(rect.width) || canvas.height !== Math.round(rect.height)) {
+      canvas.width = Math.round(rect.width)
+      canvas.height = Math.round(rect.height)
     }
-    // Two offsets stack: where the video sits inside its box, and where the
-    // picture sits inside the video (object-fit: contain letterboxes it when the
-    // aspect ratios differ).
+    canvas.style.left = `${offsetX}px`
+    canvas.style.top = `${offsetY}px`
+
+    // The click and draw target rides along, stopping short of the browser's
+    // control bar so play and scrub keep working.
+    const layer = layerRef.current
+    if (layer) {
+      layer.style.left = `${offsetX}px`
+      layer.style.top = `${offsetY}px`
+      layer.style.width = `${rect.width}px`
+      layer.style.height = `${Math.max(0, rect.height - bar)}px`
+    }
+
+    // Where the picture sits inside the video: object-fit contain letterboxes it
+    // when the aspect ratios differ, which fullscreen makes the normal case.
     const picture = pictureRect(rect.width, rect.height, video.videoWidth, video.videoHeight)
     const { scale } = picture
     const ctx = canvas.getContext('2d')
@@ -287,7 +256,9 @@ export default function AnalysisStage({
     // Origin at the picture's top-left, so every `x * scale` below stays
     // correct without threading the offset through each one.
     ctx.save()
-    ctx.translate(rect.left - box.left + picture.left, rect.top - box.top + picture.top)
+    // Origin at the picture's top-left. The canvas is already over the video, so
+    // only the letterbox offset remains.
+    ctx.translate(picture.left, picture.top)
 
     // Freehand marks first, so the bar path and its dot stay readable on top of
     // whatever the coach has drawn.
@@ -410,7 +381,7 @@ export default function AnalysisStage({
     // looking and the +/- buttons change its size, so the extra rectangle only
     // added clutter over the lift.
     ctx.restore()
-  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes])
+  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
   // once on any state change so it is right while paused too.
@@ -540,7 +511,10 @@ export default function AnalysisStage({
             // 62vh keeps the panel below the fold in the page; in fullscreen it
             // would cap the picture at 62% of the screen for no reason, and a
             // clip larger than the screen has to be reined in both ways.
-            className={`block w-auto ${fullscreen ? 'max-h-screen max-w-full' : 'max-h-[62vh]'}`}
+            // stage-video hides the native fullscreen button — see index.css.
+            className={`stage-video block w-auto ${
+              fullscreen ? 'max-h-screen max-w-full' : 'max-h-[62vh]'
+            }`}
             onLoadedMetadata={(e) => onLoadedMetadata(e.currentTarget)}
             onTimeUpdate={(e) => onTimeUpdate(e.currentTarget.currentTime)}
           />
@@ -551,13 +525,13 @@ export default function AnalysisStage({
               reaches the video and plays it. It used to swallow the click and do
               nothing, which made a reopened analysis feel broken. */}
           <div
+            ref={layerRef}
             onClick={handleClick}
             onPointerDown={startStroke}
             onPointerMove={extendStroke}
             onPointerUp={endStroke}
             onPointerCancel={endStroke}
-            style={{ bottom: bar }}
-            className={`absolute inset-x-0 top-0 ${
+            className={`absolute left-0 top-0 ${
               // Drawing needs the layer even on a saved analysis, which is always
               // disabled — that is where a coach explains a lift they tracked
               // earlier. Only a non-drawing disabled stage steps out of the way.
@@ -570,6 +544,25 @@ export default function AnalysisStage({
           >
             <canvas ref={canvasRef} className="pointer-events-none absolute left-0 top-0" />
           </div>
+
+          {/* On the video rather than in the page toolbar, because it acts on
+              the video. NOT in the control bar with the browser's own buttons:
+              the one that belongs in that slot is the browser's, and it cannot
+              be used — it fullscreens the <video> and the bar path does not go
+              with it (see index.css). This one fullscreens the wrapper, so the
+              path and the coach's marks come too.
+              Top-right rather than bottom-right: the bar's height is not
+              knowable from script, and a guess at it lands the button on the
+              scrubber. */}
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            title={fullscreen ? 'Exit fullscreen (or double-click)' : 'Fullscreen (or double-click)'}
+            aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            className="absolute right-2 top-2 rounded bg-black/50 p-1.5 text-white/80 transition hover:bg-black/70 hover:text-white"
+          >
+            {fullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+          </button>
         </div>
       </div>
     </div>

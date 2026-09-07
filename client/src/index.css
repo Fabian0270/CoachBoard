@@ -108,17 +108,31 @@
 }
 
 /*
- * Nothing here hides the bar-path stage's video controls any more.
+ * The bar-path stage hides the video's own fullscreen button.
  *
- * The fullscreen button used to be hidden, because it calls requestFullscreen
- * on the <video> — promoting only the video into the top layer and leaving the
- * overlay canvas behind, so the coach got a fullscreen lift with no bar path on
- * it. Hiding it did not actually solve that: on a narrow portrait clip Chromium
- * moves controls into the ⋮ overflow menu, and that menu's Fullscreen item
- * calls the same thing, which no CSS reaches.
+ * It calls requestFullscreen on the <video>, which promotes ONLY the video into
+ * the top layer. The overlay canvas is a sibling and stays behind, so the coach
+ * got a fullscreen lift with no bar path on it. Fullscreening the wrapper takes
+ * the canvas along, and that is what double-click and the stage's own button do.
  *
- * AnalysisStage now redirects instead — see the fullscreenchange effect there.
- * Whatever fullscreens the video is immediately followed by a request on the
- * wrapper, which carries the canvas with it. So the button stays exactly where
- * a fullscreen button belongs: in the browser's own control bar.
+ * Every way of keeping this button was tried and measured in a real Electron
+ * window before settling for hiding it. All four fail:
+ *
+ *   - Redirect by requesting the WRAPPER while the video is fullscreen. The
+ *     request resolves and the wrapper does become fullscreenElement, but
+ *     Chromium then renders only the topmost fullscreen element: the video is
+ *     never painted and the screen goes black behind the overlay.
+ *   - exitFullscreen() then request the wrapper — refused outright,
+ *     "Permissions check failed". This is the fullscreen-loop guard.
+ *   - Raise the canvas above the fullscreen video in the top layer with a
+ *     popover. The popover opens and is never painted.
+ *   - Hide nothing and correct it afterwards — same as the first case.
+ *
+ * So the only reliable fix is never letting the video go fullscreen. Leaving a
+ * control that produces a broken result is worse than removing it.
+ *
+ * Scoped to the stage so ordinary video playback elsewhere keeps its button.
  */
+.stage-video::-webkit-media-controls-fullscreen-button {
+  display: none;
+}
