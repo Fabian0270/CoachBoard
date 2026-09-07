@@ -37,6 +37,7 @@ function input(overrides: Partial<SaveVideoAnalysisInput> = {}): SaveVideoAnalys
     calibration: null,
     metrics: [],
     notes: null,
+    metric: null,
     lift: null,
     loadKg: null,
     calledRpe: null,

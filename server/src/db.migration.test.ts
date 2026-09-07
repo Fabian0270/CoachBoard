@@ -144,3 +144,114 @@ describe('discord_media gains the Feature 11a thumbnail columns', () => {
     expect(updated?.duration_ms).toBe(5000)
   })
 })
+
+describe('athletes.height_cm migration', () => {
+  it('adds the column to an existing roster without disturbing it', async () => {
+    // A pre-feature athletes table: everything the old code wrote, nothing more.
+    const legacyPath = join(dir, 'athletes-legacy.sqlite')
+    const raw = openSqlite(legacyPath)
+    raw.exec(`
+      CREATE TABLE athletes (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT,
+        sport TEXT,
+        weight_class TEXT,
+        date_of_birth TEXT,
+        notes TEXT,
+        archived INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO athletes (id, name, email, sport, weight_class, created_at, updated_at)
+      VALUES ('a1', 'Fabian Olsson', 'f@example.com', 'Powerlifting', '105',
+              '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    `)
+    const before = raw.prepare('PRAGMA table_info(athletes)').all() as { name: string }[]
+    expect(before.map((c) => c.name)).not.toContain('height_cm')
+    raw.close()
+
+    await initializeDatabase(legacyPath)
+    const db = getDb()
+
+    const cols = await sql<{ name: string }>`PRAGMA table_info(athletes)`.execute(db)
+    expect(cols.rows.map((c) => c.name)).toContain('height_cm')
+
+    // The existing athlete survives untouched, with the new column empty —
+    // height is optional, and an unknown height must not become a wrong one.
+    const row = await db.selectFrom('athletes').selectAll().where('id', '=', 'a1').executeTakeFirst()
+    expect(row?.name).toBe('Fabian Olsson')
+    expect(row?.weight_class).toBe('105')
+    expect(row?.height_cm).toBeNull()
+
+    // And it is writable, so the athlete editor has somewhere to put a height.
+    await db.updateTable('athletes').set({ height_cm: 180 }).where('id', '=', 'a1').execute()
+    const updated = await db.selectFrom('athletes').selectAll().where('id', '=', 'a1').executeTakeFirst()
+    expect(updated?.height_cm).toBe(180)
+  })
+})
+
+describe('video_analyses keeps-the-video migration', () => {
+  it('adds the columns to an existing analysis without disturbing it', async () => {
+    // A pre-feature table: everything 11b wrote, none of what keeping the
+    // footage needs.
+    const legacyPath = join(dir, 'analyses-legacy.sqlite')
+    const raw = openSqlite(legacyPath)
+    raw.exec(`
+      CREATE TABLE video_analyses (
+        id TEXT PRIMARY KEY,
+        media_id TEXT,
+        athlete_id TEXT,
+        source_label TEXT NOT NULL DEFAULT '',
+        track TEXT NOT NULL,
+        calibration TEXT,
+        metrics TEXT,
+        notes TEXT,
+        lift TEXT,
+        load_kg REAL,
+        called_rpe REAL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO video_analyses (id, source_label, track, lift, load_kg, created_at, updated_at)
+      VALUES ('an1', 'squat.mp4', '[{"t":0,"x":1,"y":2}]', 'back-squat', 240,
+              '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    `)
+    const before = raw.prepare('PRAGMA table_info(video_analyses)').all() as { name: string }[]
+    expect(before.map((c) => c.name)).not.toContain('video_path')
+    raw.close()
+
+    await initializeDatabase(legacyPath)
+    const db = getDb()
+
+    const cols = await sql<{ name: string }>`PRAGMA table_info(video_analyses)`.execute(db)
+    const names = cols.rows.map((c) => c.name)
+    for (const col of ['metric', 'video_path', 'video_bytes']) expect(names).toContain(col)
+
+    // The existing analysis survives with the new columns empty — an older row
+    // has no stored video, and must still open on its path alone.
+    const row = await db
+      .selectFrom('video_analyses')
+      .selectAll()
+      .where('id', '=', 'an1')
+      .executeTakeFirst()
+    expect(row?.source_label).toBe('squat.mp4')
+    expect(row?.load_kg).toBe(240)
+    expect(row?.video_path).toBeNull()
+    expect(row?.metric).toBeNull()
+
+    // And they are writable, so a save has somewhere to land.
+    await db
+      .updateTable('video_analyses')
+      .set({ metric: 'peak', video_path: 'analyses/x.mp4', video_bytes: 1234 })
+      .where('id', '=', 'an1')
+      .execute()
+    const updated = await db
+      .selectFrom('video_analyses')
+      .selectAll()
+      .where('id', '=', 'an1')
+      .executeTakeFirst()
+    expect(updated?.metric).toBe('peak')
+    expect(updated?.video_bytes).toBe(1234)
+  })
+})

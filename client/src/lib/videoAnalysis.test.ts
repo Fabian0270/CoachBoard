@@ -6,6 +6,7 @@ import {
   analysePath,
   looksMistracked,
   pixelsPerMetreFromPlate,
+  pictureRect,
   type Sample,
 } from 'coachboard-shared/videoAnalysis'
 
@@ -272,5 +273,57 @@ describe('looksMistracked', () => {
 
   it('says nothing about a rep with no movement to judge', () => {
     expect(looksMistracked(rep(0, 0))).toBe(false)
+  })
+})
+
+describe('pictureRect', () => {
+  // The overlay is drawn in display pixels derived from the video element's
+  // rect. In the page the element is sized to the clip so the two agree, and
+  // the difference is invisible. In FULLSCREEN the element is the whole screen
+  // and the clip letterboxes inside it — get this wrong and the bar path drifts
+  // off the bar, which reads as a tracking failure rather than a display bug.
+
+  it('fills the element exactly when the aspect ratios match', () => {
+    const r = pictureRect(1280, 720, 640, 360)
+    expect(r).toEqual({ left: 0, top: 0, width: 1280, height: 720, scale: 2 })
+  })
+
+  it('pillarboxes a portrait clip on a landscape screen', () => {
+    // A 1080x1920 phone clip on a 2560x1440 screen: height is the binding axis.
+    const r = pictureRect(2560, 1440, 1080, 1920)
+    expect(r.scale).toBeCloseTo(1440 / 1920, 12)
+    expect(r.height).toBeCloseTo(1440, 12)
+    expect(r.width).toBeCloseTo(810, 12)
+    // Centred, so the bars are equal either side.
+    expect(r.left).toBeCloseTo((2560 - 810) / 2, 12)
+    expect(r.top).toBeCloseTo(0, 12)
+  })
+
+  it('letterboxes a landscape clip on a taller box', () => {
+    const r = pictureRect(1000, 1000, 1920, 1080)
+    expect(r.width).toBeCloseTo(1000, 12)
+    expect(r.height).toBeCloseTo(562.5, 12)
+    expect(r.top).toBeCloseTo((1000 - 562.5) / 2, 12)
+    expect(r.left).toBeCloseTo(0, 12)
+  })
+
+  it('round-trips a video pixel to display and back', () => {
+    // This is precisely what draw() and handleClick() do in opposite
+    // directions; if they disagree, a click lands somewhere else.
+    const r = pictureRect(2560, 1440, 1080, 1920)
+    const videoPoint = { x: 540, y: 960 }
+    const displayX = r.left + videoPoint.x * r.scale
+    const displayY = r.top + videoPoint.y * r.scale
+    expect((displayX - r.left) / r.scale).toBeCloseTo(videoPoint.x, 9)
+    expect((displayY - r.top) / r.scale).toBeCloseTo(videoPoint.y, 9)
+    // And the centre of the video lands at the centre of the picture.
+    expect(displayX).toBeCloseTo(2560 / 2, 9)
+    expect(displayY).toBeCloseTo(1440 / 2, 9)
+  })
+
+  it('degrades to an identity box before the video reports dimensions', () => {
+    // videoWidth is 0 until metadata loads, and the rAF loop runs regardless.
+    const r = pictureRect(800, 600, 0, 0)
+    expect(r).toEqual({ left: 0, top: 0, width: 800, height: 600, scale: 1 })
   })
 })

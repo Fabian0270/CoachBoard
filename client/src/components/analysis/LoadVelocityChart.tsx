@@ -27,11 +27,17 @@ export default function LoadVelocityChart({ profile }: { profile: LoadVelocityPr
     // between the heaviest real set and the estimate is visible.
     const maxLoad = Math.max(...loads, profile.oneRm ?? 0)
     const pad = Math.max(5, (maxLoad - minLoad) * 0.08)
-    const from = Math.max(0, minLoad - pad)
     // Never run past where the fit predicts a standstill — the line is only
     // meaningful while it predicts a bar that still moves.
     const zeroAt = profile.fit.slope < 0 ? -profile.fit.intercept / profile.fit.slope : Infinity
-    const to = Math.min(maxLoad + pad, zeroAt)
+
+    // Whole kilos. Both ends are derived from the projected 1RM, so they are
+    // fractional in general, and Recharts falls back to drawing the domain
+    // bounds themselves as ticks — `allowDecimals={false}` only governs the
+    // ticks it generates, so an axis labelled "194.99138343327547 kg" got
+    // through. Rounding outward keeps every real point inside the axis.
+    const from = Math.max(0, Math.floor(minLoad - pad))
+    const to = Math.ceil(Math.min(maxLoad + pad, zeroAt))
 
     // Straight from the fit rather than through velocityForLoad, which nulls out
     // rather than returning a non-positive velocity — a null here would silently

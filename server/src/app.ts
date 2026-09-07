@@ -14,6 +14,7 @@ import discordRouter from './routes/discord.js'
 import systemRouter from './routes/system.js'
 import backupRouter from './routes/backup.js'
 import analysisRouter from './routes/analysis.js'
+import recorderRouter from './routes/recorder.js'
 
 export function createApp(staticDir?: string, logPath?: string) {
   const app = express()
@@ -38,6 +39,7 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api/system', systemRouter)
   app.use('/api/backup', backupRouter)
   app.use('/api/analysis', analysisRouter)
+  app.use('/api/recorder', recorderRouter)
 
   // Unknown API routes must 404 as JSON, not fall through to the static catch-all
   app.use('/api', (_req, res) => {

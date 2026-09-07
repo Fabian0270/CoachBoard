@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
   Check,
+  Columns2,
   Crosshair,
   Loader2,
   Palette,
@@ -23,6 +24,8 @@ import AnalysisStage, {
   type StageMode,
 } from '../components/analysis/AnalysisStage'
 import VideoPicker, { type AnalysisSource } from '../components/analysis/VideoPicker'
+import DrawControls from '../components/analysis/DrawControls'
+import type { Stroke } from '../components/analysis/annotations'
 import { useTracker, type TrackStream } from '../components/analysis/useTracker'
 import { captureInto } from '../components/analysis/captureFrames'
 import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
@@ -48,6 +51,7 @@ import VelocityPanel, {
 import { useVbtHistory, useAthleteMaxes } from '../components/analysis/useVbtHistory'
 import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import { num } from '../lib/num'
+import { uploadVideo } from '../lib/uploadAnalysisVideo'
 
 type Phase = 'idle' | 'capturing' | 'tracking' | 'done'
 
@@ -87,6 +91,15 @@ export default function VideoAnalysis() {
   const [color, setColor] = useTrackerColor()
   const [plateMm, setPlateMm] = useState<number>(PLATE_DIAMETERS_MM[0].value)
   const [mode, setMode] = useState<StageMode>('seed')
+  /**
+   * Freehand marks the coach has drawn over the lift.
+   *
+   * Deliberately NOT saved with the analysis. These are for the moment of
+   * explanation — drawn while talking, captured by the screen recorder — not a
+   * measurement, and the analysis is a record of what was measured. They clear
+   * with the clip like the seed and the range do.
+   */
+  const [strokes, setStrokes] = useState<Stroke[]>([])
   const [calibration, setCalibration] = useState<CalibrationLine | null>(null)
   const [awaitingSecondPoint, setAwaitingSecondPoint] = useState(false)
   /** Shown once a track finishes, so nothing is stored without being asked for. */
@@ -102,7 +115,7 @@ export default function VideoAnalysis() {
    * 'none' is the coach explicitly saying this is a throwaway look.
    */
   const [athleteChoice, setAthleteChoice] = useState<string | null>(null)
-  const [roster, setRoster] = useState<{ id: string; name: string }[]>([])
+  const [roster, setRoster] = useState<{ id: string; name: string; height_cm: number | null }[]>([])
   const [savedCount, setSavedCount] = useState(0)
   /** What the set was — the lift and load every velocity readout is judged against. */
   const [setContext, setSetContext] = useState<SetContextState>({
@@ -128,6 +141,7 @@ export default function VideoAnalysis() {
     setCalibration(null)
     setAwaitingSecondPoint(false)
     setMode('seed')
+    setStrokes([])
     setRange(null)
     setDuration(0)
     setCurrentTime(0)
@@ -147,12 +161,12 @@ export default function VideoAnalysis() {
     let cancelled = false
     fetch('/api/athletes')
       .then((r) => (r.ok ? r.json() : []))
-      .then((data: { id: string; name: string; archived?: number }[]) => {
+      .then((data: { id: string; name: string; height_cm: number | null; archived?: number }[]) => {
         if (cancelled) return
         setRoster(
           (Array.isArray(data) ? data : [])
             .filter((a) => !a.archived)
-            .map((a) => ({ id: a.id, name: a.name })),
+            .map((a) => ({ id: a.id, name: a.name, height_cm: a.height_cm ?? null })),
         )
       })
       .catch(() => !cancelled && setRoster([]))
@@ -331,6 +345,9 @@ export default function VideoAnalysis() {
   const athleteName =
     roster.find((a) => a.id === athleteId)?.name ??
     (source?.kind === 'discord' ? source.item.athleteName : null)
+  // Lets the panel judge the plate scale against how far this lifter's bar
+  // should actually travel, instead of a band wide enough to cover everyone.
+  const athleteHeightCm = roster.find((a) => a.id === athleteId)?.height_cm ?? null
   const metric = setContext.metric ?? defaultVelocityMetric(setContext.lift)
   const { anchors: savedAnchors, points: savedPoints } = useVbtHistory(
     athleteId,
@@ -482,6 +499,12 @@ export default function VideoAnalysis() {
     if (!samples) return
     setSaving(true)
     try {
+      // A Discord clip is already on disk and the analysis just references it.
+      // A local import is the only one that needs a copy, and it is uploaded
+      // BEFORE the row is written so a failed upload leaves nothing behind —
+      // better a save the coach can retry than a row pointing at no video.
+      const stored = source?.kind === 'local' ? await uploadVideo(source.file) : null
+
       const res = await fetch('/api/analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -499,6 +522,10 @@ export default function VideoAnalysis() {
           lift: reps.length > 0 ? setContext.lift : null,
           loadKg: loadKg,
           calledRpe: setContext.calledRpe,
+          // Stored so reopening reads the set the same way this page did.
+          metric: reps.length > 0 ? metric : null,
+          videoPath: stored?.relPath ?? null,
+          videoBytes: stored?.bytes ?? null,
         }),
       })
       if (!res.ok) throw new Error('Save failed')
@@ -524,6 +551,7 @@ export default function VideoAnalysis() {
     setCalibration(null)
     setAwaitingSecondPoint(false)
     setMode('seed')
+    setStrokes([])
   }
 
   /** Back to the picker. Everything is per-video, so none of it may carry over. */
@@ -553,10 +581,21 @@ export default function VideoAnalysis() {
     return (
       <div className="space-y-6 p-6">
         <div>
-          <h1 className="text-lg font-semibold">Bar path analysis</h1>
-          <p className="text-sm text-muted-foreground">
-            Track the bar through a lift to see its path and per-rep velocity.
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h1 className="text-lg font-semibold">Bar path analysis</h1>
+              <p className="text-sm text-muted-foreground">
+                Track the bar through a lift to see its path and per-rep velocity.
+              </p>
+            </div>
+            {/* Beside picking a clip rather than under the saved list: comparing
+                two lifts is a way to START, not an afterthought once you have
+                scrolled past everything else. */}
+            <Button variant="outline" size="sm" onClick={() => navigate('/analysis/compare')}>
+              <Columns2 className="h-4 w-4" />
+              Compare two lifts
+            </Button>
+          </div>
         </div>
         {mediaId ? (
           <p className="text-sm text-muted-foreground">Loading video…</p>
@@ -606,6 +645,8 @@ export default function VideoAnalysis() {
           mode={mode}
           calibration={calibration}
           onCalibratePoint={addCalibrationPoint}
+          strokes={strokes}
+          onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
         />
       )}
 
@@ -745,6 +786,21 @@ export default function VideoAnalysis() {
                   <RotateCcw className="h-4 w-4" /> Clear
                 </Button>
               )}
+
+              {/* Drawing on the lift. Fullscreen is NOT here — it belongs in the
+                  video's own control bar, where a fullscreen button always is,
+                  and the stage puts it there itself. */}
+              <div className="ml-auto">
+                <DrawControls
+                  mode={mode}
+                  onModeChange={(next) => {
+                    setMode(next)
+                    setAwaitingSecondPoint(false)
+                  }}
+                  strokes={strokes}
+                  onStrokesChange={setStrokes}
+                />
+              </div>
             </div>
 
             {busy && (
@@ -782,7 +838,8 @@ export default function VideoAnalysis() {
                         : 'The bar path is kept.'}
                       {loadKg != null &&
                         ` The lift and ${loadKg} kg go with it, so the athlete's velocity profile builds up.`}
-                      {source?.kind === 'local' && ' The video itself is not — it stays on your computer.'}
+                      {source?.kind === 'local' &&
+                        ' The video is copied into CoachBoard too, so you can watch it back later.'}
                     </span>
                   </span>
                 </div>
@@ -972,6 +1029,8 @@ export default function VideoAnalysis() {
                 reps={reps}
                 calibrated={pixelsPerMetre !== null}
                 athleteName={athleteName}
+                athleteId={athleteId}
+                athleteHeightCm={athleteHeightCm}
                 anchors={anchors}
                 savedPoints={savedPoints}
                 maxes={athleteMaxes}

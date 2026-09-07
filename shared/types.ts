@@ -11,6 +11,7 @@ export interface Athlete {
   email: string | null
   sport: string | null
   weight_class: string | null   // powerlifting weight class (kg), shown when sport is powerlifting
+  height_cm: number | null      // standing height; bar-path checks the plate scale against it
   date_of_birth: string | null
   notes: string | null
   archived: number   // 0/1 — archived athletes (e.g. historical back-catalogue imports) are hidden from the active roster
@@ -578,6 +579,7 @@ export interface CreateAthleteBody {
   email?: string | null
   sport?: string | null
   weight_class?: string | null
+  height_cm?: number | null
   date_of_birth?: string | null
   notes?: string | null
 }

@@ -42,10 +42,16 @@ const settingsPath = () => path.join(userDataDir(), FILE_NAME)
 
 /**
  * Bot permissions requested in the invite URL:
- * View Channels (1024) + Read Message History (65536) + Send Messages (2048).
- * Deliberately minimal — no admin, no moderation.
+ * View Channels (1024) + Send Messages (2048) + Attach Files (32768) +
+ * Read Message History (65536). Deliberately minimal — no admin, no moderation.
+ *
+ * Attach Files was added for Feature 11c's feedback recordings. Note that a bot
+ * invited before that keeps the OLD permission bits until the coach re-invites
+ * it — Discord does not upgrade an existing install. DMs are unaffected, since
+ * a DM channel is not governed by guild permissions, and DMs are how recordings
+ * are sent; only attaching a file to a guild channel needs the re-invite.
  */
-export const BOT_PERMISSIONS = 68608
+export const BOT_PERMISSIONS = 101376
 
 export function buildInviteUrl(applicationId: string): string {
   return `https://discord.com/oauth2/authorize?client_id=${applicationId}&scope=bot&permissions=${BOT_PERMISSIONS}`

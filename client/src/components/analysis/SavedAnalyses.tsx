@@ -2,7 +2,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LineChart, Trash2, UserPlus } from 'lucide-react'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
-import { isVbtLift, lastRepVelocity, liftLabel } from 'coachboard-shared/vbt'
+import {
+  defaultVelocityMetric,
+  isVbtLift,
+  isVelocityMetric,
+  lastRepVelocity,
+  liftLabel,
+} from 'coachboard-shared/vbt'
 import { Button } from '../ui/button'
 import { useToast } from '../ui/toast'
 import { useConfirm } from '../ui/confirm-dialog'
@@ -50,7 +56,8 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
   const remove = async (row: VideoAnalysisDto) => {
     const ok = await confirm({
       title: 'Delete this analysis?',
-      description: 'The bar path and its numbers are removed. The video itself is untouched.',
+      description:
+        'The bar path, its numbers and the kept copy of the video are all removed. A synced Discord clip stays in your library.',
       confirmLabel: 'Delete',
       destructive: true,
     })
@@ -104,8 +111,13 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
         <tbody>
           {rows.slice(0, limit).map((row) => {
             const metrics = row.metrics ?? []
-            // Propulsive where it exists, so the list agrees with the panel.
-            const last = lastRepVelocity(metrics, 'propulsive') ?? lastRepVelocity(metrics)
+            // Read with the metric the set was saved with, so this list, the
+            // saved view and the live panel never show one set three ways.
+            const rowLift = isVbtLift(row.lift) ? row.lift : 'back-squat'
+            const last = lastRepVelocity(
+              metrics,
+              isVelocityMetric(row.metric) ? row.metric : defaultVelocityMetric(rowLift),
+            )
             const lift = isVbtLift(row.lift) ? liftLabel(row.lift) : '—'
             return (
               <tr key={row.id} className="border-b last:border-0">

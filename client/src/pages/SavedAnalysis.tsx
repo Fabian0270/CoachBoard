@@ -5,8 +5,10 @@ import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
 import { pixelsPerMetreFromPlate } from 'coachboard-shared/videoAnalysis'
 import {
   defaultMvt,
+  defaultVelocityMetric,
   e1RMFromVelocity,
   isVbtLift,
+  isVelocityMetric,
   lastRepVelocity,
   liftLabel,
   populationSlope,
@@ -24,13 +26,11 @@ import { useTrackerColor } from '../components/analysis/trackerColor'
 // ---------------------------------------------------------------------------
 // A saved analysis, reopened.
 //
-// Rebuilt entirely from the stored row — path, calibration, per-rep metrics —
-// so it works for a locally imported clip whose video was never uploaded, and
-// for a Discord clip whose video has since been purged by retention.
-//
-// The coach can point it back at the original file if they still have it, which
-// replays the path over the footage without the video ever being copied
-// anywhere. That keeps the promise the save prompt makes.
+// Everything a coach reads here is rebuilt from the stored row — path,
+// calibration, per-rep metrics — so the analysis survives whatever happened to
+// the footage. Saving now keeps the video as well, so the usual case replays it
+// straight away; the re-pick input below is what rescues the rows saved before
+// that, and any whose file has since gone missing.
 // ---------------------------------------------------------------------------
 
 export default function SavedAnalysis() {
@@ -87,11 +87,14 @@ export default function SavedAnalysis() {
       )
     : null
 
-  // Read the same way the live panel does, so one set never shows two numbers.
-  const lastV = lastRepVelocity(metrics, 'propulsive')
-  const bestV = metrics.length
-    ? Math.max(...metrics.map((m) => readRep(m, 'propulsive') ?? 0))
-    : 0
+  // Read the way the set was ACTUALLY read when it was tracked, falling back to
+  // the lift's default for rows saved before the metric was stored. This used
+  // to be hardcoded to 'propulsive' under a comment claiming it matched the
+  // live panel — which stopped being true when the default became mean/peak, so
+  // the same bench set reported two different numbers on two pages.
+  const metric = isVelocityMetric(analysis.metric) ? analysis.metric : defaultVelocityMetric(lift)
+  const lastV = lastRepVelocity(metrics, metric)
+  const bestV = metrics.length ? Math.max(...metrics.map((m) => readRep(m, metric) ?? 0)) : 0
   const reading = lastV != null ? rpeFromLastRepVelocity(lift, lastV) : null
   const mvt = defaultMvt(lift)
   const estimate =
@@ -105,8 +108,10 @@ export default function SavedAnalysis() {
       : null
   const loss = velocityLoss(metrics)
 
-  const videoSrc =
-    localUrl ?? (analysis.mediaId ? `/api/discord/media/${analysis.mediaId}/file` : null)
+  // One route for both kinds of ownership — a stored copy of a local import, or
+  // the synced Discord file it references. The page does not need to know which.
+  // localUrl still wins, for an analysis saved before videos were kept.
+  const videoSrc = localUrl ?? (analysis.hasVideo ? `/api/analysis/${analysis.id}/video` : null)
 
   return (
     <div className="space-y-4 p-6">
@@ -158,13 +163,17 @@ export default function SavedAnalysis() {
         <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} />
       )}
 
-      {!analysis.mediaId && (
+      {/* Only when nothing plays. Analyses saved before videos were kept have no
+          stored copy, and a Discord clip can still be missing if its file was
+          removed outside the app — either way the path survives and the coach
+          can point this back at their own file. */}
+      {!analysis.hasVideo && (
         <label className="flex flex-wrap items-center gap-2 text-sm">
           <FileVideo className="h-4 w-4 text-muted-foreground" />
           <span className="text-muted-foreground">
             {localUrl
               ? 'Playing your local copy — it is still only on this computer.'
-              : 'This came from a file on your computer, which was never uploaded. Pick it again to replay the path over it.'}
+              : 'This analysis was saved before videos were kept. Pick the file again to replay the path over it.'}
           </span>
           <input
             type="file"
@@ -196,7 +205,7 @@ export default function SavedAnalysis() {
               </thead>
               <tbody>
                 {metrics.map((m) => {
-                  const v = readRep(m, 'propulsive')
+                  const v = readRep(m, metric)
                   const rpe = v != null ? rpeFromLastRepVelocity(lift, v) : null
                   return (
                     <tr key={m.index} className="border-b last:border-0">

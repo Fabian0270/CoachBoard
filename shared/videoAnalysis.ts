@@ -447,6 +447,11 @@ export interface SetContext {
   loadKg: number | null
   /** The RPE the athlete called, to compare against what the bar says. */
   calledRpe: number | null
+  /** Which velocity the set was read from ('mean' | 'peak' | 'propulsive').
+   *  Null follows the lift's default — see defaultVelocityMetric. Stored so a
+   *  reopened analysis cannot report the same set differently from the page it
+   *  was tracked on. */
+  metric: string | null
 }
 
 /** A saved analysis as it travels over HTTP. */
@@ -460,6 +465,9 @@ export interface VideoAnalysisDto extends SetContext {
   calibration: CalibrationDto | null
   metrics: RepMetrics[]
   notes: string | null
+  /** True when the analysis can be replayed — from its own stored copy, or from
+   *  the Discord clip it references. False means only the path survives. */
+  hasVideo: boolean
   createdAt: string
   updatedAt: string
 }
@@ -472,15 +480,83 @@ export interface SaveVideoAnalysisInput extends SetContext {
   calibration: CalibrationDto | null
   metrics: RepMetrics[]
   notes: string | null
+  /** Relative path of an already-uploaded copy, from POST /api/analysis/video.
+   *  Null for a Discord clip, which needs no copy. */
+  videoPath?: string | null
+  videoBytes?: number | null
 }
 
-/** Standard competition and training plate diameters. */
+/**
+ * Plate diameters to calibrate against, largest first.
+ *
+ * Named by the plate the coach is looking at rather than by a bare number,
+ * because picking the wrong one silently rescales every reading downstream and
+ * "450 mm" is not what anyone sees when they look at a loaded bar.
+ *
+ * The useful fact for powerlifting: an IPF 25 kg and an IPF 20 kg are BOTH
+ * 450 mm. They differ in thickness, not diameter (the Technical Rulebook caps
+ * the largest disc at 450 mm), so the biggest disc on a competition bar is
+ * 450 mm whichever of the two it is — and the biggest disc is the one whose
+ * edge is visible to click. Standard training bumpers are also 450 mm.
+ *
+ * Verified against Eleiko's IPF competition plate data sheets. The smaller
+ * competition discs are deliberately absent: their diameters could not be
+ * verified from a primary source, and they are never the outermost silhouette
+ * on a loaded bar anyway, so they are not what a coach would measure across.
+ */
 export const PLATE_DIAMETERS_MM = [
-  { label: '450 mm — competition', value: 450 },
-  { label: '400 mm', value: 400 },
-  { label: '350 mm', value: 350 },
-  { label: '325 mm', value: 325 },
+  { label: '450 mm — IPF 25 kg or 20 kg, or a standard bumper', value: 450 },
+  { label: '400 mm — smaller bumper', value: 400 },
+  { label: '350 mm — training plate', value: 350 },
+  { label: '325 mm — training plate', value: 325 },
 ] as const
+
+/** Where the picture actually sits inside a video element's box, in CSS pixels. */
+export interface PictureRect {
+  left: number
+  top: number
+  width: number
+  height: number
+  /** Display pixels per video pixel. */
+  scale: number
+}
+
+/**
+ * The letterboxed picture inside a `<video>` element.
+ *
+ * A video element paints with `object-fit: contain`, so the picture only fills
+ * the whole element when their aspect ratios happen to match. Normally the
+ * difference is invisible, because the stage sizes the element to the clip. In
+ * FULLSCREEN it is not: the element becomes the whole screen and a portrait lift
+ * gets wide black bars either side.
+ *
+ * That matters because the overlay is drawn in display pixels derived from the
+ * element's own rect. Taking `rect.width / videoWidth` as the scale silently
+ * assumes no letterboxing, so in fullscreen every drawn point stretches and
+ * shifts — the path drifts off the bar, which reads as a tracking failure rather
+ * than a display bug. Same arithmetic in reverse for mapping a click back.
+ */
+export function pictureRect(
+  elementWidth: number,
+  elementHeight: number,
+  videoWidth: number,
+  videoHeight: number,
+): PictureRect {
+  if (!(videoWidth > 0) || !(videoHeight > 0) || !(elementWidth > 0) || !(elementHeight > 0)) {
+    return { left: 0, top: 0, width: elementWidth, height: elementHeight, scale: 1 }
+  }
+  // contain: whichever axis runs out first decides the scale.
+  const scale = Math.min(elementWidth / videoWidth, elementHeight / videoHeight)
+  const width = videoWidth * scale
+  const height = videoHeight * scale
+  return {
+    left: (elementWidth - width) / 2,
+    top: (elementHeight - height) / 2,
+    width,
+    height,
+    scale,
+  }
+}
 
 /**
  * Pixels per metre, from a plate of known diameter measured on screen.

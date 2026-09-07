@@ -14,6 +14,7 @@ import {
   effectiveRpe,
   defaultMvt,
   defaultVelocityMetric,
+  checkScale,
   DEFAULT_LV_SLOPE,
   zoneFor,
   velocityLoss,
@@ -541,11 +542,13 @@ describe('reading a set', () => {
     expect(bestRepVelocity(reps, 'peak')).toBeCloseTo(0.75, 9)
   })
 
-  it('reads propulsive velocity everywhere, with no per-lift special case', () => {
-    // The per-lift table this replaced read bench off peak, which worked on one
-    // clean clip and then took a tracker re-lock straight into the answer.
-    for (const lift of ['bench-press', 'back-squat', 'deadlift-conventional', 'other'] as const) {
-      expect(defaultVelocityMetric(lift)).toBe('propulsive')
+  it('keeps the metric a property of the lift', () => {
+    // Reading propulsive velocity everywhere was tried and reverted: it was
+    // never reconciled with DEFAULT_LV_SLOPE, a MEAN-velocity slope, so every
+    // lift read high. The peak-for-bench pairing has real clips behind it.
+    expect(defaultVelocityMetric('bench-press')).toBe('peak')
+    for (const lift of ['back-squat', 'deadlift-conventional', 'other'] as const) {
+      expect(defaultVelocityMetric(lift)).toBe('mean')
     }
   })
 
@@ -575,5 +578,141 @@ describe('isVbtLift', () => {
     expect(isVbtLift('back-squat')).toBe(true)
     expect(isVbtLift('squat')).toBe(false)
     expect(isVbtLift(null)).toBe(false)
+  })
+})
+
+describe('defaultVelocityMetric', () => {
+  // The pairing is empirical and its evidence is real clips: peak rescues bench
+  // (0.37 -> 195 kg against a real 200) and destroys squat (1.06 -> 459 against
+  // a real 250). A spell of reading mean propulsive velocity for everything was
+  // never reconciled with DEFAULT_LV_SLOPE, which is a MEAN-velocity slope, so
+  // every lift read high — a 205 kg double came back at 272 kg.
+  it('reads bench off peak and everything else off mean', () => {
+    expect(defaultVelocityMetric('bench-press')).toBe('peak')
+    expect(defaultVelocityMetric('back-squat')).toBe('mean')
+    expect(defaultVelocityMetric('deadlift-conventional')).toBe('mean')
+    expect(defaultVelocityMetric('deadlift-sumo')).toBe('mean')
+  })
+
+  it('never defaults to propulsive while the slope is a mean-velocity slope', () => {
+    for (const lift of ['back-squat', 'bench-press', 'deadlift-conventional'] as const) {
+      expect(defaultVelocityMetric(lift)).not.toBe('propulsive')
+    }
+  })
+})
+
+describe('checkScale', () => {
+  // The bug this exists for: a mis-drawn plate line scales every velocity, and
+  // e1RM divides by a percentage derived from velocity, so the error grows
+  // rather than passing through. Range of motion is checkable because anatomy
+  // fixes the answer.
+  it('passes an ordinary squat', () => {
+    expect(checkScale('back-squat', 0.55)?.verdict).toBe('ok')
+  })
+
+  it('catches the 3x scale error that produced a 470 kg double', () => {
+    const check = checkScale('back-squat', 0.55 * 3)
+    expect(check?.verdict).toBe('suspect')
+    expect(check!.factor).toBeGreaterThan(1.5)
+  })
+
+  it('catches a scale that is too small as well as too large', () => {
+    expect(checkScale('back-squat', 0.05)?.verdict).toBe('suspect')
+  })
+
+  it('is generous enough not to flag a tall lifter or a short bench stroke', () => {
+    expect(checkScale('back-squat', 0.95)?.verdict).toBe('ok')
+    expect(checkScale('bench-press', 0.18)?.verdict).toBe('ok')
+  })
+
+  it('returns null — meaning unknown, never fine — with nothing to check', () => {
+    expect(checkScale('back-squat', null)).toBeNull()
+    expect(checkScale('back-squat', 0)).toBeNull()
+  })
+})
+
+describe('checkScale with the athlete s height', () => {
+  // The generic band has to cover every lifter, so it only catches absurdities.
+  // Height narrows it enough to catch the mistakes that actually happen.
+  const TALL = 180
+
+  it('narrows the band enough to catch an error the generic one misses', () => {
+    // 35 cm of squat travel is inside the generic 25-100 cm band...
+    expect(checkScale('back-squat', 0.35)?.verdict).toBe('ok')
+    // ...but well short of the ~54 cm a 180 cm lifter should show.
+    const withHeight = checkScale('back-squat', 0.35, TALL)
+    expect(withHeight?.verdict).toBe('suspect')
+    expect(withHeight?.usedHeight).toBe(true)
+  })
+
+  it('offers a correction only when it has a height to base one on', () => {
+    expect(checkScale('back-squat', 0.23, TALL)?.suggestedCorrection).toBeCloseTo(0.54 / 0.23, 1)
+    // No height, no defensible number to scale towards.
+    expect(checkScale('back-squat', 0.23)?.suggestedCorrection).toBeNull()
+  })
+
+  it('reproduces the 240 kg single that started this', () => {
+    // 23 cm measured on a back squat: the scale, not the tracker.
+    const check = checkScale('back-squat', 0.23, TALL)
+    expect(check?.verdict).toBe('suspect')
+    expect(check!.factor).toBeGreaterThan(1.5)
+  })
+
+  it('passes an ordinary squat for that lifter', () => {
+    expect(checkScale('back-squat', 0.54, TALL)?.verdict).toBe('ok')
+  })
+
+  it('ignores a height that cannot be one, rather than trusting a typo', () => {
+    // Metres, inches, and a dropped digit all fall outside the accepted range.
+    for (const bad of [1.8, 71, 18]) {
+      expect(checkScale('back-squat', 0.55, bad)?.usedHeight).toBe(false)
+    }
+  })
+
+  it('keeps bench s band wide, because stature predicts it worst', () => {
+    const bench = checkScale('bench-press', 0.4, TALL)!
+    const squat = checkScale('back-squat', 0.54, TALL)!
+    const spread = (c: typeof bench) => (c.expected.max - c.expected.min) / c.expectedM!
+    expect(spread(bench)).toBeGreaterThan(spread(squat))
+  })
+})
+
+describe('resolveAnchors rejects an inverted personal chart', () => {
+  // The bug: three saved sets whose velocities RISE with RPE were accepted as a
+  // personal chart. The resulting table read RPE 5 = 0.26 and RPE 10 = 0.59, so
+  // a 240 kg single grinding at 0.09 m/s was reported as "RPE 5 (easy) — add
+  // load if the intent was strength".
+  const inverted = [
+    { rpe: 5, velocity: 0.26 },
+    { rpe: 7, velocity: 0.39 },
+    { rpe: 10, velocity: 0.59 },
+  ]
+
+  it('falls back to the published table rather than trusting the wrong way round', () => {
+    expect(resolveAnchors('back-squat', inverted)!.source).toBe('published')
+  })
+
+  it('still produces a downward chart from those anchors', () => {
+    const chart = lrvChart('back-squat', inverted)!
+    const at = (rpe: number) => chart.rows.find((r) => r.rpe === rpe)!.velocity
+    expect(at(10)).toBeLessThan(at(5))
+  })
+
+  it('reads a slow grind as a max effort once the chart is the right way up', () => {
+    const reading = rpeFromLastRepVelocity('back-squat', 0.09, { anchors: inverted })!
+    expect(reading.rpe).toBe(10)
+  })
+
+  it('keeps accepting a properly descending personal chart', () => {
+    const good = [
+      { rpe: 5, velocity: 0.63 },
+      { rpe: 7, velocity: 0.42 },
+      { rpe: 10, velocity: 0.10 },
+    ]
+    expect(resolveAnchors('back-squat', good)!.source).toBe('personal')
+  })
+
+  it('falls back for a lift with no published table rather than inventing one', () => {
+    expect(resolveAnchors('other', inverted)).toBeNull()
   })
 })

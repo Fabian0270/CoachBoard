@@ -124,32 +124,169 @@ export const MVT_RANGE: Partial<Record<VbtLift, { novice: number; elite: number 
 export const LRV_TOLERANCE_MS = 0.03
 
 // ---------------------------------------------------------------------------
+// Is the scale believable?
+// ---------------------------------------------------------------------------
+//
+// Every number downstream of the tracker is in metres because the coach drew a
+// line across a plate and said how big it was. Get that line wrong and nothing
+// complains: velocity scales linearly with the error, and e1RM divides by a
+// percentage derived from velocity, so the error GROWS. A 3x scale mistake on a
+// 205 kg double produced a 470 kg estimate, which is arithmetically faithful and
+// physically nonsense.
+//
+// Range of motion is the honest check, because unlike velocity it has a known
+// answer: a barbell lift moves the bar a distance set by human anatomy. If the
+// bar reportedly travelled two metres in a squat, the scale is wrong — no
+// judgement about the lifter required.
+
+/** Generous per-lift bar travel in metres, for when the athlete's height is unknown. */
+export const ROM_RANGE: Partial<Record<VbtLift, { min: number; max: number }>> = {
+  'back-squat': { min: 0.25, max: 1.0 },
+  'front-squat': { min: 0.25, max: 1.0 },
+  'bench-press': { min: 0.15, max: 0.7 },
+  'deadlift-conventional': { min: 0.3, max: 1.0 },
+  'deadlift-sumo': { min: 0.25, max: 0.95 },
+  'deadlift-trapbar': { min: 0.3, max: 1.0 },
+  'barbell-row': { min: 0.15, max: 0.9 },
+  'overhead-press': { min: 0.25, max: 0.95 },
+}
+
+/**
+ * Bar travel as a fraction of standing height.
+ *
+ * Rules of thumb, not measurements — which is why each carries a band rather
+ * than only a midpoint, and why the band is what the check uses. Two lifters of
+ * the same height with different femur lengths squat different distances, and
+ * depth, stance and grip move all of these.
+ *
+ * They predict unevenly, and the bands say so:
+ *   deadlift  — best. The bar starts at a fixed height and finishes at the hip.
+ *   squat     — decent, though depth and femur length move it.
+ *   bench     — weakest. Arch, chest depth and grip width matter more than
+ *               stature, so its band is deliberately the widest relative to
+ *               its midpoint.
+ */
+export const ROM_PER_HEIGHT: Partial<Record<VbtLift, { mid: number; min: number; max: number }>> = {
+  'back-squat': { mid: 0.30, min: 0.20, max: 0.40 },
+  'front-squat': { mid: 0.30, min: 0.20, max: 0.40 },
+  'bench-press': { mid: 0.22, min: 0.13, max: 0.30 },
+  'deadlift-conventional': { mid: 0.38, min: 0.30, max: 0.46 },
+  'deadlift-sumo': { mid: 0.32, min: 0.25, max: 0.40 },
+  'deadlift-trapbar': { mid: 0.36, min: 0.28, max: 0.44 },
+  'barbell-row': { mid: 0.22, min: 0.12, max: 0.32 },
+  'overhead-press': { mid: 0.28, min: 0.20, max: 0.36 },
+}
+
+export interface ScaleCheck {
+  /** How far off the nearest plausible bound the measurement is, as a ratio. */
+  factor: number
+  measuredM: number
+  expected: { min: number; max: number }
+  /** Best single guess at the true travel. Only present when height is known. */
+  expectedM: number | null
+  /** What the scale should probably be multiplied by. Null without a height. */
+  suggestedCorrection: number | null
+  /** Whether the athlete's height narrowed the band, so the UI can say so. */
+  usedHeight: boolean
+  verdict: 'ok' | 'suspect'
+}
+
+/**
+ * Sanity-checks the plate calibration against the range of motion it produced.
+ *
+ * The plate stays the primary reference — it sits in the bar's own plane, so it
+ * suffers least from perspective. This is the second opinion, and it exists
+ * because nothing checked the first one: a mis-drawn line rescales every
+ * reading, velocity scales with the error, and e1RM divides by a percentage
+ * derived from velocity, so the error grows rather than passing through.
+ *
+ * Range of motion is checkable in a way velocity is not, because a barbell lift
+ * moves the bar a distance anatomy decides. With the athlete's height that band
+ * tightens a long way — a 180 cm lifter's squat is about 54 cm, not "somewhere
+ * between 25 and 100" — which is what turns this from catching only absurdities
+ * into catching a 1.4x mistake.
+ *
+ * Returns null when there is nothing to check. A null is "unknown", never
+ * "fine": callers must not treat it as a pass.
+ */
+export function checkScale(
+  lift: VbtLift,
+  romM: number | null | undefined,
+  heightCm?: number | null,
+): ScaleCheck | null {
+  if (romM == null || !Number.isFinite(romM) || romM <= 0) return null
+
+  const ratio = ROM_PER_HEIGHT[lift]
+  const usableHeight =
+    heightCm != null && Number.isFinite(heightCm) && heightCm >= 120 && heightCm <= 230
+
+  const expected =
+    usableHeight && ratio
+      ? { min: (heightCm! / 100) * ratio.min, max: (heightCm! / 100) * ratio.max }
+      : ROM_RANGE[lift]
+  if (!expected) return null
+
+  const expectedM = usableHeight && ratio ? (heightCm! / 100) * ratio.mid : null
+
+  const factor =
+    romM > expected.max ? romM / expected.max : romM < expected.min ? expected.min / romM : 1
+
+  return {
+    factor,
+    measuredM: romM,
+    expected,
+    expectedM,
+    // Only offered against the midpoint, and only when height is known: without
+    // one there is no defensible number to scale towards, and a correction the
+    // coach cannot sanity-check is worse than no correction at all.
+    suggestedCorrection: expectedM != null && factor > 1 ? expectedM / romM : null,
+    usedHeight: usableHeight && !!ratio,
+    verdict: factor > 1 ? 'suspect' : 'ok',
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Which velocity the tables get read against
 // ---------------------------------------------------------------------------
 
 export type VelocityMetric = 'mean' | 'peak' | 'propulsive'
 
+/** Narrows a stored string, which may predate the column or be hand-edited. */
+export function isVelocityMetric(value: unknown): value is VelocityMetric {
+  return value === 'mean' || value === 'peak' || value === 'propulsive'
+}
+
 /**
- * Mean PROPULSIVE velocity everywhere, with mean as the fallback.
+ * Peak for bench, mean for everything else.
  *
- * This replaces a per-lift table that read bench off peak and everything else
- * off mean. That table was an empirical patch for a real problem — a large share
- * of a bench concentric is spent braking the bar so it does not leave the hands,
- * and over 35 cm of travel that share is big enough to drag the mean well below
- * what the reference tables describe, where a 100 cm squat barely notices. It
- * worked on one clean bench clip and then fell over on the next one, because
- * peak is a near-single-sample statistic and a tracker re-lock lands in it whole.
+ * A brief detour read mean PROPULSIVE velocity for every lift instead. The
+ * theory was sound — MPV removes exactly the braking phase each lift has, a lot
+ * on bench and little on squat, so no lift needs a special case — but it was
+ * never reconciled with DEFAULT_LV_SLOPE, which is a slope for MEAN velocity
+ * (see the note on that constant). MPV is faster than mean by construction, so
+ * every lift read high, and because e1RM divides by the derived %1RM the error
+ * grew rather than passed through: a real 205 kg double came back at 272 kg,
+ * and a worse-tracked one at 470 kg.
  *
- * MPV fixes the same problem from the other end. It averages, so it is robust
- * like the mean, and it removes exactly the braking phase each lift actually
- * has — a lot on bench, little on squat — so no lift needs a special case and
- * nothing has to be tuned per lift.
+ * The per-lift table below is empirical, and its evidence is real clips:
  *
- * Falls back to mean, per rep, when there is no MPV to use: the phase boundary
- * is literally 9.81 m/s², so it cannot be located on an uncalibrated path.
+ *   bench 170 kg   mean 0.24 -> 175 kg    peak 0.37 -> 195 kg   (real 200)
+ *   squat 180 kg   mean 0.62 -> 249 kg    peak 1.06 -> 459 kg   (real 250)
+ *
+ * So peak rescues bench and destroys squat, and the metric is a property of the
+ * lift. Bench spends a large share of a 35 cm concentric braking the bar so it
+ * does not leave the hands; a 100 cm squat barely notices the same effect.
+ *
+ * This is a judgement call, not a claim that peak is the right quantity — which
+ * is why it stays visible and overridable in the UI, and why MPV is still
+ * computed and shown per rep. The principled fix remains MPV read against a
+ * slope actually derived for MPV; that needs a source for the slope, not a
+ * guess, and until it exists the pairing above is the one with evidence behind
+ * it. `peakVelocity` is a percentile rather than the single fastest sample, so
+ * a tracker re-lock cannot land in it whole — see repMetrics.
  */
-export function defaultVelocityMetric(_lift: VbtLift): VelocityMetric {
-  return 'propulsive'
+export function defaultVelocityMetric(lift: VbtLift): VelocityMetric {
+  return lift === 'bench-press' ? 'peak' : 'mean'
 }
 
 export const VELOCITY_METRIC_LABEL: Record<VelocityMetric, string> = {
@@ -243,7 +380,21 @@ export function resolveAnchors(
     (a) => Number.isFinite(a.rpe) && Number.isFinite(a.velocity) && a.velocity > 0,
   )
   const distinctRpe = new Set(usable.map((a) => a.rpe)).size
-  if (usable.length >= 3 && distinctRpe >= 2) return { anchors: usable, source: 'personal' }
+
+  // A personal chart has to slope the right way to be a chart at all: harder
+  // effort means a slower bar, so velocity must FALL as RPE rises. Three sets
+  // that happen to slope upwards are not a steeper truth, they are a set of
+  // mislabelled anchors — and the chart built from them reads a 0.09 m/s grind
+  // as "RPE 5, easy, add load", which is the exact opposite of what happened.
+  //
+  // The same rule already guards the load-velocity profile as 'positive-slope'.
+  // This is that rule one level down, and the fallback is the published table
+  // rather than nothing, because a population chart beats an inverted personal
+  // one every time.
+  const fit = usable.length >= 3 && distinctRpe >= 2 ? fitLine(
+    usable.map((a) => ({ x: a.rpe, y: a.velocity })),
+  ) : null
+  if (fit && fit.slope < 0) return { anchors: usable, source: 'personal' }
 
   const published = LRV_ANCHORS[lift]
   return published ? { anchors: published, source: 'published' } : null

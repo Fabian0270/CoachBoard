@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Gauge, Ruler, TrendingDown, TriangleAlert } from 'lucide-react'
 import { RPE_VALUES } from 'coachboard-shared/rpe'
 import { looksMistracked, type RepMetrics } from 'coachboard-shared/videoAnalysis'
@@ -11,6 +11,7 @@ import {
   defaultMvt,
   defaultVelocityMetric,
   e1RMFromVelocity,
+  checkScale,
   effectiveRpe,
   effortLabel,
   recordedMaxFor,
@@ -110,6 +111,10 @@ interface Props {
   reps: RepMetrics[]
   calibrated: boolean
   athleteName: string | null
+  /** Whose measured 1RM velocity to load and save. Null = nothing remembered. */
+  athleteId?: string | null
+  /** Tightens the scale check: bar travel scales with stature. Null is fine. */
+  athleteHeightCm?: number | null
   /** Every anchor for this lift, this set included — resolved by the page so its
    *  rep table and this panel never disagree about the same rep. */
   anchors: LrvAnchor[]
@@ -129,6 +134,8 @@ export default function VelocityPanel({
   reps,
   calibrated,
   athleteName,
+  athleteId,
+  athleteHeightCm,
   anchors: allAnchors,
   savedPoints,
   maxes,
@@ -178,6 +185,46 @@ export default function VelocityPanel({
   const shownRpe = reading ? effectiveRpe(reading, value.calledRpe) : 0
 
   const knownMax = useMemo(() => recordedMaxFor(lift, maxes), [lift, maxes])
+
+  /**
+   * The coach's own measured 1RM velocity for THIS athlete and THIS lift.
+   *
+   * The published band is a population figure and the personal number is the
+   * whole point of velocity-based training, so it is remembered rather than
+   * retyped on every clip. Keyed by athlete and lift together, because it is a
+   * property of the pair — a lifter's squat and bench do not share one.
+   */
+  useEffect(() => {
+    if (!athleteId) return
+    let cancelled = false
+    fetch(`/api/athletes/${athleteId}/mvt`)
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((byLift: Record<string, number>) => {
+        if (cancelled) return
+        const stored = byLift[lift]
+        // Only ever fills a blank. Overwriting what the coach is looking at
+        // because a fetch landed late would be worse than showing nothing.
+        setMvtText(stored != null ? String(stored) : '')
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [athleteId, lift])
+
+  const rememberMvt = useCallback(
+    async (text: string) => {
+      if (!athleteId) return
+      const parsed = text.trim() ? num(text) : null
+      const velocity = parsed != null && Number.isFinite(parsed) && parsed > 0 ? parsed : null
+      await fetch(`/api/athletes/${athleteId}/mvt`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lift, velocity }),
+      }).catch(() => {})
+    },
+    [athleteId, lift],
+  )
 
   const suggestedMvt = useMemo(() => defaultMvt(lift, allAnchors), [lift, allAnchors])
   const mvt = mvtText.trim() && Number.isFinite(num(mvtText)) ? num(mvtText) : suggestedMvt
@@ -229,6 +276,28 @@ export default function VelocityPanel({
   )
 
   /**
+   * Does the scale survive contact with anatomy?
+   *
+   * Every reading on this panel is metres because the coach drew a line across
+   * a plate. Get that wrong and nothing complains — velocity scales with the
+   * error and e1RM divides by a percentage derived from velocity, so the error
+   * grows. A 3x scale mistake turned a 205 kg double into a 470 kg estimate.
+   *
+   * Range of motion is checkable in a way velocity is not: a squat moves the bar
+   * a distance human anatomy decides. Median rather than mean, so one mistracked
+   * rep cannot raise the alarm on its own.
+   */
+  const scale = useMemo(() => {
+    if (!lift) return null
+    const roms = trusted
+      .map((r) => r.romM)
+      .filter((m): m is number => m != null && Number.isFinite(m) && m > 0)
+      .sort((a, b) => a - b)
+    if (roms.length === 0) return null
+    return checkScale(lift, roms[Math.floor(roms.length / 2)], athleteHeightCm)
+  }, [lift, trusted, athleteHeightCm])
+
+  /**
    * What the coach counted, against what survived tracking.
    *
    * Only a disagreement is worth saying anything about — and it is worth saying
@@ -249,9 +318,14 @@ export default function VelocityPanel({
 
   const setLift = (next: VbtLift) => {
     rememberLift(next)
-    onChange({ ...value, lift: next })
-    // The MVT belongs to a lift, so a leftover override from the previous one
-    // would be silently wrong.
+    // Both overrides below belong to a LIFT, so a leftover from the previous one
+    // is silently wrong. The metric was the one that got missed: picking "mean"
+    // on a squat and then switching to bench kept reading bench off the mean,
+    // which is the exact case defaultVelocityMetric exists to prevent. Null
+    // means "follow the lift's default", so bench goes back to peak.
+    onChange({ ...value, lift: next, metric: null })
+    // Cleared here for the no-athlete case; where there IS an athlete the load
+    // effect immediately replaces it with whatever was measured for the new lift.
     setMvtText('')
   }
 
@@ -449,6 +523,41 @@ export default function VelocityPanel({
                 </p>
               )}
 
+              {/* Above the estimate, not below it: by the time the coach has
+                  read a number they believe it, and this is the one fault that
+                  makes every number on the panel wrong at once. */}
+              {scale?.verdict === 'suspect' && (
+                <p className="mt-2 border-t pt-2 text-sm text-destructive">
+                  <span className="font-medium">Check the plate scale.</span>{' '}
+                  <span>
+                    These reps measure {Math.round(scale.measuredM * 100)} cm of bar travel, where{' '}
+                    {scale.usedHeight && athleteName
+                      ? `${athleteName} should be around ${Math.round(scale.expectedM! * 100)} cm`
+                      : `this lift is normally ${Math.round(scale.expected.min * 100)}–${Math.round(scale.expected.max * 100)} cm`}
+                    . Every speed and estimate below is off by roughly the same factor
+                    {scale.factor >= 1.3 ? ` (about ${scale.factor.toFixed(1)}×)` : ''}, because
+                    they are all derived from that measurement.
+                  </span>
+                  {/* Without a height there is no defensible number to scale
+                      towards, so no correction is offered rather than a made-up
+                      one the coach cannot sanity-check. */}
+                  {!scale.usedHeight && (
+                    <span className="block text-muted-foreground">
+                      Add {athleteName ?? 'this athlete'}&rsquo;s height on their page and this
+                      check gets much tighter — bar travel scales with build.
+                    </span>
+                  )}
+                  {onSetScale && (
+                    <button
+                      onClick={onSetScale}
+                      className="ml-1 underline underline-offset-2 hover:no-underline"
+                    >
+                      Redo the scale
+                    </button>
+                  )}
+                </p>
+              )}
+
               {/* Straight from velocity to %1RM, not via reps and the RPE chart.
                   RPE-to-%1RM is individual — a strong lifter has more in reserve
                   than the chart assumes — where velocity at a given relative load
@@ -542,6 +651,10 @@ export default function VelocityPanel({
                 <input
                   value={mvtText}
                   onChange={(e) => setMvtText(e.target.value)}
+                  // Saved on blur rather than per keystroke: "0.1" is a valid
+                  // prefix of "0.12", and storing every intermediate would
+                  // record numbers the coach never meant.
+                  onBlur={() => void rememberMvt(mvtText)}
                   placeholder={suggestedMvt ? suggestedMvt.toFixed(2) : '—'}
                   inputMode="decimal"
                   className="w-16 rounded-md border bg-background px-1.5 py-0.5 text-right text-xs"

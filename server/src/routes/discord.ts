@@ -34,6 +34,7 @@ import {
   getInboxCounts,
   getStorageUsage,
   deleteMedia,
+  MediaHasAnalysisError,
   linkUser,
   assignMediaToAthlete,
   setMediaWorkout,
@@ -395,12 +396,27 @@ router.get('/media/:id', async (req, res) => {
 })
 
 router.delete('/media/:id', async (req, res) => {
-  const deleted = await deleteMedia(req.params.id)
-  if (!deleted) {
-    res.status(404).json({ error: 'Media not found' })
-    return
+  try {
+    const deleted = await deleteMedia(req.params.id)
+    if (!deleted) {
+      res.status(404).json({ error: 'Media not found' })
+      return
+    }
+    res.json({ ok: true })
+  } catch (err) {
+    // A saved analysis depends on this video. Say which, so the refusal points
+    // at the thing to delete first rather than just saying no.
+    if (err instanceof MediaHasAnalysisError) {
+      res.status(409).json({
+        error:
+          err.analyses === 1
+            ? 'A saved bar-path analysis uses this video. Delete that analysis first.'
+            : `${err.analyses} saved bar-path analyses use this video. Delete those first.`,
+      })
+      return
+    }
+    throw err
   }
-  res.json({ ok: true })
 })
 
 router.get('/media/:id/file', async (req, res) => {

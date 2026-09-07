@@ -1,10 +1,33 @@
-import { app, BrowserWindow, Menu, session, dialog, nativeTheme, safeStorage, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  session,
+  dialog,
+  desktopCapturer,
+  nativeTheme,
+  safeStorage,
+  shell,
+} from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { createServer, type RequestListener } from 'http'
 import { autoUpdater } from 'electron-updater'
 
-const isDev = process.env.NODE_ENV === 'development'
+/**
+ * Dev means "running from source", which is exactly what app.isPackaged says.
+ *
+ * This used to read NODE_ENV, which the dev script never set — so `npm run dev`
+ * started Vite, then loaded the *built* bundle from the Express server instead.
+ * There was no error: the app opened, and every edit silently did nothing
+ * because the window was showing whatever the last `npm run build` produced. An
+ * Electron window has no address bar either, so there was no way to see which
+ * one you had. Deriving it removes the trap rather than documenting it.
+ *
+ * To exercise the built client, package it — see the packaging notes in
+ * docs/ROADMAP.md for why that is the only trustworthy check anyway.
+ */
+const isDev = !app.isPackaged
 const SERVER_PORT = 3001
 
 /**
@@ -20,9 +43,16 @@ interface ServerBundle {
   createApp(staticDir: string, logPath: string): RequestListener
   configureSecureStore(opts: { safeStorage: unknown; userDataDir: string }): void
   configureSystem?(opts: { shell: unknown }): void
+  configureCapture?(opts: { desktopCapturer: unknown }): void
+  /** The source the coach picked, consumed once. See services/captureService. */
+  resolvePendingSource?(): Promise<
+    { kind: 'self' } | { kind: 'source'; source: Electron.DesktopCapturerSource } | null
+  >
   configureUpdates?(opts: { install: () => void }): void
   setUpdateState?(state: { status: string; version?: string | null; message?: string | null }): void
   runStartupBackup?(): Promise<string | null>
+  sweepRecordings?(): Promise<number>
+  sweepAnalysisVideos?(): Promise<number>
   initDiscordSync?(opts: { launchDelayMs: number }): void | Promise<void>
 }
 
@@ -130,6 +160,22 @@ async function startServer(): Promise<void> {
   // the data folder from Settings and from the error screen). Optional-chained so
   // a stale bundle without the export can't break startup.
   bundle.configureSystem?.({ shell })
+  bundle.configureCapture?.({ desktopCapturer })
+
+  // Feedback recordings are scratch space: the coach keeps one only by saving or
+  // sending it. Anything still on disk after a restart is therefore abandoned —
+  // an interrupted recording, or a review dialog that was never answered — and
+  // keeping it would grow their disk with files they already declined. Needs
+  // configureSecureStore above for the userData path.
+  const swept = await bundle.sweepRecordings?.().catch(() => 0)
+  if (swept) log(`Swept ${swept} abandoned recording(s)`)
+
+  // Analysis videos are the opposite of recordings — kept until the coach
+  // deletes the analysis — so this only collects files whose row is already
+  // gone. It exists because deleting a file can fail while a player holds it
+  // open on Windows, which would otherwise strand it forever.
+  const orphans = await bundle.sweepAnalysisVideos?.().catch(() => 0)
+  if (orphans) log(`Swept ${orphans} orphaned analysis video(s)`)
 
   const expressApp = bundle.createApp(staticDir, logPath)
 
@@ -211,6 +257,101 @@ function initAutoUpdate(): void {
   })
 }
 
+/**
+ * Screen capture and camera/mic permissions for Feature 11c.
+ *
+ * The roadmap originally rejected getDisplayMedia for 11c in favour of
+ * canvas.captureStream(). That only ever worked for the bar-path overlay: the
+ * recorder also has to capture program pages, the Excel preview — and now any
+ * window the coach picks — none of which live in a canvas. The macOS Screen
+ * Recording prompt that argument was avoiding is a cost we take instead, and
+ * Windows is the only shipping target today.
+ */
+function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): void {
+  // Only our own page may ask, and only for what the app actually uses.
+  // Electron's default handler grants far more, and leaving camera and
+  // microphone to an undocumented default is not a decision worth inheriting.
+  //
+  // Clipboard is on the list because two real call sites depend on it — copying
+  // the Discord invite URL, and the error screen's copy-details button. A
+  // blanket media-only allowlist silently breaks both.
+  // 'fullscreen' is here because the spike caught it being denied the moment a
+  // recording was played back — the <video> fullscreen button goes through this
+  // handler, and so does the Excel preview. Exactly the case the logging below
+  // exists to surface.
+  const ALLOWED = new Set([
+    'media',
+    'clipboard-write',
+    'clipboard-sanitized-write',
+    'fullscreen',
+  ])
+
+  sess.setPermissionRequestHandler((contents, permission, callback) => {
+    const granted = ALLOWED.has(permission) && isOwnOrigin(contents.getURL())
+    // Logged rather than swallowed: a permission we did not anticipate should
+    // show up as a line in the log, not as a feature that mysteriously stopped.
+    if (!granted) log(`Permission denied: ${permission} for ${contents.getURL()}`)
+    callback(granted)
+  })
+
+  // The synchronous sibling of the above: Chromium consults this for permission
+  // *checks* (e.g. enumerateDevices labels) without a user gesture.
+  sess.setPermissionCheckHandler((_contents, permission, origin) =>
+    ALLOWED.has(permission) && isOwnOrigin(origin),
+  )
+
+  sess.setDisplayMediaRequestHandler(
+    (_request, callback) => {
+      // useSystemPicker stays on so this handler is skipped wherever the OS does
+      // provide a picker (recent macOS). It does NOT engage on Windows in
+      // Electron 33 — measured during the 11c spike, where every capture landed
+      // here — so on Windows the app's own picker is the real path, and the
+      // source it parked is what gets recorded.
+      void serverBundle
+        ?.resolvePendingSource?.()
+        .then((chosen) => {
+          if (!chosen) {
+            // No choice parked: the request did not come from our picker, or the
+            // window the coach chose has since closed. Refusing is the honest
+            // answer — defaulting to the whole screen would record something
+            // they never agreed to share.
+            log('Display capture refused: no source was chosen')
+            callback({ video: undefined })
+            return
+          }
+          // 'loopback' mixes the machine's own audio in, so a lift video's sound
+          // survives into the recording. Confirmed working on Windows.
+          if (chosen.kind === 'self') {
+            // Electron's window enumeration omits our own windows, so recording
+            // CoachBoard — the whole point of the program-walkthrough half of
+            // 11c — is done by capturing the frame rather than the window.
+            // Also strictly better: nothing overlapping the window can bleed in.
+            log('Display capture: CoachBoard (frame)')
+            callback({ video: win.webContents.mainFrame, audio: 'loopback' })
+            return
+          }
+          log(`Display capture: ${chosen.source.name}`)
+          callback({ video: chosen.source, audio: 'loopback' })
+        })
+        .catch((err: unknown) => {
+          log(`Display capture failed: ${describeError(err)}`)
+          callback({ video: undefined })
+        })
+    },
+    { useSystemPicker: true },
+  )
+}
+
+/** Dev serves the renderer from :3000, production from the embedded server. */
+function isOwnOrigin(url: string): boolean {
+  try {
+    const { hostname } = new URL(url)
+    return hostname === 'localhost' || hostname === '127.0.0.1'
+  } catch {
+    return false
+  }
+}
+
 async function createWindow(): Promise<void> {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -243,6 +384,11 @@ async function createWindow(): Promise<void> {
       contextIsolation: true,
     },
   })
+
+  // Needs the window: recording CoachBoard itself captures its frame, not a
+  // desktopCapturer source. Handlers only have to exist before the first
+  // getDisplayMedia call, which is long after load.
+  configureMediaHandlers(session.defaultSession, win)
 
   // Keep a standard Edit menu so the copy/cut/paste/select-all keyboard
   // accelerators keep working (a null menu disables them). autoHideMenuBar keeps

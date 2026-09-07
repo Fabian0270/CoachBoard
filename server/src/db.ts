@@ -11,6 +11,7 @@ export interface AthleteTable {
   email: string | null
   sport: string | null
   weight_class: string | null   // powerlifting weight class, e.g. '83' (kg); free where not applicable
+  height_cm: number | null      // standing height; bar-path uses it to sanity-check the plate scale
   date_of_birth: string | null
   notes: string | null
   archived: number   // 0/1 — archived athletes are hidden from the active roster
@@ -94,6 +95,15 @@ export interface AthleteMaxTable {
   unit: string
   recorded_at: string
   notes: string | null
+}
+
+/** One athlete's measured 1RM bar speed for one lift. See the CREATE below. */
+export interface AthleteMvtTable {
+  athlete_id: string
+  /** A `VbtLift` id. */
+  lift: string
+  velocity: number
+  updated_at: string
 }
 
 export interface PaymentTable {
@@ -236,6 +246,15 @@ export interface VideoAnalysisTable {
   lift: string | null
   load_kg: number | null
   called_rpe: number | null
+  /** Which velocity the set was read from, so reopening it cannot disagree with
+   *  the live panel. Null follows the lift's default. */
+  metric: string | null
+  /** The analysis's OWN copy of the video, for a locally imported clip. Null
+   *  for a Discord clip, whose bytes stay under discord_media.local_path —
+   *  copying them would duplicate hundreds of megabytes to own a second
+   *  identical file. Either way the analysis can be replayed. */
+  video_path: string | null
+  video_bytes: number | null
   created_at: string
   updated_at: string
 }
@@ -247,6 +266,7 @@ export interface DB {
   exercises: ExerciseTable
   progress_records: ProgressRecordTable
   athlete_maxes: AthleteMaxTable
+  athlete_mvt: AthleteMvtTable
   payments: PaymentTable
   export_styles: ExportStyleTable
   discord_channels: DiscordChannelTable
@@ -382,6 +402,10 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
 
   await addColumnIfMissing('athletes', 'archived', 'INTEGER NOT NULL DEFAULT 0')
   await addColumnIfMissing('athletes', 'weight_class', 'TEXT')
+  // Feature 11b follow-up: bar-path readings are only as good as the plate
+  // scale, and nothing checked it. Height gives an independent expectation for
+  // how far the bar should travel, which is checkable in a way velocity is not.
+  await addColumnIfMissing('athletes', 'height_cm', 'INTEGER')
   await addColumnIfMissing('programs', 'enabled_columns', 'TEXT')
   await addColumnIfMissing('programs', 'focus', 'TEXT')
   await addColumnIfMissing('programs', 'export_layout', 'TEXT')
@@ -473,6 +497,24 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   `.execute(_db)
 
   await sql`CREATE INDEX IF NOT EXISTS idx_athlete_maxes_athlete_id ON athlete_maxes(athlete_id)`.execute(_db)
+
+  // The velocity an athlete's bar actually moves at on a true 1RM, per lift.
+  //
+  // The published MVT band is a population figure, and the whole point of
+  // velocity-based training is that this number is personal — a coach who has
+  // measured it once should never retype it. CASCADE, unlike video_analyses:
+  // this is a property OF the athlete, not the coach's separate work about them,
+  // so it has no meaning once they are gone.
+  await sql`
+    CREATE TABLE IF NOT EXISTS athlete_mvt (
+      athlete_id TEXT NOT NULL,
+      lift TEXT NOT NULL,
+      velocity REAL NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (athlete_id, lift),
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
+    )
+  `.execute(_db)
 
   await sql`
     CREATE TABLE IF NOT EXISTS payments (
@@ -665,6 +707,13 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   await addColumnIfMissing('video_analyses', 'lift', 'TEXT')
   await addColumnIfMissing('video_analyses', 'load_kg', 'REAL')
   await addColumnIfMissing('video_analyses', 'called_rpe', 'REAL')
+  // Keeping the footage: the analysis owns a copy for a local import, and
+  // references discord_media for a synced clip. `metric` joins them because a
+  // reopened analysis that reads the set differently from the live panel shows
+  // the same lift two ways.
+  await addColumnIfMissing('video_analyses', 'metric', 'TEXT')
+  await addColumnIfMissing('video_analyses', 'video_path', 'TEXT')
+  await addColumnIfMissing('video_analyses', 'video_bytes', 'INTEGER')
 
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_media ON video_analyses(media_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_athlete ON video_analyses(athlete_id)`.execute(_db)

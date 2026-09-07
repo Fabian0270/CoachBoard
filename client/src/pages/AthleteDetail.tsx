@@ -31,6 +31,7 @@ interface Athlete {
   name: string
   sport: string | null
   weight_class: string | null
+  height_cm: number | null
   email: string | null
   date_of_birth: string | null
   notes: string | null
@@ -54,7 +55,7 @@ export default function AthleteDetail() {
   const [programs, setPrograms] = useState<Program[]>([])
   const [notFound, setNotFound] = useState(false)
   const [editing, setEditing] = useState(false)
-  const [editForm, setEditForm] = useState({ name: '', email: '', sport: '', weight_class: '', date_of_birth: '', notes: '' })
+  const [editForm, setEditForm] = useState({ name: '', email: '', sport: '', weight_class: '', height_cm: '', date_of_birth: '', notes: '' })
   const [saving, setSaving] = useState(false)
   const { configured: discordConfigured } = useDiscordConfigured()
   const [discordUsernames, setDiscordUsernames] = useState<string[]>([])
@@ -127,6 +128,7 @@ export default function AthleteDetail() {
       email: athlete.email ?? '',
       sport: athlete.sport ?? '',
       weight_class: athlete.weight_class ?? '',
+      height_cm: athlete.height_cm != null ? String(athlete.height_cm) : '',
       date_of_birth: athlete.date_of_birth ?? '',
       notes: athlete.notes ?? '',
     })
@@ -219,6 +221,22 @@ export default function AthleteDetail() {
                     </div>
                   )}
                   <div className="space-y-1">
+                    <Label htmlFor="edit-height">Height (cm)</Label>
+                    <Input
+                      id="edit-height"
+                      type="number"
+                      min={120}
+                      max={230}
+                      placeholder="e.g. 180"
+                      value={editForm.height_cm}
+                      onChange={(e) => setEditForm({ ...editForm, height_cm: e.target.value })}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Optional. Bar-path analysis uses it to check the plate scale — the bar
+                      travels a distance their build decides, so a wrong scale shows up.
+                    </p>
+                  </div>
+                  <div className="space-y-1">
                     <Label htmlFor="edit-dob">Date of Birth</Label>
                     <Input id="edit-dob" type="date" value={editForm.date_of_birth} onChange={(e) => setEditForm({ ...editForm, date_of_birth: e.target.value })} />
                   </div>
@@ -243,6 +261,9 @@ export default function AthleteDetail() {
                 {athlete.sport && <div><span className="font-medium">Sport:</span> {athlete.sport}</div>}
                 {isPowerlifting(athlete.sport) && athlete.weight_class && (
                   <div><span className="font-medium">Weight class:</span> {athlete.weight_class} kg</div>
+                )}
+                {athlete.height_cm != null && (
+                  <div><span className="font-medium">Height:</span> {athlete.height_cm} cm</div>
                 )}
                 {athlete.date_of_birth && <div><span className="font-medium">Date of Birth:</span> {athlete.date_of_birth}</div>}
                 {discordUsernames.length > 0 && (
