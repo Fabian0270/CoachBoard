@@ -1,3 +1,4 @@
+import { MAX_MVT, MIN_MVT } from 'coachboard-shared/vbt'
 import { getDb } from '../db.js'
 
 // ---------------------------------------------------------------------------
@@ -10,9 +11,8 @@ import { getDb } from '../db.js'
 // happened while it lived in component state.
 // ---------------------------------------------------------------------------
 
-/** Sane bounds for a barbell at a maximum. Wider than any published band. */
-const MIN_VELOCITY = 0.01
-const MAX_VELOCITY = 2
+// Sane bounds for a barbell at a maximum come from shared/vbt.ts, so the client
+// cannot offer a value this would then refuse.
 
 /** Every lift this athlete has a measured 1RM velocity for, keyed by lift id. */
 export async function getAthleteMvts(athleteId: string): Promise<Record<string, number>> {
@@ -45,7 +45,7 @@ export async function setAthleteMvt(
       .execute()
     return
   }
-  if (!Number.isFinite(velocity) || velocity < MIN_VELOCITY || velocity > MAX_VELOCITY) {
+  if (!Number.isFinite(velocity) || velocity < MIN_MVT || velocity > MAX_MVT) {
     throw new Error('That is not a plausible bar speed')
   }
   // One row per athlete+lift, so re-measuring replaces rather than accumulating

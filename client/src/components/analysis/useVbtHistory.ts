@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
 import {
   bestRepVelocity,
@@ -99,4 +99,79 @@ export function useAthleteMaxes(athleteId: string | null): { lift_name: string; 
   }, [athleteId])
 
   return maxes
+}
+
+export interface AthleteMvt {
+  /** Measured 1RM bar speed by lift id. A lift is absent until one is stored. */
+  byLift: Record<string, number>
+  /** Record, replace, or (with null) clear one lift's value. */
+  save: (lift: VbtLift, velocity: number | null) => Promise<void>
+}
+
+/**
+ * The athlete's own measured 1RM bar speed, per lift.
+ *
+ * A hook rather than a fetch inside the velocity panel because three pages read
+ * this number and the analysis page also has to compare against it when a set
+ * measures a new one. While it lived in the panel, reopening or comparing a set
+ * silently fell back to the published 0.25 m/s and reported a different
+ * estimated 1RM for the same lift.
+ *
+ * `save` updates `byLift` itself instead of refetching: the server's reply is
+ * the row we just wrote, and a round trip would leave the field the coach is
+ * looking at showing the old number.
+ */
+export function useAthleteMvt(athleteId: string | null): AthleteMvt {
+  const [byLift, setByLift] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    if (!athleteId) {
+      setByLift({})
+      return
+    }
+    let cancelled = false
+    fetch(`/api/athletes/${encodeURIComponent(athleteId)}/mvt`)
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((data: unknown) => {
+        if (cancelled) return
+        // A hand-edited row could put anything here, and every downstream
+        // consumer divides by it.
+        const clean: Record<string, number> = {}
+        if (data && typeof data === 'object') {
+          for (const [lift, velocity] of Object.entries(data)) {
+            if (typeof velocity === 'number' && Number.isFinite(velocity)) clean[lift] = velocity
+          }
+        }
+        setByLift(clean)
+      })
+      // Nothing stored is the normal case for a new athlete, and it reads the
+      // same as a failed fetch: fall back to the published band.
+      .catch(() => !cancelled && setByLift({}))
+    return () => {
+      cancelled = true
+    }
+  }, [athleteId])
+
+  const save = useCallback(
+    async (lift: VbtLift, velocity: number | null) => {
+      if (!athleteId) return
+      const res = await fetch(`/api/athletes/${encodeURIComponent(athleteId)}/mvt`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lift, velocity }),
+      })
+      if (!res.ok) throw new Error('Could not save that 1RM velocity')
+      setByLift((prev) => {
+        const next = { ...prev }
+        // A null clears the row rather than storing a zero — "not measured" and
+        // "measured as nothing" are different, and only the first falls back.
+        if (velocity == null) delete next[lift]
+        else next[lift] = velocity
+        return next
+      })
+    },
+    [athleteId],
+  )
+
+  return { byLift, save }
 }

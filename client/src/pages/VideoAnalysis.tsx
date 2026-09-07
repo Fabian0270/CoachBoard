@@ -40,6 +40,8 @@ import {
 import {
   defaultVelocityMetric,
   lastRepVelocity,
+  liftLabel,
+  measuredMvt,
   readRep,
   rpeFromLastRepVelocity,
   zoneFor,
@@ -48,7 +50,12 @@ import VelocityPanel, {
   rememberedLift,
   type SetContextState,
 } from '../components/analysis/VelocityPanel'
-import { useVbtHistory, useAthleteMaxes } from '../components/analysis/useVbtHistory'
+import {
+  useVbtHistory,
+  useAthleteMaxes,
+  useAthleteMvt,
+} from '../components/analysis/useVbtHistory'
+import { useConfirm } from '../components/ui/confirm-dialog'
 import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import { num } from '../lib/num'
 import { uploadVideo } from '../lib/uploadAnalysisVideo'
@@ -72,6 +79,7 @@ export default function VideoAnalysis() {
   const { mediaId } = useParams()
   const navigate = useNavigate()
   const toast = useToast()
+  const confirm = useConfirm()
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   /** The path as it is being tracked — see the note where it is filled. */
@@ -355,6 +363,10 @@ export default function VideoAnalysis() {
     metric,
   )
   const athleteMaxes = useAthleteMaxes(athleteId)
+  // Resolved here rather than in the panel because saving a set can also MEASURE
+  // this number, and the page is what knows a save happened.
+  const athleteMvt = useAthleteMvt(athleteId)
+  const storedMvt = athleteMvt.byLift[setContext.lift] ?? null
   const lastV = pixelsPerMetre !== null ? lastRepVelocity(reps, metric) : null
   const anchors = useMemo(
     () =>
@@ -534,10 +546,52 @@ export default function VideoAnalysis() {
       setOfferSave(false)
       setSavedCount((n) => n + 1)
       toast.success('Analysis saved')
+      await offerMeasuredMvt()
     } catch {
       toast.error('Could not save that analysis.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  /**
+   * A set called RPE 10 has just measured this athlete's 1RM velocity. Offer it.
+   *
+   * Only ever downwards. The MVT is a floor — the slowest a maximum can still be
+   * completed — so a slower max is evidence the stored number was too high,
+   * while a faster one only says this attempt was not the athlete's worst day.
+   *
+   * It asks rather than writing, because nothing ever raises the number back: a
+   * single mistracked rep accepted silently would quietly deflate every 1RM
+   * estimate for that lift from then on, with no symptom pointing at the cause.
+   *
+   * Runs after the save has landed, so a failed save never edits the athlete.
+   */
+  const offerMeasuredMvt = async () => {
+    if (!athleteId || reps.length === 0) return
+    const measured = measuredMvt(reps, { calledRpe: setContext.calledRpe, metric })
+    if (measured == null) return
+    if (storedMvt != null && measured >= storedMvt) return
+
+    const who = athleteName ?? 'this athlete'
+    const ok = await confirm({
+      title: `Update ${who}'s 1RM velocity?`,
+      description:
+        `This ${liftLabel(setContext.lift)} set was called RPE 10 and its last rep moved at ` +
+        `${measured.toFixed(2)} m/s` +
+        (storedMvt != null
+          ? `, below the ${storedMvt.toFixed(2)} m/s stored for ${who}.`
+          : `, and nothing is stored for ${who} yet.`) +
+        ` Every future 1RM estimate for this lift will be judged against it.`,
+      confirmLabel: 'Update',
+      cancelLabel: 'Keep current',
+    })
+    if (!ok) return
+    try {
+      await athleteMvt.save(setContext.lift, measured)
+      toast.success(`1RM velocity for ${liftLabel(setContext.lift)} is now ${measured.toFixed(2)} m/s`)
+    } catch {
+      toast.error('Could not save that 1RM velocity.')
     }
   }
 
@@ -1030,6 +1084,8 @@ export default function VideoAnalysis() {
                 calibrated={pixelsPerMetre !== null}
                 athleteName={athleteName}
                 athleteId={athleteId}
+                storedMvt={storedMvt}
+                onSaveMvt={(velocity) => athleteMvt.save(setContext.lift, velocity)}
                 athleteHeightCm={athleteHeightCm}
                 anchors={anchors}
                 savedPoints={savedPoints}
