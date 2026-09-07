@@ -46,6 +46,31 @@ extraResources:
     to: server/dist/electron-bundle.cjs
   - from: ../client/dist
     to: client/dist
+    # MediaPipe ships two WASM builds of the same runtime, ~12 MB each, and only
+    # one of them is ever loaded: the classic (`importScripts`) build, because
+    # Vite emits workers as IIFE in a production build. The `_module_` pair is
+    # needed only in dev, where Vite serves workers as ES modules — so it is
+    # excluded here rather than paid for in every installer and, because
+    # electron-updater downloads the whole installer, in every update.
+    #
+    # pose.worker.ts picks its loader at runtime from whether `importScripts`
+    # exists. IF THAT EVER BECOMES A MODULE WORKER — anyone setting
+    # `worker.format: 'es'` in client/vite.config.ts — this exclusion starts
+    # deleting the only loader that would work, and pose will fail in the
+    # packaged build ONLY, which CI cannot see. Delete this filter if that day
+    # comes.
+    #
+    # The models are the same story: both are vendored so the 11e-0 spike can
+    # keep comparing them on real footage, but only the one the app loads is
+    # worth shipping. That is `lite` — the spike measured `full` at ~46 ms a
+    # frame against a ~33 ms budget, and `lite` at ~32 ms with identical
+    # detection. If 11e-6's joint angles come out noisy and `full` is
+    # reinstated, flip which line is negated here AND the model the worker asks
+    # for: those two must agree, and nothing checks that they do.
+    filter:
+      - '**/*'
+      - '!vendor/mediapipe/wasm/vision_wasm_module_internal.*'
+      - '!vendor/mediapipe/models/pose_landmarker_full.task'
   - from: ../node_modules/better-sqlite3
     to: node_modules/better-sqlite3
   - from: ../node_modules/bindings
