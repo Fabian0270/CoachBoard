@@ -15,7 +15,10 @@ A desktop application for strength coaches to manage athletes, build and analyze
 - **Email delivery** — send a program's Excel sheet straight to an athlete's email from inside the app over SMTP, with the app password stored encrypted via the OS keychain.
 - **Discord integration** — sync athlete video check-ins from a Discord server: parses lift captions, auto-suggests the matching programmed exercise, and lets the coach reply (channel or DM) from an in-app inbox. Videos show a real poster frame and duration rather than a placeholder. Bot token stored encrypted; fully optional.
 - **Bar path analysis** — track the bar through a lift on any clip, from your computer or from an athlete's Discord check-in. Click the bar and optical-flow tracking follows it, drawing the path live and reporting per-rep concentric velocity, range of motion and duration. Local files are never uploaded — the analyser runs entirely in the app.
-- **Velocity-based training** — turn that bar speed into decisions: estimated RPE for the last rep against published per-lift references, agreement with the RPE the athlete called, an estimated 1RM from a single set, a fitted load–velocity profile across several loads, and velocity loss with the caveat that decides whether to read it. The athlete's own tracked history replaces the published references as it accumulates.
+- **Velocity-based training** — turn that bar speed into decisions: estimated RPE for the last rep against published per-lift references, agreement with the RPE the athlete called, an estimated 1RM from a single set, a fitted load–velocity profile across several loads, and velocity loss with the caveat that decides whether to read it. The athlete's own tracked history replaces the published references as it accumulates, and the bar speed their true 1RM moves at is remembered per lift — measured once, or learned from a set called RPE 10.
+- **Pose & joint angles** — an optional skeleton runs alongside the bar path, entirely on your machine, and plots knee and hip angle against bar speed on one timeline, so the sticking point can be read off the picture: where the knee stopped extending, whether the hips shot up first. Landmarks the model could not actually see are ruled out rather than guessed, and a coach can correct a joint by hand — the correction is layered on top of the measurement, so re-running the model never overwrites it.
+- **Saved analyses & comparison** — keep an analysis with its clip, reopen it later from the athlete's page or the bar path page, and put two lifts side by side with independent scrubbing. Draw on either one with a pen; the marks stay on the lifter through resizing and fullscreen.
+- **Screen recording** — record your screen with voice-over (and optionally camera and system sound) while you talk an athlete through their program or their lift, review the take, then send it to them over Discord or email — or save it to disk. The app tells you before you start whether the result will fit the channel you want to use.
 - **Program bookmarking** — star programs to favorite them for reuse, with a filter to show bookmarked-only.
 - **Calculators** — RPE cheat sheet, 1RM estimates, and warm-up set suggestions.
 - **Payments** — track athlete payments and balances.
@@ -41,7 +44,7 @@ Go to the [Releases page](https://github.com/Fabian0270/CoachBoard/releases) and
 
 > Intel Macs aren't supported yet — GitHub's free Intel build runners have been retired, so a native x64 build needs a paid runner or a self-hosted Intel Mac (tracked as a follow-up).
 
-The app stores all data locally in a single folder named `coachboard-electron` inside your user profile — `%APPDATA%\coachboard-electron` on Windows, `~/Library/Application Support/coachboard-electron` on macOS. That folder holds the database, the log, automatic backups, and any synced Discord media. **Settings → Your data** shows the exact path, opens the folder, and lets you save or restore a copy of the database. No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
+The app stores all data locally in a single folder named `coachboard-electron` inside your user profile — `%APPDATA%\coachboard-electron` on Windows, `~/Library/Application Support/coachboard-electron` on macOS. That folder holds the database, the log, automatic backups, any synced Discord media, and the clips kept with saved analyses and screen recordings. **Settings → Your data** shows the exact path, opens the folder, and lets you save or restore a copy of the database. No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
 
 ---
 
@@ -59,6 +62,8 @@ The app stores all data locally in a single folder named `coachboard-electron` i
 | Email delivery | Nodemailer (SMTP) |
 | Discord sync | Plain-fetch REST v10 client (no SDK) |
 | Bar path tracking | opencv.js (vendored, Lucas–Kanade optical flow) in a Web Worker |
+| Pose estimation | MediaPipe Pose Landmarker Lite (`@mediapipe/tasks-vision`, vendored WASM + model) in its own Web Worker |
+| Screen recording | `getDisplayMedia` + canvas compositor + `MediaRecorder` (WebM) |
 | Auto-update | electron-updater (GitHub provider) |
 | Tests | Vitest |
 
@@ -133,17 +138,17 @@ Outputs:
 From `main` (with your release work merged in), run one command:
 
 ```bash
-npm run release 1.15.0
+npm run release 1.16.0
 ```
 
 [`scripts/release.mjs`](scripts/release.mjs) bumps the version across every workspace, syncs
-the lockfile, commits (`Bump version to 1.15.0`), pushes, then tags `v1.15.0` and pushes the
+the lockfile, commits (`Bump version to 1.16.0`), pushes, then tags `v1.16.0` and pushes the
 tag. It refuses to run (before changing anything) if the tree is dirty, you're not on `main`,
 the version is unchanged, or the tag already exists.
 
 Pushing the tag triggers the [`Release` workflow](.github/workflows/release.yml), which builds
 the Windows `.exe` (`windows-latest`) and the Apple Silicon `.dmg` (`macos-14`) in parallel and
-publishes a single `v1.15.0` Release with both attached. Because the script derives the tag,
+publishes a single `v1.16.0` Release with both attached. Because the script derives the tag,
 commit, and installer filenames from the same version, they always stay in sync. Intel (x64)
 Macs aren't built — GitHub's free Intel runners were retired; see the header note in
 [`release.yml`](.github/workflows/release.yml) for how to add them back. Builds are unsigned:
@@ -166,23 +171,28 @@ npm run package:mac    # macOS   → dist-electron/CoachBoard-x.x.x-<arch>.dmg
 CoachBoard/
 ├── client/            # React frontend (Vite)
 │   ├── public/
-│   │   └── vendor/opencv/   # vendored opencv.js — bundled, not fetched, so it works offline
+│   │   └── vendor/     # opencv/ and mediapipe/ — bundled, not fetched, so they work offline
 │   └── src/
 │       ├── components/
-│       │   └── analysis/    # bar-path stage, frame capture, tracker worker, velocity panel
+│       │   ├── analysis/  # bar-path stage, frame capture, tracker + pose workers,
+│       │   │              # velocity panel, joint-angle chart, pen annotations
+│       │   └── recorder/  # screen-recorder provider, preflight, compositor, review, send
 │       ├── pages/    # Dashboard, Athletes, Programs, Calculators, Payments,
-│       │             # Excel Styles, Settings, Discord Inbox, Bar path
+│       │             # Excel Styles, Settings, Discord Inbox, Bar path,
+│       │             # Saved analysis, Compare analyses
 │       └── lib/
 ├── server/            # Express backend
 │   └── src/
 │       ├── routes/    # athletes, programs, progress, payments, style, exportStyles,
-│       │              # exportTemplates, settings, discord, analysis, backup, system
+│       │              # exportTemplates, settings, discord, analysis, recorder,
+│       │              # backup, system
 │       ├── services/  # program/import/export/analysis/suggestion/payment/email/preview/
-│       │              # discord/backup/update logic
+│       │              # discord/backup/update logic, plus analysis video + recording
+│       │              # stores, screen capture, pose tracks and per-athlete 1RM velocity
 │       ├── db.ts      # Kysely + SQLite setup and migrations
 │       └── app.ts     # Express app factory
 ├── shared/            # Code shared by client + server — pure data and maths, no I/O
-│                      # rpe, vbt, videoAnalysis, exercises, knowledge, payments,
+│                      # rpe, vbt, videoAnalysis, pose, exercises, knowledge, payments,
 │                      # scoring, warmup, exportLayout, discord, types
 ├── electron/          # Electron main process
 │   └── src/
@@ -195,7 +205,7 @@ The app runs Express on `localhost:3001` inside the Electron process. The React 
 
 Anything that is really a calculation rather than plumbing lives in `shared/` as pure
 functions with no I/O and no DOM — the RPE chart, the velocity maths, the bar-path
-metrics, competition scoring. That keeps it unit-testable under a node-only test
-runner even when the thing it serves (optical-flow tracking, say) can only run in a
-browser. Each of those modules carries its own sourcing in its header comment, so the
+metrics, the joint angles, competition scoring. That keeps it unit-testable under a
+node-only test runner even when the thing it serves (optical-flow tracking or pose
+inference, say) can only run in a browser. Each of those modules carries its own sourcing in its header comment, so the
 reference values can be traced back to where they were published.
