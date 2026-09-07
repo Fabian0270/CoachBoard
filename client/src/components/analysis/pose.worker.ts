@@ -33,16 +33,16 @@ const MODEL_BASE = '/vendor/mediapipe/models'
 /**
  * Which landmark model to load.
  *
- * `lite` is what a tracking pass gets: it was measured at ~32 ms a frame against
- * a ~33 ms budget, where `full` at ~46 ms would drop a third of the frames the
- * bar-path tracker also wants.
+ * ONLY `lite` IS VENDORED. `full` was measured twice and rejected twice: at
+ * ~46 ms a frame against a ~33 ms tracking budget, and then on accuracy, where
+ * it scored 0.888 lower-body visibility against lite's 0.878 — inside the noise
+ * — and worse again at a larger input. It is not in the repo.
  *
- * The preview has no such budget — it reads one frame, when the coach asks. So
- * the choice belongs to the caller rather than to this file.
- *
- * WHICHEVER IS USED MUST BE SHIPPED: electron-builder filters the unused model
- * out of the installer, and a missing one now 404s rather than quietly handing
- * back the app shell. Those two lists have to agree and nothing checks that.
+ * The type stays open because the preview has no frame budget and a future clip
+ * might show a real difference. Asking for anything but `lite` today means
+ * re-vendoring the `.task` from @mediapipe/tasks-vision first: a model that is
+ * not there 404s, and the loader reports that as a corrupt file rather than a
+ * missing one.
  */
 export type PoseModel = 'lite' | 'full'
 

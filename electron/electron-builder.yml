@@ -60,17 +60,14 @@ extraResources:
     # packaged build ONLY, which CI cannot see. Delete this filter if that day
     # comes.
     #
-    # The models are the same story: both are vendored so the 11e-0 spike can
-    # keep comparing them on real footage, but only the one the app loads is
-    # worth shipping. That is `lite` — the spike measured `full` at ~46 ms a
-    # frame against a ~33 ms budget, and `lite` at ~32 ms with identical
-    # detection. If 11e-6's joint angles come out noisy and `full` is
-    # reinstated, flip which line is negated here AND the model the worker asks
-    # for: those two must agree, and nothing checks that they do.
+    # Only `lite` is vendored at all, so the models need no filter. `full` was
+    # measured twice and rejected twice — at ~46 ms a frame against a ~33 ms
+    # budget, and then on accuracy, where it scored inside the noise of `lite`
+    # (0.888 vs 0.878) and worse at a larger input. It is not in the repo;
+    # re-vendor it from @mediapipe/tasks-vision if it is ever wanted again.
     filter:
       - '**/*'
       - '!vendor/mediapipe/wasm/vision_wasm_module_internal.*'
-      - '!vendor/mediapipe/models/pose_landmarker_full.task'
   - from: ../node_modules/better-sqlite3
     to: node_modules/better-sqlite3
   - from: ../node_modules/bindings

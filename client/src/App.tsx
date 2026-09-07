@@ -20,9 +20,6 @@ import DiscordInbox from './pages/DiscordInbox'
 import VideoAnalysis from './pages/VideoAnalysis'
 import SavedAnalysis from './pages/SavedAnalysis'
 import CompareAnalyses from './pages/CompareAnalyses'
-// Feature 11e-0. Unlinked on purpose — reached by typing the route — and deleted
-// with the rest of src/spike once the GO/NO-GO numbers are recorded.
-import PoseSpike from './spike/PoseSpike'
 
 export default function App() {
   return (
@@ -54,7 +51,6 @@ export default function App() {
             <Route path="/analysis/saved/:id" element={<SavedAnalysis />} />
             <Route path="/analysis/:mediaId" element={<VideoAnalysis />} />
             <Route path="/settings" element={<Settings />} />
-            <Route path="/pose-spike" element={<PoseSpike />} />
           </Routes>
         </Layout>
         </RecorderProvider>
