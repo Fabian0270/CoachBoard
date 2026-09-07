@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 import { RPE_VALUES } from './rpe.js'
-import type { RepMetrics } from './videoAnalysis.js'
+import { looksMistracked, type RepMetrics } from './videoAnalysis.js'
 
 // ---------------------------------------------------------------------------
 // 1. Lift identity
@@ -864,6 +864,40 @@ export function defaultMvt(lift: VbtLift, personal?: LrvAnchor[]): number | null
   return range ? (range.novice + range.elite) / 2 : null
 }
 
+/**
+ * Bounds on anything claiming to be a 1RM bar speed.
+ *
+ * Wider than any published band on purpose — these rule out nonsense (a
+ * mistracked rep, a typo, a px/s figure that escaped its units check), not
+ * unusual lifters. The server enforces the same pair on the way into
+ * `athlete_mvt`, importing them from here so one place decides.
+ */
+export const MIN_MVT = 0.01
+export const MAX_MVT = 2
+
+/** Is this a number that could plausibly be someone's 1RM bar speed? */
+export function isPlausibleMvt(velocity: number | null | undefined): velocity is number {
+  return velocity != null && Number.isFinite(velocity) && velocity >= MIN_MVT && velocity <= MAX_MVT
+}
+
+/**
+ * The MVT to judge a set by, in the order the evidence deserves.
+ *
+ * Measured beats derived beats published: a value the coach has stored for this
+ * athlete and lift wins outright, then the RPE-10 row of their own LRV chart,
+ * then the population band. Every page that estimates a 1RM goes through here,
+ * because the alternative — each one reaching for `defaultMvt` with whatever
+ * context it happened to have — is what put a personalised estimate on the live
+ * panel and a population one on the same set reopened.
+ */
+export function resolveMvt(
+  lift: VbtLift,
+  opts: { stored?: number | null; anchors?: LrvAnchor[] } = {},
+): number | null {
+  if (isPlausibleMvt(opts.stored)) return opts.stored
+  return defaultMvt(lift, opts.anchors)
+}
+
 // ---------------------------------------------------------------------------
 // 6. Velocity zones
 // ---------------------------------------------------------------------------
@@ -929,6 +963,40 @@ export function lastRepVelocity(reps: RepMetrics[], metric: VelocityMetric = 'me
 export function bestRepVelocity(reps: RepMetrics[], metric: VelocityMetric = 'mean'): number | null {
   const speeds = reps.map((r) => readRep(r, metric)).filter((v): v is number => v != null)
   return speeds.length ? Math.max(...speeds) : null
+}
+
+/** Only a set called at this RPE measures an MVT. See measuredMvt. */
+const MVT_EVIDENCE_RPE = 10
+
+/**
+ * The 1RM velocity this set measured, or null if it did not measure one.
+ *
+ * An MVT is the slowest a maximum-effort rep can still be completed, so the last
+ * rep of a set called RPE 10 *is* that number by definition — there was nothing
+ * left. Anything below RPE 10 is a rep with reps in reserve and says nothing
+ * about the athlete's floor, which is why the bar for evidence here is a single
+ * called effort rather than "whatever moved slowest".
+ *
+ * Three guards, and they matter more than the arithmetic, because this number
+ * only ever ratchets DOWN — a wrong reading is not corrected by the next set:
+ *
+ *  - The reading must be calibrated. `readRep` returns null in m/s on a path with
+ *    no scale line, and a px/s figure quietly compared against m/s is nonsense
+ *    with no visible symptom.
+ *  - Mistracked reps are struck off first. A tracker re-lock lands whole in one
+ *    rep, and a 165 kg bench once reported 1.69 m/s that way.
+ *  - The result must be a plausible bar speed at all.
+ */
+export function measuredMvt(
+  reps: RepMetrics[],
+  opts: { calledRpe: number | null; metric: VelocityMetric },
+): number | null {
+  if (opts.calledRpe !== MVT_EVIDENCE_RPE) return null
+  const velocity = lastRepVelocity(
+    reps.filter((r) => !looksMistracked(r)),
+    opts.metric,
+  )
+  return isPlausibleMvt(velocity) ? velocity : null
 }
 
 /** Below this many reps a velocity-loss percentage is not worth reading — see velocityLoss. */

@@ -4,7 +4,6 @@ import { ArrowLeft, FileVideo, LineChart, PersonStanding } from 'lucide-react'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
 import { pixelsPerMetreFromPlate } from 'coachboard-shared/videoAnalysis'
 import {
-  defaultMvt,
   defaultVelocityMetric,
   e1RMFromVelocity,
   isVbtLift,
@@ -13,6 +12,7 @@ import {
   liftLabel,
   populationSlope,
   readRep,
+  resolveMvt,
   rpeFromLastRepVelocity,
   velocityLoss,
   zoneFor,
@@ -32,6 +32,7 @@ import PathPlot from '../components/analysis/PathPlot'
 import JointAngleChart from '../components/analysis/JointAngleChart'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
 import { useTrackerColor } from '../components/analysis/trackerColor'
+import { useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
 
 // ---------------------------------------------------------------------------
 // A saved analysis, reopened.
@@ -85,6 +86,22 @@ export default function SavedAnalysis() {
     if (!localUrl) return
     return () => URL.revokeObjectURL(localUrl)
   }, [localUrl])
+
+  // Read the way the set was ACTUALLY read when it was tracked, falling back to
+  // the lift's default for rows saved before the metric was stored. This used
+  // to be hardcoded to 'propulsive' under a comment claiming it matched the
+  // live panel — which stopped being true when the default became mean/peak, so
+  // the same bench set reported two different numbers on two pages.
+  const lift: VbtLift = isVbtLift(analysis?.lift) ? analysis.lift : 'other'
+  const metric = isVelocityMetric(analysis?.metric) ? analysis.metric : defaultVelocityMetric(lift)
+
+  // Resolved above the early returns because hooks cannot run after one. This
+  // page was reading the published 0.25 m/s while the live panel read the
+  // athlete's own, so the same set reported two different estimated maxes
+  // depending on which page you were standing on.
+  const athleteId = analysis?.athleteId ?? null
+  const { anchors } = useVbtHistory(athleteId, lift, metric)
+  const { byLift: mvtByLift } = useAthleteMvt(athleteId)
 
   /**
    * The stored skeleton, if this analysis has one.
@@ -183,19 +200,17 @@ export default function SavedAnalysis() {
   if (!analysis) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>
 
   const metrics = analysis.metrics ?? []
-  const lift: VbtLift = isVbtLift(analysis.lift) ? analysis.lift : 'other'
+  // `lift` is declared above the early returns now — the pose hooks need it, and
+  // hooks cannot run after a conditional return.
   const pixelsPerMetre = analysisPixelsPerMetre(analysis)
 
-  // Read the way the set was ACTUALLY read when it was tracked, falling back to
-  // the lift's default for rows saved before the metric was stored. This used
-  // to be hardcoded to 'propulsive' under a comment claiming it matched the
-  // live panel — which stopped being true when the default became mean/peak, so
-  // the same bench set reported two different numbers on two pages.
-  const metric = isVelocityMetric(analysis.metric) ? analysis.metric : defaultVelocityMetric(lift)
   const lastV = lastRepVelocity(metrics, metric)
   const bestV = metrics.length ? Math.max(...metrics.map((m) => readRep(m, metric) ?? 0)) : 0
-  const reading = lastV != null ? rpeFromLastRepVelocity(lift, lastV) : null
-  const mvt = defaultMvt(lift)
+  // Judged against this athlete's own history, not the published chart — the
+  // live panel does the same, and two pages disagreeing about one rep's RPE is
+  // worse than either answer on its own.
+  const reading = lastV != null ? rpeFromLastRepVelocity(lift, lastV, { anchors }) : null
+  const mvt = resolveMvt(lift, { stored: mvtByLift[lift], anchors })
   const estimate =
     analysis.loadKg != null && bestV > 0 && mvt != null
       ? e1RMFromVelocity({

@@ -13,6 +13,8 @@ import {
   matchesLiftName,
   effectiveRpe,
   defaultMvt,
+  measuredMvt,
+  resolveMvt,
   defaultVelocityMetric,
   checkScale,
   DEFAULT_LV_SLOPE,
@@ -483,6 +485,84 @@ describe('defaultMvt', () => {
 
   it('has nothing to offer for an unlisted lift', () => {
     expect(defaultMvt('other')).toBeNull()
+  })
+})
+
+describe('resolveMvt', () => {
+  const personal = [
+    { rpe: 7, velocity: 0.55 },
+    { rpe: 8.5, velocity: 0.45 },
+    { rpe: 10, velocity: 0.35 },
+  ]
+
+  it('prefers a stored measurement over everything else', () => {
+    // The whole point of the feature: a squatter who grinds a true max at
+    // 0.10 m/s is not judged against the population's 0.25.
+    expect(resolveMvt('back-squat', { stored: 0.1, anchors: personal })).toBeCloseTo(0.1, 6)
+  })
+
+  it('falls back to the athlete\'s own chart, then the published one', () => {
+    expect(resolveMvt('back-squat', { anchors: personal })).toBeCloseTo(0.35, 6)
+    expect(resolveMvt('back-squat')).toBeCloseTo(0.25, 6)
+  })
+
+  it('ignores a stored value that is not a plausible bar speed', () => {
+    // A px/s figure that escaped its units check, or a hand-edited row.
+    expect(resolveMvt('back-squat', { stored: 120 })).toBeCloseTo(0.25, 6)
+    expect(resolveMvt('back-squat', { stored: 0 })).toBeCloseTo(0.25, 6)
+    expect(resolveMvt('back-squat', { stored: NaN })).toBeCloseTo(0.25, 6)
+  })
+
+  it('still has nothing to offer for an unlisted lift', () => {
+    expect(resolveMvt('other')).toBeNull()
+  })
+})
+
+describe('measuredMvt', () => {
+  it('reads the last rep of a set called RPE 10', () => {
+    // Three reps at RPE 10; the last one is the maximum-effort rep, so it is
+    // the measurement — not the fastest, and not the average.
+    const reps = [rep(0.32), rep(0.24), rep(0.18)]
+    expect(measuredMvt(reps, { calledRpe: 10, metric: 'mean' })).toBeCloseTo(0.18, 6)
+  })
+
+  it('refuses anything below RPE 10', () => {
+    const reps = [rep(0.32), rep(0.18)]
+    // Reps in reserve means the bar never reached the athlete's floor, however
+    // slow the last one looked.
+    expect(measuredMvt(reps, { calledRpe: 9.5, metric: 'mean' })).toBeNull()
+    expect(measuredMvt(reps, { calledRpe: null, metric: 'mean' })).toBeNull()
+  })
+
+  it('refuses an uncalibrated set', () => {
+    // No scale line: readRep returns null in m/s, and a px/s figure stored as
+    // an MVT would poison every later estimate with no visible symptom.
+    const reps = [rep(null), rep(null)]
+    expect(measuredMvt(reps, { calledRpe: 10, metric: 'mean' })).toBeNull()
+  })
+
+  it('strikes off a mistracked last rep rather than believing it', () => {
+    // A tracker re-lock lands whole in one rep's peak. This set's last rep has
+    // a peak 6x its mean, well past SUSPECT_PEAK_RATIO, so the reading falls
+    // back to the trustworthy rep before it.
+    const glitched: RepMetrics = { ...rep(0.05), peakVelocity: 0.3, peakVelocityPxS: 600 }
+    expect(measuredMvt([rep(0.2), glitched], { calledRpe: 10, metric: 'mean' })).toBeCloseTo(0.2, 6)
+  })
+
+  it('has nothing to measure from an empty set', () => {
+    expect(measuredMvt([], { calledRpe: 10, metric: 'mean' })).toBeNull()
+  })
+
+  it('refuses a reading outside the plausible band', () => {
+    expect(measuredMvt([rep(0.001)], { calledRpe: 10, metric: 'mean' })).toBeNull()
+    expect(measuredMvt([rep(5)], { calledRpe: 10, metric: 'mean' })).toBeNull()
+  })
+
+  it('reads the metric the set was judged on', () => {
+    // A bench is read on peak, and the MVT has to come off the same metric the
+    // rest of the panel used or the two numbers describe different things.
+    const reps = [rep(0.2)]
+    expect(measuredMvt(reps, { calledRpe: 10, metric: 'peak' })).toBeCloseTo(0.3, 6)
   })
 })
 
