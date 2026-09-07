@@ -16,8 +16,10 @@ import {
   type VbtLift,
 } from 'coachboard-shared/vbt'
 import { Button } from '../components/ui/button'
-import AnalysisStage from '../components/analysis/AnalysisStage'
+import AnalysisStage, { type StageMode } from '../components/analysis/AnalysisStage'
+import DrawControls from '../components/analysis/DrawControls'
 import PathPlot from '../components/analysis/PathPlot'
+import type { Stroke } from '../components/analysis/annotations'
 import { useTrackerColor } from '../components/analysis/trackerColor'
 
 // ---------------------------------------------------------------------------
@@ -81,8 +83,9 @@ export default function CompareAnalyses() {
         <h1 className="text-xl font-semibold">Compare two lifts</h1>
       </div>
       <p className="text-sm text-muted-foreground">
-        Each side plays on its own, so you can line the two lifts up by eye. Double-click either
-        one for fullscreen.
+        Each side plays on its own, so you can line the two lifts up by eye. Double-click either one
+        for fullscreen, or use the button in its controls — the bar path and anything you draw stay
+        on the lift either way.
       </p>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -112,6 +115,11 @@ function Pane({
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const emptyLivePath = useRef<never[]>([])
+  // Per side, not per page: the two lifts are being contrasted, so a mark drawn
+  // on one is about that one. Held here for the same reason the tracking page
+  // holds them — they belong to the moment of explanation, not to the analysis.
+  const [mode, setMode] = useState<StageMode>('seed')
+  const [strokes, setStrokes] = useState<Stroke[]>([])
 
   // Revoked on swap and unmount, or the bytes stay pinned for the life of the
   // window — the same discipline as the re-pick input on SavedAnalysis.
@@ -120,6 +128,13 @@ function Pane({
     return () => {
       if (url) URL.revokeObjectURL(url)
     }
+  }, [side])
+
+  // Marks belong to the clip they were drawn on, so swapping either side out
+  // clears them rather than leaving last lift's circles over this one.
+  useEffect(() => {
+    setStrokes([])
+    setMode('seed')
   }, [side])
 
   if (side.kind === 'empty') {
@@ -195,9 +210,28 @@ function Pane({
         <h2 className="truncate text-sm font-medium" title={title}>
           {title}
         </h2>
-        <Button variant="ghost" size="sm" onClick={() => onChange({ kind: 'empty' })} title="Clear">
-          <X className="h-4 w-4" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          {/* The same pen as the tracking page, on each side independently —
+              comparing two lifts is exactly when a coach wants to circle the
+              difference. Only where there is a video to draw on. */}
+          {src && (
+            <DrawControls
+              mode={mode}
+              onModeChange={setMode}
+              strokes={strokes}
+              onStrokesChange={setStrokes}
+              compact
+            />
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onChange({ kind: 'empty' })}
+            title="Clear"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {src ? (
@@ -212,9 +246,11 @@ function Pane({
           onTimeUpdate={() => {}}
           disabled
           color={color}
-          mode="seed"
+          mode={mode}
           calibration={analysis?.calibration ?? null}
           onCalibratePoint={() => {}}
+          strokes={strokes}
+          onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
         />
       ) : analysis ? (
         <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} />

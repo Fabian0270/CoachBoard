@@ -108,17 +108,17 @@
 }
 
 /*
- * The bar-path stage hides the video's own fullscreen button.
+ * Nothing here hides the bar-path stage's video controls any more.
  *
- * That button calls requestFullscreen on the <video> element, which by
- * definition promotes only the video into the top layer — the overlay canvas is
- * a sibling and stays behind, so the coach got a fullscreen lift with no bar
- * path on it. Double-clicking fullscreens the wrapper instead, which takes the
- * canvas with it. Leaving a control that produces a broken result is worse than
- * removing it.
+ * The fullscreen button used to be hidden, because it calls requestFullscreen
+ * on the <video> — promoting only the video into the top layer and leaving the
+ * overlay canvas behind, so the coach got a fullscreen lift with no bar path on
+ * it. Hiding it did not actually solve that: on a narrow portrait clip Chromium
+ * moves controls into the ⋮ overflow menu, and that menu's Fullscreen item
+ * calls the same thing, which no CSS reaches.
  *
- * Scoped to the stage so ordinary video playback elsewhere keeps its button.
+ * AnalysisStage now redirects instead — see the fullscreenchange effect there.
+ * Whatever fullscreens the video is immediately followed by a request on the
+ * wrapper, which carries the canvas with it. So the button stays exactly where
+ * a fullscreen button belongs: in the browser's own control bar.
  */
-.stage-video::-webkit-media-controls-fullscreen-button {
-  display: none;
-}

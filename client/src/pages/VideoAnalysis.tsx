@@ -24,6 +24,8 @@ import AnalysisStage, {
   type StageMode,
 } from '../components/analysis/AnalysisStage'
 import VideoPicker, { type AnalysisSource } from '../components/analysis/VideoPicker'
+import DrawControls from '../components/analysis/DrawControls'
+import type { Stroke } from '../components/analysis/annotations'
 import { useTracker, type TrackStream } from '../components/analysis/useTracker'
 import { captureInto } from '../components/analysis/captureFrames'
 import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
@@ -89,6 +91,15 @@ export default function VideoAnalysis() {
   const [color, setColor] = useTrackerColor()
   const [plateMm, setPlateMm] = useState<number>(PLATE_DIAMETERS_MM[0].value)
   const [mode, setMode] = useState<StageMode>('seed')
+  /**
+   * Freehand marks the coach has drawn over the lift.
+   *
+   * Deliberately NOT saved with the analysis. These are for the moment of
+   * explanation — drawn while talking, captured by the screen recorder — not a
+   * measurement, and the analysis is a record of what was measured. They clear
+   * with the clip like the seed and the range do.
+   */
+  const [strokes, setStrokes] = useState<Stroke[]>([])
   const [calibration, setCalibration] = useState<CalibrationLine | null>(null)
   const [awaitingSecondPoint, setAwaitingSecondPoint] = useState(false)
   /** Shown once a track finishes, so nothing is stored without being asked for. */
@@ -130,6 +141,7 @@ export default function VideoAnalysis() {
     setCalibration(null)
     setAwaitingSecondPoint(false)
     setMode('seed')
+    setStrokes([])
     setRange(null)
     setDuration(0)
     setCurrentTime(0)
@@ -539,6 +551,7 @@ export default function VideoAnalysis() {
     setCalibration(null)
     setAwaitingSecondPoint(false)
     setMode('seed')
+    setStrokes([])
   }
 
   /** Back to the picker. Everything is per-video, so none of it may carry over. */
@@ -632,6 +645,8 @@ export default function VideoAnalysis() {
           mode={mode}
           calibration={calibration}
           onCalibratePoint={addCalibrationPoint}
+          strokes={strokes}
+          onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
         />
       )}
 
@@ -771,6 +786,21 @@ export default function VideoAnalysis() {
                   <RotateCcw className="h-4 w-4" /> Clear
                 </Button>
               )}
+
+              {/* Drawing on the lift. Fullscreen is NOT here — it belongs in the
+                  video's own control bar, where a fullscreen button always is,
+                  and the stage puts it there itself. */}
+              <div className="ml-auto">
+                <DrawControls
+                  mode={mode}
+                  onModeChange={(next) => {
+                    setMode(next)
+                    setAwaitingSecondPoint(false)
+                  }}
+                  strokes={strokes}
+                  onStrokesChange={setStrokes}
+                />
+              </div>
             </div>
 
             {busy && (
