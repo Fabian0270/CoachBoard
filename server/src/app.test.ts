@@ -1,6 +1,9 @@
-import { beforeAll, afterAll, describe, it, expect } from 'vitest'
+import { beforeAll, beforeEach, afterAll, describe, it, expect } from 'vitest'
 import type { Server } from 'http'
 import type { AddressInfo } from 'net'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { createApp } from './app.js'
 import { initializeDatabase } from './db.js'
 
@@ -218,5 +221,159 @@ describe('API fallthrough', () => {
     const { status, body } = await json('/api/does-not-exist')
     expect(status).toBe(404)
     expect(body.error).toBe('Not found')
+  })
+})
+
+describe('pose API', () => {
+  let analysisId: string
+
+  beforeEach(async () => {
+    const { body } = await post('/api/analysis', {
+      mediaId: null,
+      athleteId: null,
+      sourceLabel: 'pose test',
+      track: [
+        { t: 0, x: 10, y: 10 },
+        { t: 0.5, x: 10, y: 5 },
+      ],
+      calibration: null,
+      metrics: [],
+      notes: null,
+    })
+    analysisId = body.id
+  })
+
+  /** A tiny two-frame, two-landmark track — enough to prove the packing survives. */
+  const track = {
+    frameCount: 2,
+    landmarkCount: 2,
+    keypoints: [1, 2, 0.9, 3, 4, 0.8, 5, 6, 0.7, 7, 8, 0.6],
+    world: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2],
+    times: [0, 0.033],
+  }
+
+  it('404s before anything has been stored', async () => {
+    expect((await api(`/api/analysis/${analysisId}/pose`)).status).toBe(404)
+  })
+
+  it('round-trips a track through the API', async () => {
+    const put = await api(`/api/analysis/${analysisId}/pose`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(track),
+    })
+    expect(put.status).toBe(204)
+
+    const { status, body } = await json(`/api/analysis/${analysisId}/pose`)
+    expect(status).toBe(200)
+    expect(body.frameCount).toBe(2)
+    expect(body.keypoints[3]).toBeCloseTo(3, 4)
+    expect(body.world[11]).toBeCloseTo(1.2, 4)
+    expect(body.times).toEqual([0, 0.033])
+    expect(body.corrections).toEqual([])
+  })
+
+  it('refuses a track for an analysis that does not exist', async () => {
+    const res = await api('/api/analysis/no-such-analysis/pose', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(track),
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it('refuses arrays that disagree with the stated counts', async () => {
+    const res = await api(`/api/analysis/${analysisId}/pose`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...track, frameCount: 9 }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('stores and takes back a correction', async () => {
+    await api(`/api/analysis/${analysisId}/pose`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(track),
+    })
+    await api(`/api/analysis/${analysisId}/pose/corrections`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ frameIndex: 1, landmark: 25, x: 500, y: 600 }),
+    })
+
+    let got = await json(`/api/analysis/${analysisId}/pose`)
+    expect(got.body.corrections).toEqual([{ frameIndex: 1, landmark: 25, x: 500, y: 600 }])
+
+    const del = await api(`/api/analysis/${analysisId}/pose/corrections/1/25`, {
+      method: 'DELETE',
+    })
+    expect(del.status).toBe(204)
+    got = await json(`/api/analysis/${analysisId}/pose`)
+    expect(got.body.corrections).toEqual([])
+  })
+
+  it('goes when the analysis goes', async () => {
+    await api(`/api/analysis/${analysisId}/pose`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(track),
+    })
+    await api(`/api/analysis/${analysisId}`, { method: 'DELETE' })
+    expect((await api(`/api/analysis/${analysisId}/pose`)).status).toBe(404)
+  })
+})
+
+describe('static fallthrough', () => {
+  // Needs its own app: the shared one above is built without a static dir, so
+  // neither the SPA catch-all nor the /vendor guard is mounted on it.
+  let staticServer: Server
+  let staticBase: string
+  let dir: string
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'coachboard-static-'))
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>app shell</title>')
+    mkdirSync(join(dir, 'vendor', 'present'), { recursive: true })
+    writeFileSync(join(dir, 'vendor', 'present', 'thing.wasm'), 'not really wasm')
+
+    const app = createApp(dir)
+    await new Promise<void>((resolve) => {
+      staticServer = app.listen(0, '127.0.0.1', () => resolve())
+    })
+    staticBase = `http://127.0.0.1:${(staticServer.address() as AddressInfo).port}`
+  })
+
+  afterAll(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        staticServer.close((err) => (err ? reject(err) : resolve()))
+      }),
+  )
+
+  it('serves a vendored asset that exists', async () => {
+    const res = await fetch(`${staticBase}/vendor/present/thing.wasm`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('application/wasm')
+  })
+
+  /**
+   * The expensive one. A packaged build ships only the MediaPipe files it loads,
+   * and a request for an excluded one used to come back 200 text/html — the app
+   * shell, 1073 bytes of it. A WASM or model loader handed that does not report
+   * a missing file, it reports a corrupt one, from a URL that looks like it
+   * worked.
+   */
+  it('404s a MISSING vendored asset instead of serving the app shell', async () => {
+    const res = await fetch(`${staticBase}/vendor/mediapipe/models/not-shipped.task`)
+    expect(res.status).toBe(404)
+    expect(await res.text()).not.toContain('app shell')
+  })
+
+  it('still serves the app shell for a client route', async () => {
+    const res = await fetch(`${staticBase}/athletes/some-id`)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('app shell')
   })
 })

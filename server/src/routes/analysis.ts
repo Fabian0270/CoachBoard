@@ -11,6 +11,13 @@ import {
   ownedVideoPath,
 } from '../services/videoAnalysisService.js'
 import { appendVideoChunk, beginVideo, finishVideo } from '../services/analysisVideoStore.js'
+import {
+  clearPoseCorrection,
+  deletePoseTrack,
+  getPoseTrack,
+  savePoseTrack,
+  setPoseCorrection,
+} from '../services/poseTrackService.js'
 import { fail } from '../lib/httpError.js'
 
 const router = Router()
@@ -170,6 +177,109 @@ router.post('/', async (req, res) => {
       metrics: parsed.data.metrics as never,
     }),
   )
+})
+
+// --- Pose (Feature 11e-4) --------------------------------------------------
+//
+// A separate resource from the analysis rather than a field on it, because it is
+// ~238 KB and almost every read of an analysis does not want it — the same
+// reasoning as withTrack=0 on the list above.
+//
+// Coordinates travel as plain number arrays here and are packed into Float32
+// BLOBs at the storage boundary. JSON over localhost costs a few hundred
+// kilobytes on a save the coach explicitly asked for; a binary request body
+// would mean a second content type and a hand-rolled parser for one route.
+
+const poseSchema = z.object({
+  frameCount: z.number().int().positive().max(20000),
+  landmarkCount: z.number().int().positive().max(64),
+  keypoints: z.array(z.number()).max(4_000_000),
+  world: z.array(z.number()).max(4_000_000).nullable().optional(),
+  times: z.array(z.number()).max(20000),
+})
+
+router.get('/:id/pose', async (req, res) => {
+  const track = await getPoseTrack(req.params.id)
+  if (!track) {
+    res.status(404).json({ error: 'No pose track for that analysis' })
+    return
+  }
+  res.json({
+    model: track.model,
+    frameCount: track.frameCount,
+    landmarkCount: track.landmarkCount,
+    keypoints: Array.from(track.keypoints),
+    world: track.world ? Array.from(track.world) : null,
+    times: Array.from(track.times),
+    corrections: track.corrections,
+  })
+})
+
+router.put('/:id/pose', async (req, res) => {
+  const parsed = poseSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid pose track' })
+    return
+  }
+  // The analysis must exist first. The foreign key would refuse anyway, but as
+  // an opaque constraint error rather than something a client can act on.
+  const analysis = await getAnalysis(req.params.id)
+  if (!analysis) {
+    res.status(404).json({ error: 'Analysis not found' })
+    return
+  }
+  const { frameCount, landmarkCount, keypoints, world, times } = parsed.data
+  try {
+    await savePoseTrack(req.params.id, {
+      frameCount,
+      landmarkCount,
+      keypoints: Float32Array.from(keypoints),
+      world: world ? Float32Array.from(world) : null,
+      times: Float64Array.from(times),
+    })
+  } catch (err) {
+    // The service checks the arrays against the counts, and a mismatch is the
+    // client's bug, not a server fault.
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid pose track' })
+    return
+  }
+  res.status(204).end()
+})
+
+const correctionSchema = z.object({
+  frameIndex: z.number().int().min(0),
+  landmark: z.number().int().min(0),
+  x: z.number(),
+  y: z.number(),
+})
+
+router.put('/:id/pose/corrections', async (req, res) => {
+  const parsed = correctionSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid correction' })
+    return
+  }
+  try {
+    await setPoseCorrection(req.params.id, parsed.data)
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid correction' })
+    return
+  }
+  res.status(204).end()
+})
+
+router.delete('/:id/pose/corrections/:frame/:landmark', async (req, res) => {
+  await clearPoseCorrection(
+    req.params.id,
+    Number(req.params.frame),
+    Number(req.params.landmark),
+  )
+  res.status(204).end()
+})
+
+router.delete('/:id/pose', async (req, res) => {
+  await deletePoseTrack(req.params.id)
+  res.status(204).end()
 })
 
 // Attaching an athlete after the fact. Deliberately the only mutable field: the

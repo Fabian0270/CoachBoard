@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Maximize, Minimize } from 'lucide-react'
 import { pictureRect } from 'coachboard-shared/videoAnalysis'
+import {
+  POSE_BONES,
+  frameIndexAt,
+  isVisible,
+  type PoseFrame,
+} from 'coachboard-shared/pose'
 import { isDrawable, simplify, type Point, type Stroke } from './annotations'
 import type { Sample } from './tracker.core'
 
@@ -16,6 +22,21 @@ import type { Sample } from './tracker.core'
  */
 const CONTROL_BAR_PX = 48
 const CONTROL_BAR_FULLSCREEN_PX = 80
+
+/**
+ * How far a pointer must travel, in SCREEN pixels, before a press on a joint
+ * counts as dragging it rather than as a click aimed at what is underneath.
+ */
+const DRAG_SLOP_PX = 4
+
+/**
+ * How far a pose frame may sit from the playhead and still be drawn, in seconds.
+ *
+ * Generous next to the preview's own refresh rate so the skeleton does not
+ * flicker between frames, tight enough that a pose measured somewhere else in
+ * the lift is never painted over the lifter as if it were this moment.
+ */
+const POSE_MAX_STALE_S = 0.4
 
 /** A point in ORIGINAL video pixels. Everything the coach sees is display
  *  pixels, but every stored coordinate is video pixels so it survives resizing
@@ -74,6 +95,24 @@ interface Props {
   strokes?: Stroke[]
   /** Called with the finished stroke when the pointer lifts in 'draw' mode. */
   onDrawStroke?: (stroke: Stroke) => void
+  /**
+   * Pose frames to draw a skeleton from, in video pixels (Feature 11e).
+   *
+   * A ref for the same reason `livePathRef` is one: inference produces a frame
+   * roughly every 33 ms and pushing each through React re-rendered the page and
+   * starved the capture loop. The overlay already redraws every animation frame,
+   * so it reads the latest array itself.
+   */
+  poseRef?: React.MutableRefObject<PoseFrame[]>
+  /** Whether to draw the skeleton at all. Off is the default. */
+  showPose?: boolean
+  /**
+   * Called when the coach drags a joint to where it should have been (11e-5).
+   *
+   * Its presence is what makes the skeleton draggable at all — the live tracking
+   * page passes nothing, because a track being built is not something to edit.
+   */
+  onCorrectLandmark?: (frameIndex: number, landmark: number, x: number, y: number) => void
 }
 
 /**
@@ -100,7 +139,29 @@ export default function AnalysisStage({
   onCalibratePoint,
   strokes,
   onDrawStroke,
+  poseRef,
+  showPose,
+  onCorrectLandmark,
 }: Props) {
+  /**
+   * The joint under the pointer, and whether it has actually been dragged yet.
+   *
+   * `moved` is what keeps correcting from stealing the click that places a
+   * tracking point. On the live page a click on the video seeds the tracker, and
+   * the plate a coach aims at can sit within grabbing distance of a wrist — so a
+   * press that never moves falls through as a click, and only a real drag is
+   * treated as a correction.
+   */
+  const draggingRef = useRef<{
+    frameIndex: number
+    landmark: number
+    from: Point
+    moved: boolean
+  } | null>(null)
+  /** Set on release, so the click that follows a drag is not read as play/pause. */
+  const justDraggedRef = useRef(false)
+  /** Whether this stage lets the coach move a joint at all — see onCorrectLandmark. */
+  const correcting = !!onCorrectLandmark && !!showPose
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const frameRef = useRef<number | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -286,6 +347,68 @@ export default function AnalysisStage({
       trace()
     }
 
+    // Which frame the compositor has actually PRESENTED, not where the playback
+    // clock has got to. The clock runs ahead, which made the bar-path dot lead
+    // the bar by a frame or two; a skeleton off by the same amount reads as the
+    // model being wrong rather than early, so both use this one number.
+    const playhead = presentedRef.current ?? video.currentTime
+
+    // The skeleton, under the bar path and over the pen. It is context for the
+    // measurement, not the measurement — so nothing it draws is allowed to
+    // obscure the path or its dot.
+    const poseFrames = showPose ? poseRef?.current : undefined
+    if (poseFrames?.length) {
+      // Binary search, not the linear reduce the marker below uses. That one
+      // walks a few hundred path points; this would walk 33 landmarks x N frames
+      // on every animation frame.
+      const nearest = poseFrames[frameIndexAt(poseFrames, playhead)]
+      // ONLY IF IT IS ACTUALLY THIS MOMENT. The preview reads whatever frame the
+      // coach scrubbed to, so the track is sparse and full of holes — and
+      // "nearest" over a sparse track happily returns a pose from somewhere else
+      // in the lift entirely. Drawn anyway, that is a skeleton in a completely
+      // different position pinned over the lifter, which reads as the model
+      // being broken rather than as there being no reading here. Nothing is the
+      // honest answer for a moment nothing has been measured at.
+      const pose = nearest && Math.abs(nearest.t - playhead) <= POSE_MAX_STALE_S ? nearest : null
+      if (pose) {
+        const lm = pose.landmarks
+        ctx.lineJoin = 'round'
+        ctx.lineCap = 'round'
+
+        for (const [from, to] of POSE_BONES) {
+          const a = lm[from]
+          const b = lm[to]
+          if (!a || !b) continue
+          // Greyed, never hidden, when the model could not see an end of the
+          // bone. A limb that silently vanishes looks like a rendering bug; a
+          // grey one says "the plates are in the way", which is the truth. The
+          // rule is the tracker's, one level down: rule readings OUT, never in.
+          const unsure = !isVisible(a) || !isVisible(b)
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)'
+          ctx.lineWidth = 5
+          ctx.beginPath()
+          ctx.moveTo(a.x * scale, a.y * scale)
+          ctx.lineTo(b.x * scale, b.y * scale)
+          ctx.stroke()
+          ctx.strokeStyle = unsure ? 'rgba(161, 161, 170, 0.65)' : 'rgba(34, 211, 238, 0.95)'
+          ctx.lineWidth = 2.5
+          ctx.stroke()
+        }
+
+        // Joints only where a bone actually reaches them, so the parked
+        // landmarks of a partly-seen body do not scatter dots across the frame.
+        const jointed = new Set(POSE_BONES.flat())
+        for (const i of jointed) {
+          const l = lm[i]
+          if (!l) continue
+          ctx.fillStyle = isVisible(l) ? 'rgba(224, 242, 254, 0.95)' : 'rgba(161, 161, 170, 0.6)'
+          ctx.beginPath()
+          ctx.arc(l.x * scale, l.y * scale, 3, 0, Math.PI * 2)
+          ctx.fill()
+        }
+      }
+    }
+
     // Finished path if there is one, otherwise whatever tracking has produced
     // so far — so the line grows as the clip plays.
     const path = samples ?? livePathRef?.current ?? null
@@ -313,13 +436,10 @@ export default function AnalysisStage({
     }
 
     // The dot, riding the bar: whichever sample is nearest the frame ON SCREEN.
-    // Not video.currentTime — that is the playback clock, which runs ahead of
-    // the frame the compositor has actually presented, so the dot led the bar by
-    // a frame or two and looked like it was lagging behind the lift on the way
-    // up. requestVideoFrameCallback reports the presented frame's own mediaTime,
-    // which is exactly what the coach is looking at. Falls back to the clock
-    // where rVFC is unavailable or while paused.
-    const playhead = presentedRef.current ?? video.currentTime
+    // `playhead` above is requestVideoFrameCallback's presented mediaTime rather
+    // than video.currentTime, because the playback clock runs ahead of what the
+    // compositor has drawn — the dot led the bar by a frame or two and looked
+    // like it was lagging the lift on the way up.
     const marker = samples?.length
       ? samples.reduce((best, s) =>
           Math.abs(s.t - playhead) < Math.abs(best.t - playhead) ? s : best,
@@ -381,7 +501,10 @@ export default function AnalysisStage({
     // looking and the +/- buttons change its size, so the extra rectangle only
     // added clutter over the lift.
     ctx.restore()
-  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar])
+    // poseRef is a ref like livePathRef, so it is not a dependency — its
+    // contents change every inference without the identity ever changing, and
+    // the loop below redraws every animation frame regardless.
+  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
   // once on any state change so it is right while paused too.
@@ -398,7 +521,21 @@ export default function AnalysisStage({
 
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const video = videoRef.current
-    if (!video || !video.videoWidth || disabled) return
+    if (!video || !video.videoWidth) return
+
+    if (disabled) {
+      // The layer only sits in front of a disabled stage when the coach can
+      // correct a joint, and doing so swallows the click that used to reach the
+      // video and play it — which made a reopened analysis feel broken once
+      // before. Hand it back, except right after a drag, where a play/pause
+      // would be the opposite of what the coach just did.
+      if (correcting && !justDraggedRef.current && e.detail === 1) {
+        if (video.paused) void video.play().catch(() => {})
+        else video.pause()
+      }
+      justDraggedRef.current = false
+      return
+    }
     // The second click of a double-click is the fullscreen gesture, not a seed.
     // Without this, going fullscreen also drops a tracking point or a
     // calibration endpoint wherever the coach happened to double-click.
@@ -412,6 +549,14 @@ export default function AnalysisStage({
     }
     // A click in the letterbox bars is not on the lift.
     if (point.x < 0 || point.y < 0 || point.x > video.videoWidth || point.y > video.videoHeight) {
+      return
+    }
+    // The click that ends a correction is not a request to seed the tracker or
+    // to move the scale line. Only a real drag sets this — a press on a joint
+    // that never moved falls through, so a plate sitting near a wrist is still
+    // clickable.
+    if (justDraggedRef.current) {
+      justDraggedRef.current = false
       return
     }
     if (mode === 'draw') return // strokes are built from pointer events, not clicks
@@ -434,7 +579,69 @@ export default function AnalysisStage({
     return outside ? null : point
   }
 
+  /**
+   * The landmark under a pointer, if one is close enough to have been aimed at.
+   *
+   * The threshold is in DISPLAY pixels rather than video pixels: what matters is
+   * how near the coach's finger landed on screen, and a video-pixel radius would
+   * shrink to nothing on a 4K clip in a small window.
+   */
+  const GRAB_PX = 14
+
+  const landmarkAt = (point: Point): { frameIndex: number; landmark: number } | null => {
+    const video = videoRef.current
+    const frames = poseRef?.current
+    if (!video || !frames?.length || !showPose) return null
+
+    const rect = video.getBoundingClientRect()
+    const { scale } = pictureRect(rect.width, rect.height, video.videoWidth, video.videoHeight)
+    const playhead = presentedRef.current ?? video.currentTime
+    const frameIndex = frameIndexAt(frames, playhead)
+    const frame = frames[frameIndex]
+    // Same rule as the draw: a joint the coach cannot see is not one they can be
+    // aiming at, and correcting a frame from elsewhere in the lift would record
+    // a fix against a moment they never looked at.
+    if (!frame || Math.abs(frame.t - playhead) > POSE_MAX_STALE_S) return null
+    const lm = frame.landmarks
+
+    const reach = GRAB_PX / scale
+    let best: number | null = null
+    let bestDist = reach
+    // Only joints a bone actually reaches — the parked landmarks of a partly
+    // seen body are not on screen and must not be grabbable.
+    for (const i of new Set(POSE_BONES.flat())) {
+      const l = lm[i]
+      if (!l) continue
+      const d = Math.hypot(l.x - point.x, l.y - point.y)
+      if (d <= bestDist) {
+        best = i
+        bestDist = d
+      }
+    }
+    return best === null ? null : { frameIndex, landmark: best }
+  }
+
   const startStroke = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Correcting a joint takes precedence over drawing on it: the coach who
+    // grabs a knee that is in the wrong place means to move it, and a freehand
+    // circle can start a few pixels further out.
+    if (correcting) {
+      const at = pointFor(e)
+      const hit = at && landmarkAt(at)
+      if (hit) {
+        // Capture so a drag that runs off the frame still ends cleanly. It can
+        // throw NotFoundError if the pointer is already gone, and an exception
+        // out of a pointerdown handler would take drawing down with it.
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId)
+        } catch {
+          /* the drag still works, it just cannot follow the pointer off-frame */
+        }
+        draggingRef.current = { ...hit, from: at, moved: false }
+        // Deliberately no early return: a press that turns out to be a click
+        // still has to be able to seed or draw, and that is decided on release.
+      }
+    }
     // Deliberately not gated on `disabled`. That flag means "nothing to place",
     // and a saved analysis is always disabled — which is exactly where a coach
     // talks over a lift they tracked last week.
@@ -448,6 +655,35 @@ export default function AnalysisStage({
   }
 
   const extendStroke = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = draggingRef.current
+    if (drag) {
+      const point = pointFor(e)
+      if (!point) return
+      if (!drag.moved) {
+        // In video pixels, scaled so the threshold is a few pixels on screen
+        // rather than a few in a 4K frame.
+        const video = videoRef.current
+        const rect = video?.getBoundingClientRect()
+        const scale =
+          video && rect
+            ? pictureRect(rect.width, rect.height, video.videoWidth, video.videoHeight).scale
+            : 1
+        if (Math.hypot(point.x - drag.from.x, point.y - drag.from.y) * scale < DRAG_SLOP_PX) return
+        drag.moved = true
+      }
+      // Moved in the ref the overlay already reads, so the joint follows the
+      // pointer at animation-frame rate without a round trip or a re-render.
+      // The server hears about it once, on release.
+      const frame = poseRef?.current[drag.frameIndex]
+      if (frame) {
+        const landmarks = frame.landmarks.slice()
+        landmarks[drag.landmark] = { x: point.x, y: point.y, visibility: 1 }
+        const next = poseRef!.current.slice()
+        next[drag.frameIndex] = { ...frame, landmarks }
+        poseRef!.current = next
+      }
+      return
+    }
     if (!drawingRef.current) return
     const point = pointFor(e)
     // Points outside the frame are dropped rather than ending the stroke: a
@@ -456,6 +692,28 @@ export default function AnalysisStage({
   }
 
   const endStroke = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = draggingRef.current
+    draggingRef.current = null
+    if (drag?.moved) {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      }
+      // Tells the click that follows to stand down — it would otherwise seed the
+      // tracker, or play the video, at the end of a correction.
+      justDraggedRef.current = true
+      const landed = poseRef?.current[drag.frameIndex]?.landmarks[drag.landmark]
+      // Persisted once, at the end. Every intermediate position of a drag is a
+      // number the coach never meant to record — the same rule the 1RM velocity
+      // field follows by saving on blur rather than per keystroke.
+      if (landed) onCorrectLandmark?.(drag.frameIndex, drag.landmark, landed.x, landed.y)
+      return
+    }
+    if (drag && e.currentTarget.hasPointerCapture(e.pointerId)) {
+      // A press on a joint that never moved. Release the capture and let the
+      // click through to whatever it was really aimed at.
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+
     const points = drawingRef.current
     drawingRef.current = null
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
@@ -534,8 +792,11 @@ export default function AnalysisStage({
             className={`absolute left-0 top-0 ${
               // Drawing needs the layer even on a saved analysis, which is always
               // disabled — that is where a coach explains a lift they tracked
-              // earlier. Only a non-drawing disabled stage steps out of the way.
-              disabled && mode !== 'draw'
+              // earlier. Correcting a joint needs it for the same reason, and on
+              // the same page. Only a disabled stage doing neither steps out of
+              // the way; when it does not, handleClick gives click-to-play back
+              // by hand, because the layer is now swallowing it.
+              disabled && mode !== 'draw' && !correcting
                 ? 'pointer-events-none'
                 : mode === 'draw'
                   ? 'cursor-crosshair touch-none'

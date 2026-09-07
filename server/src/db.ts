@@ -259,6 +259,48 @@ export interface VideoAnalysisTable {
   updated_at: string
 }
 
+/**
+ * The lifter's skeleton for one analysis (Feature 11e).
+ *
+ * Its own table rather than another JSON column on video_analyses: a pose track
+ * is ~60x the size of a bar path, and the reasoning that put the path inline
+ * (about 10 KB, always read whole) stops holding at a quarter of a megabyte.
+ * Fetched only when the coach opens pose, the way withTrack=0 already keeps
+ * paths out of list responses.
+ */
+export interface PoseTrackTable {
+  /** One track per analysis, so the analysis id IS the key. */
+  analysis_id: string
+  /** e.g. 'mediapipe-pose-lite@1.0.1', so a re-run is comparable with what it replaced. */
+  model: string
+  frame_count: number
+  landmark_count: number
+  /** Float32Array: [frame][landmark][x, y, visibility], ORIGINAL VIDEO PIXELS. */
+  keypoints: Buffer
+  /** Float32Array: [frame][landmark][x, y, z] in metres. Null on tracks stored
+   *  before world landmarks were kept — see PoseFrame.world. */
+  world: Buffer | null
+  /** Float64Array of mediaTime per frame. Double, to match the bar path's own. */
+  times: Buffer
+  created_at: string
+}
+
+/**
+ * A landmark the coach moved by hand.
+ *
+ * Deliberately NOT written back over pose_tracks. Re-running the model must not
+ * destroy the coach's fixes, and "what the model saw" has to stay
+ * distinguishable from "what the coach said it was" — the same instinct as
+ * PATCH /api/analysis/:id refusing to edit a tracked path.
+ */
+export interface PoseCorrectionTable {
+  analysis_id: string
+  frame_index: number
+  landmark: number
+  x: number
+  y: number
+}
+
 export interface DB {
   athletes: AthleteTable
   programs: ProgramTable
@@ -275,6 +317,8 @@ export interface DB {
   discord_sent_messages: DiscordSentMessageTable
   discord_inbound_messages: DiscordInboundMessageTable
   video_analyses: VideoAnalysisTable
+  pose_tracks: PoseTrackTable
+  pose_corrections: PoseCorrectionTable
 }
 
 let _db: Kysely<DB> | null = null
@@ -717,6 +761,37 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
 
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_media ON video_analyses(media_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_athlete ON video_analyses(athlete_id)`.execute(_db)
+
+  // --- Pose (Feature 11e) -------------------------------------------------
+  //
+  // CASCADE on both, unlike video_analyses' own SET NULL parents. An analysis is
+  // the coach's own work and outlives the clip it came from; a pose track is
+  // DERIVED from an analysis and means nothing without it.
+  await sql`
+    CREATE TABLE IF NOT EXISTS pose_tracks (
+      analysis_id TEXT PRIMARY KEY,
+      model TEXT NOT NULL,
+      frame_count INTEGER NOT NULL,
+      landmark_count INTEGER NOT NULL,
+      keypoints BLOB NOT NULL,
+      world BLOB,
+      times BLOB NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (analysis_id) REFERENCES video_analyses(id) ON DELETE CASCADE
+    )
+  `.execute(_db)
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS pose_corrections (
+      analysis_id TEXT NOT NULL,
+      frame_index INTEGER NOT NULL,
+      landmark INTEGER NOT NULL,
+      x REAL NOT NULL,
+      y REAL NOT NULL,
+      PRIMARY KEY (analysis_id, frame_index, landmark),
+      FOREIGN KEY (analysis_id) REFERENCES video_analyses(id) ON DELETE CASCADE
+    )
+  `.execute(_db)
 
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_athlete ON discord_media(athlete_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_user ON discord_media(discord_user_id)`.execute(_db)
