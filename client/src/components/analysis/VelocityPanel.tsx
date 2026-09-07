@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Gauge, Ruler, TrendingDown, TriangleAlert } from 'lucide-react'
 import { RPE_VALUES } from 'coachboard-shared/rpe'
 import { looksMistracked, type RepMetrics } from 'coachboard-shared/videoAnalysis'
@@ -8,7 +8,6 @@ import {
   MVT_RANGE,
   bestRepVelocity,
   buildLoadVelocityProfile,
-  defaultMvt,
   defaultVelocityMetric,
   e1RMFromVelocity,
   checkScale,
@@ -16,6 +15,7 @@ import {
   effortLabel,
   recordedMaxFor,
   resolveLvSlope,
+  resolveMvt,
   isVbtLift,
   lastRepVelocity,
   liftLabel,
@@ -111,8 +111,12 @@ interface Props {
   reps: RepMetrics[]
   calibrated: boolean
   athleteName: string | null
-  /** Whose measured 1RM velocity to load and save. Null = nothing remembered. */
+  /** Null when no athlete is attached — nothing typed here can be remembered. */
   athleteId?: string | null
+  /** This athlete's stored 1RM velocity for this lift, or null if never measured. */
+  storedMvt?: number | null
+  /** Persists the field. Owned by the page, which also writes it on save. */
+  onSaveMvt?: (velocity: number | null) => Promise<void>
   /** Tightens the scale check: bar travel scales with stature. Null is fine. */
   athleteHeightCm?: number | null
   /** Every anchor for this lift, this set included — resolved by the page so its
@@ -135,6 +139,8 @@ export default function VelocityPanel({
   calibrated,
   athleteName,
   athleteId,
+  storedMvt,
+  onSaveMvt,
   athleteHeightCm,
   anchors: allAnchors,
   savedPoints,
@@ -193,40 +199,40 @@ export default function VelocityPanel({
    * whole point of velocity-based training, so it is remembered rather than
    * retyped on every clip. Keyed by athlete and lift together, because it is a
    * property of the pair — a lifter's squat and bench do not share one.
+   *
+   * The stored value lives in the page (see useAthleteMvt), which needs it too:
+   * an RPE-10 set that moved slower than this offers to lower it on save. Only
+   * the half-typed text is local, because "0.1" is a valid prefix of "0.12".
    */
+  const seededMvt = useRef('')
   useEffect(() => {
-    if (!athleteId) return
-    let cancelled = false
-    fetch(`/api/athletes/${athleteId}/mvt`)
-      .then((r) => (r.ok ? r.json() : {}))
-      .then((byLift: Record<string, number>) => {
-        if (cancelled) return
-        const stored = byLift[lift]
-        // Only ever fills a blank. Overwriting what the coach is looking at
-        // because a fetch landed late would be worse than showing nothing.
-        setMvtText(stored != null ? String(stored) : '')
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [athleteId, lift])
+    const next = storedMvt != null ? String(storedMvt) : ''
+    // Only ever fills a field the coach has not touched. The fetch behind
+    // `storedMvt` can land after they have started typing, and overwriting a
+    // half-entered number because a request came back would be worse than
+    // showing nothing at all.
+    setMvtText((current) => (current === seededMvt.current ? next : current))
+    seededMvt.current = next
+  }, [storedMvt, lift])
 
   const rememberMvt = useCallback(
     async (text: string) => {
-      if (!athleteId) return
       const parsed = text.trim() ? num(text) : null
       const velocity = parsed != null && Number.isFinite(parsed) && parsed > 0 ? parsed : null
-      await fetch(`/api/athletes/${athleteId}/mvt`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lift, velocity }),
-      }).catch(() => {})
+      // Unchanged text is not a save. Blur fires on every tab-through, and each
+      // one would otherwise rewrite updated_at for a number nobody touched.
+      if (velocity === (storedMvt ?? null)) return
+      await onSaveMvt?.(velocity)
     },
-    [athleteId, lift],
+    [onSaveMvt, storedMvt],
   )
 
-  const suggestedMvt = useMemo(() => defaultMvt(lift, allAnchors), [lift, allAnchors])
+  // The published band is the last resort, not the starting point: this
+  // athlete's stored number wins, then the RPE-10 row of their own LRV chart.
+  const suggestedMvt = useMemo(
+    () => resolveMvt(lift, { stored: storedMvt, anchors: allAnchors }),
+    [lift, storedMvt, allAnchors],
+  )
   const mvt = mvtText.trim() && Number.isFinite(num(mvtText)) ? num(mvtText) : suggestedMvt
 
   const lvPoints = useMemo(() => {
@@ -325,7 +331,10 @@ export default function VelocityPanel({
     // means "follow the lift's default", so bench goes back to peak.
     onChange({ ...value, lift: next, metric: null })
     // Cleared here for the no-athlete case; where there IS an athlete the load
-    // effect immediately replaces it with whatever was measured for the new lift.
+    // effect immediately replaces it with whatever was measured for the new
+    // lift. Blanking the seed alongside it is what tells that effect the field
+    // is untouched again — the number in it belonged to the previous lift.
+    seededMvt.current = ''
     setMvtText('')
   }
 
@@ -667,6 +676,15 @@ export default function VelocityPanel({
                 )}
               </label>
             </div>
+
+            {/* The field still works — it just has nowhere to be kept. Said out
+                loud because the value is per athlete AND per lift, so silently
+                dropping it looks identical to it having saved. */}
+            {!athleteId && (
+              <p className="text-xs text-muted-foreground">
+                Attach an athlete to remember this 1RM velocity for {liftLabel(lift)}.
+              </p>
+            )}
 
             {profile ? (
               <>

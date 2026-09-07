@@ -4,7 +4,6 @@ import { ArrowLeft, FileVideo, X } from 'lucide-react'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
 import { pixelsPerMetreFromPlate } from 'coachboard-shared/videoAnalysis'
 import {
-  defaultMvt,
   defaultVelocityMetric,
   e1RMFromVelocity,
   isVbtLift,
@@ -13,7 +12,10 @@ import {
   liftLabel,
   populationSlope,
   readRep,
+  resolveMvt,
+  type LrvAnchor,
   type VbtLift,
+  type VelocityMetric,
 } from 'coachboard-shared/vbt'
 import { Button } from '../components/ui/button'
 import AnalysisStage, { type StageMode } from '../components/analysis/AnalysisStage'
@@ -21,6 +23,7 @@ import DrawControls from '../components/analysis/DrawControls'
 import PathPlot from '../components/analysis/PathPlot'
 import type { Stroke } from '../components/analysis/annotations'
 import { useTrackerColor } from '../components/analysis/trackerColor'
+import { useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
 
 // ---------------------------------------------------------------------------
 // Two lifts, side by side.
@@ -268,16 +271,40 @@ function Pane({
   )
 }
 
+/** How one side reads, before its athlete's own numbers are applied. */
+function sideContext(x: VideoAnalysisDto): { lift: VbtLift; metric: VelocityMetric } {
+  const lift: VbtLift = isVbtLift(x.lift) ? x.lift : 'back-squat'
+  return {
+    lift,
+    metric: isVelocityMetric(x.metric) ? x.metric : defaultVelocityMetric(lift),
+  }
+}
+
 /** The numbers worth putting beside each other, only where both sides have them. */
 function Numbers({ a, b }: { a: VideoAnalysisDto; b: VideoAnalysisDto }) {
+  // Per side, because the two halves are often two different athletes — and the
+  // 1RM velocity every estimate below divides by belongs to the athlete, not to
+  // the lift. Reading both off the published band was how this page came to
+  // report a different max than the panel that produced the analysis.
+  const ctxA = sideContext(a)
+  const ctxB = sideContext(b)
+  const historyA = useVbtHistory(a.athleteId, ctxA.lift, ctxA.metric)
+  const historyB = useVbtHistory(b.athleteId, ctxB.lift, ctxB.metric)
+  const mvtA = useAthleteMvt(a.athleteId)
+  const mvtB = useAthleteMvt(b.athleteId)
+
   const rows = useMemo(() => {
-    const read = (x: VideoAnalysisDto) => {
-      const lift: VbtLift = isVbtLift(x.lift) ? x.lift : 'back-squat'
-      const metric = isVelocityMetric(x.metric) ? x.metric : defaultVelocityMetric(lift)
+    const read = (
+      x: VideoAnalysisDto,
+      ctx: { lift: VbtLift; metric: VelocityMetric },
+      anchors: LrvAnchor[],
+      byLift: Record<string, number>,
+    ) => {
+      const { lift, metric } = ctx
       const best = x.metrics.length
         ? Math.max(...x.metrics.map((m) => readRep(m, metric) ?? 0))
         : 0
-      const mvt = defaultMvt(lift)
+      const mvt = resolveMvt(lift, { stored: byLift[lift], anchors })
       const estimate =
         x.loadKg != null && best > 0 && mvt != null
           ? e1RMFromVelocity({
@@ -296,7 +323,8 @@ function Numbers({ a, b }: { a: VideoAnalysisDto; b: VideoAnalysisDto }) {
         e1rm: estimate ? `${Math.round(estimate.e1rm)} kg` : '—',
       }
     }
-    const [ra, rb] = [read(a), read(b)]
+    const ra = read(a, ctxA, historyA.anchors, mvtA.byLift)
+    const rb = read(b, ctxB, historyB.anchors, mvtB.byLift)
     return [
       ['Lift', ra.lift, rb.lift],
       ['Load', ra.load, rb.load],
@@ -305,7 +333,18 @@ function Numbers({ a, b }: { a: VideoAnalysisDto; b: VideoAnalysisDto }) {
       ['Best rep', ra.best, rb.best],
       ['Estimated 1RM', ra.e1rm, rb.e1rm],
     ] as const
-  }, [a, b])
+  }, [
+    a,
+    b,
+    ctxA.lift,
+    ctxA.metric,
+    ctxB.lift,
+    ctxB.metric,
+    historyA.anchors,
+    historyB.anchors,
+    mvtA.byLift,
+    mvtB.byLift,
+  ])
 
   return (
     <div className="overflow-x-auto rounded-md border">
