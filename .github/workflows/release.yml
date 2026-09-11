@@ -20,6 +20,10 @@ name: Release
 #
 # You can also run this manually from the Actions tab (workflow_dispatch) to get
 # the installers as downloadable artifacts without publishing a release.
+#
+# Every path through this workflow runs `verify` first — see the note on that job.
+# A tag whose commit fails typecheck or either test suite produces no installers
+# and no release.
 
 on:
   push:
@@ -31,7 +35,48 @@ permissions:
   contents: write   # needed to create/update the GitHub Release on a tag
 
 jobs:
+  # Gate. Nothing gets packaged until typecheck and both suites pass ON THE
+  # TAGGED COMMIT.
+  #
+  # Previously this workflow went straight from `npm ci` to `npm run package`,
+  # and the CI workflow only ran on push/PR to main. scripts/release.mjs pushes
+  # the branch and then the tag seconds apart, so the two workflows raced: the
+  # tag build could package, publish the Release and attach latest.yml while CI
+  # was still installing — and if CI then went red, the broken build was already
+  # live. Windows auto-update is on, so electron-updater hands that to every
+  # installed coach quietly and they restart into it.
+  #
+  # Kept in step with .github/workflows/ci.yml — same steps, same order.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # --ignore-scripts skips the postinstall electron-rebuild: the tests run
+      # under plain Node, not Electron, so the Node-ABI build below is what they
+      # actually need.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build better-sqlite3 for Node.js
+        run: npm rebuild better-sqlite3
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Server tests
+        run: npm run test -w server
+
+      - name: Client tests
+        run: npm run test -w client
+
   build-mac:
+    needs: verify
     runs-on: macos-14   # Apple Silicon (arm64)
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +111,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
+    needs: verify
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
