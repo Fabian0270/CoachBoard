@@ -1,6 +1,7 @@
 import {
   applyCorrections,
   packPose,
+  smooth,
   unpackPose,
   type PoseCorrection,
   type PoseFrame,
@@ -17,11 +18,11 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface LoadedPose {
-  /** The model's own output, corrections NOT yet applied. */
+  /** The model's own output, unfiltered and with corrections NOT yet applied. */
   measured: PoseFrame[]
   /** The coach's fixes, kept separate so they can be layered or taken back. */
   corrections: PoseCorrection[]
-  /** What the measurement looks like with the fixes on top — what to draw. */
+  /** Jitter-filtered, with the fixes on top — what to draw and measure from. */
   frames: PoseFrame[]
 }
 
@@ -60,7 +61,12 @@ export async function loadPose(analysisId: string): Promise<LoadedPose | null> {
     times: Float64Array.from(body.times),
   })
   const corrections: PoseCorrection[] = body.corrections ?? []
-  return { measured, corrections, frames: applyCorrections(measured, corrections) }
+  // Smoothed for display, raw in `measured`. What was stored is the
+  // measurement; the median filter is a reconstruction, so it is applied on the
+  // way OUT rather than baked into the row — the same split the corrections use.
+  // Corrections go on last so a hand-placed joint wins over the filter. One pass
+  // on load, not per frame.
+  return { measured, corrections, frames: applyCorrections(smooth(measured), corrections) }
 }
 
 /** Records or moves one hand-placed landmark. */

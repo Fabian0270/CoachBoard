@@ -359,15 +359,35 @@ export function frameAngles(frames: PoseFrame[], side: Side = cameraSide(frames)
  * An even window is widened by one so there is always a true middle element.
  * Visibility is carried from the centre frame untouched: smoothing a confidence
  * would invent confidence the model never reported.
+ *
+ * The WORLD landmarks are filtered alongside the image ones and, critically, are
+ * carried through. Dropping them (which this used to do) would look harmless and
+ * silently switch every joint angle to the image-space basis — the one the
+ * header explains is confidently wrong on front-on footage, where a deep squat
+ * reads as nearly straight legs. Visibility still gates the vote in BOTH sets,
+ * judged on the image-space confidence, because that is the only place the model
+ * reports what it could actually see.
+ *
+ * Note x and y are filtered independently, so an output point may be a pair that
+ * appeared in no single frame. That is ordinary for a separable median filter
+ * and is what makes it reject a snap, but it does mean the result is a
+ * reconstruction rather than a measurement — which is why the caller smooths for
+ * DISPLAY and stores the raw track.
  */
 export function smooth(frames: PoseFrame[], window = 5): PoseFrame[] {
   if (window <= 1 || frames.length === 0) return frames
   const span = window % 2 === 0 ? window + 1 : window
   const half = Math.floor(span / 2)
 
+  const medianOf = (values: number[]): number => {
+    values.sort((a, b) => a - b)
+    return values[Math.floor(values.length / 2)]
+  }
+
   return frames.map((frame, i) => {
     const from = Math.max(0, i - half)
     const to = Math.min(frames.length - 1, i + half)
+
     const landmarks = frame.landmarks.map((centre, lm) => {
       const xs: number[] = []
       const ys: number[] = []
@@ -382,12 +402,31 @@ export function smooth(frames: PoseFrame[], window = 5): PoseFrame[] {
         }
       }
       if (xs.length === 0) return centre
-      xs.sort((a, b) => a - b)
-      ys.sort((a, b) => a - b)
-      const mid = Math.floor(xs.length / 2)
-      return { x: xs[mid], y: ys[mid], visibility: centre.visibility }
+      return { x: medianOf(xs), y: medianOf(ys), visibility: centre.visibility }
     })
-    return { t: frame.t, landmarks }
+
+    // Only when this frame has them. A partial world set is worse than none —
+    // see packPose — so a frame without one stays without one.
+    const world = frame.world?.map((centre, lm) => {
+      const xs: number[] = []
+      const ys: number[] = []
+      const zs: number[] = []
+      for (let f = from; f <= to; f++) {
+        const w = frames[f].world?.[lm]
+        // Gated on the IMAGE landmark's visibility, matching frameAngles: the
+        // world set carries the model's estimate whether or not it could see the
+        // joint, so occlusion is only knowable from the image side.
+        if (w && isVisible(frames[f].landmarks[lm])) {
+          xs.push(w.x)
+          ys.push(w.y)
+          zs.push(w.z ?? 0)
+        }
+      }
+      if (xs.length === 0) return centre
+      return { x: medianOf(xs), y: medianOf(ys), z: medianOf(zs), visibility: centre.visibility }
+    })
+
+    return world ? { t: frame.t, landmarks, world } : { t: frame.t, landmarks }
   })
 }
 

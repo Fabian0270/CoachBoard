@@ -381,6 +381,61 @@ describe('smooth', () => {
     )
     expect(smooth(frames, 4)[2].landmarks[LM.LEFT_KNEE].x).toBeCloseTo(100, 6)
   })
+
+  /**
+   * The world set has to survive the filter.
+   *
+   * It used to be dropped, which looked harmless — the skeleton still drew —
+   * but frameAngles measures from `world` when it is there and silently falls
+   * back to image space when it is not. That basis is the one the header calls
+   * confidently wrong on front-on footage, where a deep squat reads as nearly
+   * straight legs. So smoothing a track would have quietly corrupted every
+   * joint angle while visibly improving the drawing, which is why nothing could
+   * safely call this until now.
+   */
+  const withWorld = (i: number, imgX: number, worldX: number, visibility = 1) => {
+    const f = frame(i, { [LM.LEFT_KNEE]: at(imgX, 300, visibility) })
+    const world = Array.from({ length: LANDMARK_COUNT }, () => ({ x: 0, y: 0, z: 0, visibility: 1 }))
+    world[LM.LEFT_KNEE] = { x: worldX, y: -0.4, z: 0.1, visibility: 1 }
+    return { ...f, world }
+  }
+
+  it('carries the world landmarks through, so angles keep their metric basis', () => {
+    const out = smooth([0, 1, 2].map((i) => withWorld(i, 100, 0.3)), 3)
+    expect(out[1].world).toBeDefined()
+    expect(out[1].world![LM.LEFT_KNEE].x).toBeCloseTo(0.3, 6)
+    expect(out[1].world![LM.LEFT_KNEE].z).toBeCloseTo(0.1, 6)
+    // metric stays true, which is what the chart reads to decide whether it may
+    // trust the angle it is drawing.
+    expect(frameAngles(out, 'left')[1].metric).toBe(true)
+  })
+
+  it('filters a snap out of the world set too, not just the pixels', () => {
+    const frames = [
+      withWorld(0, 100, 0.3),
+      withWorld(1, 100, 9.9),
+      withWorld(2, 100, 0.3),
+    ]
+    expect(smooth(frames, 3)[1].world![LM.LEFT_KNEE].x).toBeCloseTo(0.3, 6)
+  })
+
+  it('judges world-set occlusion on what the camera saw', () => {
+    // Visibility lives only on the image landmarks, so the world vote has to be
+    // gated on those — the same rule frameAngles follows.
+    const frames = [
+      withWorld(0, 900, 9.9, 0.1),
+      withWorld(1, 100, 0.3, 0.9),
+      withWorld(2, 900, 9.9, 0.1),
+    ]
+    expect(smooth(frames, 3)[1].world![LM.LEFT_KNEE].x).toBeCloseTo(0.3, 6)
+  })
+
+  it('leaves a frame without a world set without one', () => {
+    // A partial world set is worse than none — packPose refuses to store one —
+    // so the filter must not conjure a world set for a frame that had none.
+    const frames = [0, 1, 2].map((i) => frame(i, { [LM.LEFT_KNEE]: at(100, 300) }))
+    expect(smooth(frames, 3)[1].world).toBeUndefined()
+  })
 })
 
 describe('frameIndexAt', () => {

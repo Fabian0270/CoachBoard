@@ -36,6 +36,7 @@ import { savePose, putCorrection } from '../components/analysis/poseApi'
 import {
   applyCorrections,
   correctionsAtTimes,
+  smooth,
   type PoseFrame,
   type TimedCorrection,
 } from 'coachboard-shared/pose'
@@ -765,6 +766,32 @@ export default function VideoAnalysis() {
   // picking a video did.
   // ------------------------------------------------------------------
   const busy = phase === 'capturing' || phase === 'tracking'
+  // redrawPose reads this from a ref rather than a dep, so it stays a stable
+  // callback across the thirty-a-second calls it takes during tracking.
+  const busyRef = useRef(busy)
+  busyRef.current = busy
+
+  /**
+   * Jitter-filtered copy of a finished track, memoised on the source array.
+   *
+   * `smooth` costs 19 ms for a 300-frame track and 55 ms for 900 — measured —
+   * so running it per redraw would eat most of a core at thirty redraws a
+   * second, which is exactly the rebuild the note on redrawPose warns about.
+   * The source array is replaced wholesale rather than mutated, so identity is a
+   * sound cache key.
+   *
+   * Skipped while frames are still arriving, and not only to save the work: a
+   * median window needs neighbours on BOTH sides, so the newest frame — the one
+   * being drawn during live tracking — is the one it can do least for.
+   */
+  const poseSmoothCache = useRef<{ source: PoseFrame[]; result: PoseFrame[] } | null>(null)
+  const smoothedPose = (measured: PoseFrame[]): PoseFrame[] => {
+    if (busyRef.current || measured.length < 3) return measured
+    if (poseSmoothCache.current?.source === measured) return poseSmoothCache.current.result
+    const result = smooth(measured)
+    poseSmoothCache.current = { source: measured, result }
+    return result
+  }
 
   /**
    * Re-layers the corrections over the measurement.
@@ -773,13 +800,20 @@ export default function VideoAnalysis() {
    * the same array straight back when there is nothing to apply, so the common
    * case — no corrections at all — costs one comparison rather than rebuilding
    * three hundred frames thirty times a second.
+   *
+   * Smoothing happens HERE rather than before saving, because the stored track
+   * is the measurement and a median filter is a reconstruction — the same reason
+   * the corrected copy is never what gets stored. Corrections are applied AFTER
+   * the filter so a joint the coach placed by hand wins outright instead of
+   * being median-ed back toward where the model had it.
    */
   const redrawPose = useCallback(() => {
-    const measured = poseMeasuredRef.current
+    const measured = smoothedPose(poseMeasuredRef.current)
     const timed = poseCorrectionsRef.current
     poseRef.current = timed.length
       ? applyCorrections(measured, correctionsAtTimes(measured, timed))
       : measured
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   /** Records a joint the coach has moved, against the moment it belongs to. */
