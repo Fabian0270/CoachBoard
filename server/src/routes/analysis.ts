@@ -18,9 +18,40 @@ import {
   savePoseTrack,
   setPoseCorrection,
 } from '../services/poseTrackService.js'
+import { LANDMARK_COUNT, FLOATS_PER_LANDMARK } from 'coachboard-shared/pose'
 import { fail } from '../lib/httpError.js'
 
 const router = Router()
+
+// ---------------------------------------------------------------------------
+// How much footage an analysis may carry.
+//
+// ONE ceiling, expressed in frames, because frames are what both payloads are
+// actually made of — minutes are not, and assuming 30 fps here is how the two
+// numbers below drifted apart from the body parser in the first place.
+// `requestVideoFrameCallback` samples at the video's NATIVE rate, so 60 fps
+// phone footage produces twice the frames per minute that 30 fps does. 36,000
+// is ten minutes either way: 10 min at 60 fps, 20 min at 30 fps.
+//
+// These caps and ANALYSIS_JSON_LIMIT are one decision, not two. The limit is
+// sized from the MEASURED worst case of exactly this many frames (a full pose
+// track with world landmarks serialises to ~130 MB) plus headroom. Before this,
+// the schema permitted ~150 MB while express.json()'s unset 100 kb default
+// rejected everything over about a second of pose — so no pose track was ever
+// stored, and the save reported "the skeleton could not be" every time.
+// ---------------------------------------------------------------------------
+const MAX_FRAMES = 36_000
+
+/** Floats in a full pose frame set — what the client actually packs and sends. */
+const MAX_POSE_FLOATS = MAX_FRAMES * LANDMARK_COUNT * FLOATS_PER_LANDMARK
+
+/**
+ * Body-size cap for this router, mounted in app.ts AHEAD of the global parser.
+ *
+ * Scoped rather than raising the global limit: /api/analysis is the only router
+ * carrying large JSON, and every other route keeps the conservative default.
+ */
+export const ANALYSIS_JSON_LIMIT = '160mb'
 
 const pointSchema = z.object({ x: z.number(), y: z.number() })
 
@@ -33,11 +64,12 @@ const saveSchema = z.object({
   athleteId: z.string().nullable(),
   sourceLabel: z.string().max(300),
   // A tracked path is a few hundred points; the cap is generous but stops a
-  // malformed client filling the database with one row.
+  // malformed client filling the database with one row. Shares MAX_FRAMES with
+  // the pose track so one clip length governs both.
   track: z
     .array(z.object({ t: z.number(), x: z.number(), y: z.number() }))
     .min(2)
-    .max(20000),
+    .max(MAX_FRAMES),
   calibration: z
     .object({ a: pointSchema, b: pointSchema, plateDiameterMm: z.number().positive() })
     .nullable(),
@@ -82,9 +114,9 @@ router.get('/', async (req, res) => {
 // Registered BEFORE '/:id' so the literal path wins: Express matches in order
 // and ':id' would otherwise swallow '/video'. Same trap as routes/discord.ts.
 //
-// The upload is separate from the save because express.json() is global with a
-// 100 kb default — a video cannot ride the save body — and chunked because a
-// lift clip runs to hundreds of megabytes.
+// The upload is separate from the save because a video cannot ride a JSON body
+// at any sane limit, and chunked because a lift clip runs to hundreds of
+// megabytes — far past ANALYSIS_JSON_LIMIT, which sizes for a pose track.
 
 router.post('/video', async (req, res) => {
   const filename = typeof req.query.filename === 'string' ? req.query.filename : undefined
@@ -187,15 +219,20 @@ router.post('/', async (req, res) => {
 //
 // Coordinates travel as plain number arrays here and are packed into Float32
 // BLOBs at the storage boundary. JSON over localhost costs a few hundred
-// kilobytes on a save the coach explicitly asked for; a binary request body
-// would mean a second content type and a hand-rolled parser for one route.
+// kilobytes on a typical save the coach explicitly asked for; a binary request
+// body would mean a second content type and a hand-rolled parser for one route.
+//
+// The cost is not free at the top of the range — a full-length track serialises
+// to ~130 MB and is buffered whole before parsing — which is what
+// ANALYSIS_JSON_LIMIT is sized against. If tracks this long ever become routine,
+// that is the point to revisit the content type rather than raise the number.
 
 const poseSchema = z.object({
-  frameCount: z.number().int().positive().max(20000),
+  frameCount: z.number().int().positive().max(MAX_FRAMES),
   landmarkCount: z.number().int().positive().max(64),
-  keypoints: z.array(z.number()).max(4_000_000),
-  world: z.array(z.number()).max(4_000_000).nullable().optional(),
-  times: z.array(z.number()).max(20000),
+  keypoints: z.array(z.number()).max(MAX_POSE_FLOATS),
+  world: z.array(z.number()).max(MAX_POSE_FLOATS).nullable().optional(),
+  times: z.array(z.number()).max(MAX_FRAMES),
 })
 
 router.get('/:id/pose', async (req, res) => {
