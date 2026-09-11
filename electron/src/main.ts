@@ -269,11 +269,26 @@ function initAutoUpdate(): void {
 
   bundle?.configureUpdates?.({ install: () => autoUpdater.quitAndInstall() })
 
-  bundle?.setUpdateState?.({ status: 'checking' })
-  void autoUpdater.checkForUpdates().catch((err: unknown) => {
-    log(`Auto-update check failed: ${describeError(err)}`)
-    bundle?.setUpdateState?.({ status: 'error', message: 'check failed' })
-  })
+  const check = (): void => {
+    bundle?.setUpdateState?.({ status: 'checking' })
+    void autoUpdater.checkForUpdates().catch((err: unknown) => {
+      log(`Auto-update check failed: ${describeError(err)}`)
+      bundle?.setUpdateState?.({ status: 'error', message: 'check failed' })
+    })
+  }
+
+  check()
+
+  // electron-updater does not poll on its own, and this only ever ran once at
+  // launch — so a coach who leaves CoachBoard open for a week never learned a
+  // release existed. Six hours means they have it within a working day while
+  // staying well inside the "deliberately quiet" posture above: every failure is
+  // still a logged no-op, and the only visible outcome is the optional
+  // restart-to-update banner once something has already downloaded.
+  const SIX_HOURS_MS = 6 * 60 * 60 * 1000
+  const timer = setInterval(check, SIX_HOURS_MS)
+  // Without this the interval keeps the event loop alive and delays quit.
+  app.on('before-quit', () => clearInterval(timer))
 }
 
 /**

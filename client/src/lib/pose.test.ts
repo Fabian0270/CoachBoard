@@ -236,6 +236,48 @@ describe('frameAngles', () => {
   })
 
   /**
+   * Torso lean is the one reading that depends on which way y points.
+   *
+   * A joint angle sits between two segments, so flipping the y axis leaves it
+   * unchanged — which is why every other angle here is safe either way, and why
+   * the front-on test below passes whatever convention its fixture uses. Torso
+   * lean is measured against a FIXED axis, so a flip turns θ into 180 − θ: an
+   * upright lifter would read 90+ instead of 0, silently and on every clip.
+   *
+   * MediaPipe's world landmarks keep the image convention (y down, metres from
+   * the hip midpoint). Every torso-lean test used to run on the pixel fallback,
+   * so nothing pinned that — and the comment in the source asserted the
+   * opposite. This is the test that would have caught it.
+   */
+  it('reads torso lean the same from world landmarks as from pixels', () => {
+    const upright = {
+      t: 0,
+      landmarks: frame(0, {
+        [LM.LEFT_SHOULDER]: at(100, 100),
+        [LM.LEFT_HIP]: at(100, 200),
+      }).landmarks,
+      // Metres, hip-centred, y DOWN: the shoulder is above the hip, so its y is
+      // the more negative of the two.
+      world: frame(0, {
+        [LM.LEFT_SHOULDER]: { x: 0, y: -0.5, z: 0, visibility: 1 },
+        [LM.LEFT_HIP]: { x: 0, y: 0, z: 0, visibility: 1 },
+      }).landmarks,
+    }
+    expect(frameAngles([upright], 'left')[0].torsoLean).toBeCloseTo(0, 4)
+
+    // ...and a torso folded 45 degrees forward reads 45, not 135.
+    const folded = {
+      t: 0,
+      landmarks: upright.landmarks,
+      world: frame(0, {
+        [LM.LEFT_SHOULDER]: { x: -0.5, y: -0.5, z: 0, visibility: 1 },
+        [LM.LEFT_HIP]: { x: 0, y: 0, z: 0, visibility: 1 },
+      }).landmarks,
+    }
+    expect(frameAngles([folded], 'left')[0].torsoLean).toBeCloseTo(45, 4)
+  })
+
+  /**
    * The one the first real clip caught.
    *
    * A squat filmed FROM THE FRONT bends the knee almost straight toward the

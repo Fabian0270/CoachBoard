@@ -366,6 +366,48 @@ describe('recordedMaxFor', () => {
     expect(matchesLiftName('deadlift-conventional', 'Trap Bar Deadlift')).toBe(false)
   })
 
+  it('does not read a different lift that merely shares a word', () => {
+    // 'overhead' on its own matched Overhead Squat, and a bare 'row' matched
+    // every row there is. Both fed recordedMaxFor, which takes the HEAVIEST
+    // match — so the wrong lift could win and set the 1RM the e1RM calibration
+    // is anchored to.
+    expect(matchesLiftName('overhead-press', 'Overhead Squat')).toBe(false)
+    expect(matchesLiftName('overhead-press', 'Overhead Carry')).toBe(false)
+    expect(matchesLiftName('overhead-press', 'Overhead Tricep Extension')).toBe(false)
+
+    for (const name of [
+      'Upright Row', 'Cable Row', 'Seal Row', 'T-Bar Row',
+      'Dumbbell Row', 'Chest-Supported Row', 'Seated Cable Row', 'Inverted Row',
+    ]) {
+      expect(matchesLiftName('barbell-row', name), name).toBe(false)
+    }
+
+    // A dumbbell bench max is recorded per hand, so reading it as a barbell max
+    // would understate the lift by about half.
+    expect(matchesLiftName('bench-press', 'Dumbbell Bench Press')).toBe(false)
+  })
+
+  it('still matches the lifts it is meant to', () => {
+    // The exclusions must not be so broad that the real lift stops matching.
+    expect(matchesLiftName('overhead-press', 'Overhead Press')).toBe(true)
+    expect(matchesLiftName('overhead-press', 'OHP')).toBe(true)
+    expect(matchesLiftName('overhead-press', 'Military Press')).toBe(true)
+    expect(matchesLiftName('barbell-row', 'Barbell Row')).toBe(true)
+    expect(matchesLiftName('barbell-row', 'Pendlay Row')).toBe(true)
+    expect(matchesLiftName('barbell-row', 'Bent-Over Row')).toBe(true)
+    expect(matchesLiftName('bench-press', 'Bench Press')).toBe(true)
+    expect(matchesLiftName('bench-press', 'Competition Bench')).toBe(true)
+  })
+
+  it('picks the barbell row over a heavier machine row', () => {
+    // The concrete failure: the heaviest-match rule handed back the T-bar.
+    expect(recordedMaxFor('barbell-row', [
+      { lift_name: 'Barbell Row', weight: 120 },
+      { lift_name: 'T-Bar Row', weight: 160 },
+      { lift_name: 'Seated Cable Row', weight: 140 },
+    ])).toBe(120)
+  })
+
   it('takes the heaviest, since a max is a PR and the history is kept', () => {
     expect(recordedMaxFor('back-squat', [
       { lift_name: 'Squat', weight: 250 },

@@ -75,13 +75,23 @@ export default function DiscordSettingsCard() {
         /* offline */
       }
     }
+    // One poll on mount to pick up a sync already in flight, then a fast interval
+    // only while one is actually running.
+    //
+    // The comment above always said "while a sync is running", but the effect
+    // keyed off `configured` alone, so it ran every 1.5s for as long as the
+    // Settings page was open — 40 requests a minute, indefinitely, against a
+    // SQLite-backed server, to learn "idle" over and over. `busy` gates the
+    // interval on the state the comment describes; the slow tick still notices a
+    // sync the coach started from somewhere else.
     void poll()
-    const interval = setInterval(() => void poll(), 1500)
+    const busy = status?.state === 'running' || wasRunning.current
+    const interval = setInterval(() => void poll(), busy ? 1500 : 30_000)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [settings?.configured, load, toast])
+  }, [settings?.configured, status?.state, load, toast])
 
   const syncNow = async () => {
     const res = await fetch('/api/discord/sync', { method: 'POST' })

@@ -808,15 +808,32 @@ const LIFT_NAME_RULES: Partial<Record<VbtLift, { any: string[]; not?: string[] }
     not: ['front', 'box', 'split', 'hack', 'pin', 'safety', 'bulgarian', 'goblet', 'overhead'],
   },
   'front-squat': { any: ['front squat', 'frontsquat'] },
-  'bench-press': { any: ['bench'], not: ['pull'] },
+  // 'dumbbell' excluded because a dumbbell bench max is recorded per hand, and
+  // reading it as a barbell max would understate the lift by roughly half.
+  'bench-press': { any: ['bench'], not: ['pull', 'dumbbell', 'db '] },
   'deadlift-conventional': {
     any: ['deadlift', 'dead lift'],
     not: ['sumo', 'trap', 'hex', 'romanian', 'rdl', 'stiff', 'deficit', 'rack', 'block', 'snatch'],
   },
   'deadlift-sumo': { any: ['sumo'] },
   'deadlift-trapbar': { any: ['trap bar', 'trapbar', 'hex bar', 'hexbar'] },
-  'barbell-row': { any: ['row'] },
-  'overhead-press': { any: ['overhead', 'ohp', 'military', 'strict press'] },
+  // A bare 'row' matched every row there is, and recordedMaxFor takes the
+  // HEAVIEST match — so a heavy T-bar or machine row would win over the actual
+  // barbell row and feed a wrong 1RM into the e1RM calibration.
+  'barbell-row': {
+    any: ['row'],
+    not: [
+      'upright', 'cable', 'machine', 'seal', 'inverted', 'seated',
+      'chest-supported', 'chest supported', 'dumbbell', 'db ', 't-bar', 't bar', 'tbar',
+    ],
+  },
+  // 'overhead' alone also matched "Overhead Squat", which is a different lift at
+  // a different load. Every other ambiguous entry here already carries
+  // exclusions; these two were the ones that did not.
+  'overhead-press': {
+    any: ['overhead', 'ohp', 'military', 'strict press'],
+    not: ['squat', 'carry', 'walk', 'extension', 'tricep', 'lunge'],
+  },
 }
 
 /** Whether a free-text lift name refers to this VBT lift. */

@@ -31,11 +31,11 @@ describe('getJson', () => {
     stubFetch(() => {
       throw new TypeError('Failed to fetch')
     })
-    const err = await getJson('/api/athletes').catch((e) => e)
+    const err = await getJson('/api/athletes').catch((e: unknown) => e)
     expect(isOffline(err)).toBe(true)
     // The server is embedded in the app, so this is "not started yet" rather
     // than "you have no internet" — the message must not blame the network.
-    expect(err.message).not.toMatch(/internet|offline/i)
+    expect((err as ApiError).message).not.toMatch(/internet|offline/i)
   })
 
   it('throws rather than returning undefined when the body is not JSON', async () => {

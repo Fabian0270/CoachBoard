@@ -327,8 +327,20 @@ export function frameAngles(frames: PoseFrame[], side: Side = cameraSide(frames)
         shoulder && hip
           ? // atan2 of the horizontal run over the vertical rise, so the answer
             // is lean from vertical regardless of which way the lifter faces.
-            // In world space y is up rather than down, which the sign of the
-            // rise absorbs — the absolute value is the same either way.
+            //
+            // This one depends on y pointing DOWN, and unlike the joint angles
+            // above it cannot absorb the difference. A joint angle is measured
+            // between two segments, so flipping the y axis leaves it unchanged;
+            // this is measured against a fixed axis, so a flip turns θ into
+            // 180 − θ and an upright lifter would read 90+ instead of 0.
+            //
+            // MediaPipe's WORLD landmarks keep the image convention — x right,
+            // y down, z toward the camera, in metres from the hip midpoint — so
+            // both bases agree and one expression serves them. An earlier
+            // comment here claimed world space was y-up and that the absolute
+            // value made it moot; both halves were wrong, and only the fact that
+            // the premise was false kept the result correct. See the
+            // world-space test in pose.test.ts, which pins it.
             Math.abs((Math.atan2(hip.x - shoulder.x, hip.y - shoulder.y) * 180) / Math.PI)
           : null,
       metric: frame.world != null,
