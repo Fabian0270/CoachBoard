@@ -216,6 +216,10 @@ export interface ImportPreview {
   matched: ImportMatch[]
   warnings: ImportWarning[]
   e1rmEstimates: E1RMEstimate[]
+  // Fatal; non-empty means the file cannot be imported and `matched` is empty.
+  // Mirrors ExternalImportPreview.errors — a warning is something the coach may
+  // accept, an error is a sheet that would write wrong data if committed.
+  errors: string[]
 }
 
 // ---------------------------------------------------------------------------
