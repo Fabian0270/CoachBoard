@@ -17,6 +17,8 @@ interface ExerciseEditorProps {
   enabledColumns: ToggleableColumn[]
   programId: string
   sameDayDates: { date: string; weekIndex: number }[]
+  /** `${exerciseId}:${field}` for every edit that has not been stored yet. */
+  unsavedKeys?: Set<string>
   onAdd: () => void
   onSaveField: (exerciseId: string, patch: Partial<Exercise>) => void
   onDeleteExercise: (exerciseId: string) => void
@@ -65,7 +67,7 @@ function buildGroups(exercises: Exercise[]) {
   return groups
 }
 
-export default function ExerciseEditor({ workout, enabledColumns, programId, sameDayDates, onAdd, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
+export default function ExerciseEditor({ workout, enabledColumns, programId, sameDayDates, unsavedKeys, onAdd, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
   const exercises = workout?.exercises ?? []
   const columns = buildColumns(enabledColumns)
   const [widths, setWidth] = useColumnWidths(programId, columns)
@@ -317,6 +319,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
                           isSubSet={i > 0}
                           isInGroup={group.groupId !== null}
                           isDragging={isOwnDragGroup || isDraggedSet}
+                          unsavedKeys={unsavedKeys}
                           onSave={(patch) => onSaveField(ex.id, patch)}
                           onDelete={() => onDeleteExercise(ex.id)}
                           onAddSet={i === group.exercises.length - 1 ? () => onAddSet(ex.id) : undefined}

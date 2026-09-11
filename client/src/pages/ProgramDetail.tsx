@@ -96,9 +96,34 @@ export default function ProgramDetail() {
     }
   }
 
-  const { addExercise, saveExerciseField, deleteExercise, deleteWorkout, addSet, reorderExercises } = useWorkoutActions(
+  const {
+    addExercise, saveExerciseField, deleteExercise, deleteWorkout, addSet, reorderExercises,
+    failedEdits, retryFailedEdits,
+  } = useWorkoutActions(
     id, workoutByDate, setProgram, flashCell,
+    // One toast per failure. The 2.5-second cell flash on its own was easy to
+    // miss and cleared itself, which is how edits went missing unnoticed.
+    (message) => toast.error(message),
   )
+
+  const unsavedCount = Object.keys(failedEdits).length
+  const [retrying, setRetrying] = useState(false)
+
+  const retryUnsaved = async () => {
+    setRetrying(true)
+    try {
+      const { recovered, stillFailing } = await retryFailedEdits()
+      if (stillFailing === 0) {
+        toast.success(`Saved ${recovered} change${recovered === 1 ? '' : 's'}.`)
+      } else if (recovered > 0) {
+        toast.error(`Saved ${recovered}, but ${stillFailing} still could not be saved.`)
+      } else {
+        toast.error('Still could not save. Your changes are kept here until they do.')
+      }
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   // Dates for the same day-of-week across all weeks (excluding openDate itself)
   const sameDayDates = useMemo<{ date: string; weekIndex: number }[]>(() => {
@@ -311,6 +336,27 @@ export default function ProgramDetail() {
       </div>
       {program.description && <p className="text-muted-foreground">{program.description}</p>}
 
+      {/* Stays until the edits actually land. The old 2.5-second cell flash was
+          the only signal a save had failed, and it cleared itself while the
+          typed value stayed on screen — so a lost edit looked exactly like a
+          saved one. This cannot be missed and cannot time out. */}
+      {unsavedCount > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+          <X className="h-4 w-4 shrink-0 text-destructive" />
+          <span>
+            <span className="font-medium">
+              {unsavedCount} change{unsavedCount === 1 ? '' : 's'} could not be saved.
+            </span>{' '}
+            What you typed is still here, but it is not stored yet — don&apos;t close this program
+            until it is.
+          </span>
+          <Button size="sm" variant="outline" onClick={retryUnsaved} disabled={retrying}>
+            {retrying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {retrying ? 'Trying…' : 'Try again'}
+          </Button>
+        </div>
+      )}
+
       {!grid ? (
         <Card className="max-w-md">
           <CardHeader><CardTitle>Set program duration</CardTitle></CardHeader>
@@ -474,6 +520,9 @@ export default function ProgramDetail() {
               enabledColumns={enabledColumns}
               programId={id ?? ''}
               sameDayDates={sameDayDates}
+              // Marks the exact cells that did not save, so the banner's count
+              // maps to something the coach can actually find on the page.
+              unsavedKeys={new Set(Object.keys(failedEdits))}
               onAdd={() => addExercise(openDate)}
               onSaveField={(exerciseId, patch) => {
                 if (openWorkout) saveExerciseField(openDate, openWorkout.id, exerciseId, patch)
