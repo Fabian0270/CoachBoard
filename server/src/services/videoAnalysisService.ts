@@ -214,7 +214,16 @@ export async function countAnalysesForMedia(mediaId: string): Promise<number> {
   return Number(row?.n ?? 0)
 }
 
-/** Absolute path of the analysis's OWN copy, or null if it has none on disk. */
+/**
+ * Absolute path of the analysis's OWN copy, or null if it has none on disk.
+ *
+ * Async because `videoPath` stats the file rather than trusting the row: a row
+ * can name a clip that is no longer there, and a restored backup is the ordinary
+ * case for that, since a backup carries the database but not the media folder.
+ * Returning the path regardless would have `res.sendFile` throw into the global
+ * handler and report a server fault, instead of the route's own "no video kept
+ * for this analysis" — which is both true and actionable.
+ */
 export async function ownedVideoPath(id: string): Promise<string | null> {
   const row = await getDb()
     .selectFrom('video_analyses')

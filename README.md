@@ -22,7 +22,7 @@ A desktop application for strength coaches to manage athletes, build and analyze
 - **Program bookmarking** — star programs to favorite them for reuse, with a filter to show bookmarked-only.
 - **Calculators** — RPE cheat sheet, 1RM estimates, and warm-up set suggestions.
 - **Payments** — track athlete payments and balances.
-- **Backup & restore** — save a copy of the database from Settings and restore it later; automatic backups are kept alongside it.
+- **Backup & restore** — save a `.zip` backup from Settings and restore it later. It holds your athletes, programs, payments and Excel styles along with your email and Discord settings; saved video clips and synced media are not included, because they run to many gigabytes. Rolling automatic backups of the database are kept alongside it, and older `.sqlite` backups still restore.
 - **Auto-update** (Windows) — new versions download quietly in the background and install on restart or on quit. macOS updates stay off until the app is code-signed.
 - **Dark mode** — Light / Dark / System theme toggle.
 
@@ -44,7 +44,7 @@ Go to the [Releases page](https://github.com/Fabian0270/CoachBoard/releases) and
 
 > Intel Macs aren't supported yet — GitHub's free Intel build runners have been retired, so a native x64 build needs a paid runner or a self-hosted Intel Mac (tracked as a follow-up).
 
-The app stores all data locally in a single folder named `coachboard-electron` inside your user profile — `%APPDATA%\coachboard-electron` on Windows, `~/Library/Application Support/coachboard-electron` on macOS. That folder holds the database, the log, automatic backups, any synced Discord media, and the clips kept with saved analyses and screen recordings. **Settings → Your data** shows the exact path, opens the folder, and lets you save or restore a copy of the database. No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
+The app stores all data locally in a single folder named `coachboard-electron` inside your user profile — `%APPDATA%\coachboard-electron` on Windows, `~/Library/Application Support/coachboard-electron` on macOS. That folder holds the database, the log, automatic backups, any synced Discord media, and the clips kept with saved analyses and screen recordings. **Settings → Your data** shows the exact path, opens the folder, and lets you save or restore a backup. A backup covers the database and your email/Discord settings — the clips and synced media in that folder are not in it, so copy the folder itself if you need those. No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
 
 ---
 

@@ -65,7 +65,7 @@ export default function DataSettingsCard() {
     }
   }
 
-  /** Download the database through the browser so the coach picks where it lands. */
+  /** Download the backup through the browser so the coach picks where it lands. */
   const saveCopy = async () => {
     setBusy('export')
     try {
@@ -75,7 +75,7 @@ export default function DataSettingsCard() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `coachboard-backup-${new Date().toISOString().slice(0, 10)}.sqlite`
+      a.download = `coachboard-backup-${new Date().toISOString().slice(0, 10)}.zip`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -91,8 +91,10 @@ export default function DataSettingsCard() {
     const ok = await confirm({
       title: 'Restore from this backup?',
       description:
-        `This replaces everything currently in CoachBoard with the contents of "${file.name}". ` +
-        'Your current database is kept alongside it, and nothing changes until you restart the app.',
+        `This replaces your athletes, programs, payments and settings with the contents of ` +
+        `"${file.name}". Saved video clips and synced Discord media are not part of a backup, ` +
+        'so anything on this computer now stays as it is. Your current database is kept ' +
+        'alongside the restored one, and nothing changes until you restart the app.',
       confirmLabel: 'Restore',
       destructive: true,
     })
@@ -107,7 +109,11 @@ export default function DataSettingsCard() {
       })
       const body = await res.json()
       if (!res.ok) throw new Error(body.error ?? 'Restore failed')
-      toast.success('Restore ready. Close and reopen CoachBoard to apply it.')
+      toast.success(
+        body.settings?.length
+          ? 'Restore ready, including your email and Discord settings. Close and reopen CoachBoard to apply it.'
+          : 'Restore ready. Close and reopen CoachBoard to apply it.',
+      )
       await load()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Restore failed.')
@@ -143,8 +149,9 @@ export default function DataSettingsCard() {
       <CardHeader>
         <CardTitle>Your data</CardTitle>
         <CardDescription>
-          Everything in CoachBoard — athletes, programs, payments and settings — is stored in a
-          single file on this computer. It is never uploaded anywhere.
+          Your athletes, programs and payments live in a single database file on this computer,
+          alongside your email and Discord settings. A backup holds all of it. It is never
+          uploaded anywhere.
         </CardDescription>
       </CardHeader>
 
@@ -183,6 +190,18 @@ export default function DataSettingsCard() {
           </div>
         </dl>
 
+        {/* Says what a backup does NOT hold. The card used to claim it covered
+            "everything", which meant a coach restoring after a disk failure
+            discovered the gap at the worst possible moment. */}
+        <p className="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">A backup holds</span> your athletes,
+          programs, payments, Excel styles, and your email and Discord settings.{' '}
+          <span className="font-medium text-foreground">It does not hold</span> your saved video
+          clips, synced Discord media, or screen recordings — those can run to many gigabytes, so
+          copy the data folder itself if you need them. Saved passwords only work again on this
+          computer; restoring onto a new one asks you to enter them once more.
+        </p>
+
         <div className="flex flex-wrap gap-2">
           <Button onClick={saveCopy} disabled={busy !== null}>
             <Download className="h-4 w-4" />
@@ -211,7 +230,9 @@ export default function DataSettingsCard() {
         <input
           ref={fileInput}
           type="file"
-          accept=".sqlite,.db,application/octet-stream"
+          // .sqlite/.db stay accepted: backups taken before the archive format
+          // existed are still valid and the server still reads them.
+          accept=".zip,.sqlite,.db,application/zip,application/octet-stream"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0]

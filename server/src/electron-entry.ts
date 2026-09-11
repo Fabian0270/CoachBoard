@@ -6,5 +6,6 @@ export { configureCapture, resolvePendingSource } from './services/captureServic
 export { sweepRecordings } from './services/recordingStore.js'
 export { sweepAnalysisVideos } from './services/videoAnalysisService.js'
 export { runStartupBackup } from './services/backupService.js'
+export { applyPendingSettingsRestore } from './services/pendingSettingsRestore.js'
 export { configureUpdates, setUpdateState } from './services/updateService.js'
 export { initAutoSync as initDiscordSync } from './services/discordSyncService.js'

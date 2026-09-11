@@ -51,6 +51,12 @@ interface ServerBundle {
   configureUpdates?(opts: { install: () => void }): void
   setUpdateState?(state: { status: string; version?: string | null; message?: string | null }): void
   runStartupBackup?(): Promise<string | null>
+  /** The settings half of a staged restore. Needs the keychain, so it runs
+   *  after configureSecureStore rather than inside initializeDatabase. */
+  applyPendingSettingsRestore?(dbPath: string): {
+    restored: string[]
+    secretsDropped: string[]
+  } | null
   sweepRecordings?(): Promise<number>
   sweepAnalysisVideos?(): Promise<number>
   initDiscordSync?(opts: { launchDelayMs: number }): void | Promise<void>
@@ -155,6 +161,19 @@ async function startServer(): Promise<void> {
   // Give the server access to Electron-owned secure storage (DPAPI) + the real
   // userData path so it can persist the encrypted email app-password (Feature 6a).
   bundle.configureSecureStore({ safeStorage, userDataDir: app.getPath('userData') })
+
+  // The settings half of a restore, which the database half (inside
+  // initializeDatabase) cannot do: deciding whether to keep or drop a restored
+  // credential means attempting a decrypt, and safeStorage only exists from the
+  // line above. Same machine, the app password survives; anywhere else it is
+  // undecryptable bytes and gets dropped rather than left to fail at send time.
+  const settingsRestore = bundle.applyPendingSettingsRestore?.(dbPath)
+  if (settingsRestore?.restored.length) {
+    log(`Restored settings: ${settingsRestore.restored.join(', ')}`)
+    if (settingsRestore.secretsDropped.length) {
+      log(`Credentials dropped (not from this machine): ${settingsRestore.secretsDropped.join(', ')}`)
+    }
+  }
 
   // Same injection seam for the handful of shell actions the UI needs (opening
   // the data folder from Settings and from the error screen). Optional-chained so

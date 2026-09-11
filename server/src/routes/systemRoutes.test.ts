@@ -140,14 +140,17 @@ describe('GET /api/backup/info', () => {
 })
 
 describe('POST /api/backup/restore', () => {
-  it('rejects a file that is not a database, with a reason the coach can act on', async () => {
+  it('rejects a file that is not a backup, with a reason the coach can act on', async () => {
     const res = await fetch(`${baseUrl}/api/backup/restore`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: Buffer.from('this is a spreadsheet, not a database'),
     })
     expect(res.status).toBe(400)
-    expect((await res.json()).error).toMatch(/not a SQLite database/i)
+    // Deliberately not "not a SQLite database" any more: a backup is a .zip
+    // archive now, so naming the internal storage engine would send a coach
+    // looking for the wrong kind of file.
+    expect((await res.json()).error).toMatch(/not a CoachBoard backup/i)
   })
 
   it('rejects an empty upload', async () => {
