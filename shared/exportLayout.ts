@@ -70,6 +70,77 @@ export function weekColumnStart(weekIndex: number, exportColumnCount: number): n
   return FIXED_COLUMN_COUNT + 1 + weekIndex * (exportColumnCount + 1)
 }
 
+/**
+ * The ordered column keys a grid render actually uses.
+ *
+ * A captured coach style (or a built-in descriptor) REPLACES the enabled-columns
+ * set rather than filtering it, so the two inputs are not interchangeable. The
+ * exporter and the importer both call this: `weekColumnStart` multiplies the
+ * column count by the week index, so disagreeing on it here misaligns every week
+ * after the first by a growing offset.
+ */
+export function exportColumnKeysFor(
+  template: ExportLayoutTemplate | null,
+  enabledColumns: string[],
+): ExportColumnKey[] {
+  if (template && template.columns.length > 0) return template.columns.map((c) => c.key)
+  return buildExportColumnKeys(enabledColumns)
+}
+
+/**
+ * Which renderer a program exports through, and — when it is one the importer can
+ * replay — the geometry it produces.
+ *
+ * `opaque` means the sheet's shape is not derivable from the program row: a
+ * scaffold render rebuilds the coach's own uploaded workbook, and the Modern look
+ * is a card layout with no week-block grid at all. Neither can be read back by
+ * replaying column offsets, so the importer must refuse rather than guess.
+ *
+ * Mirrors the routing in programExport.buildProgramWorkbook and the orientation
+ * ternary in exportService.renderProgramWorkbook — keep the three in step.
+ */
+export interface ExportRenderSource {
+  enabled_columns: string | null
+  export_layout: string | null
+  export_template_xlsx?: string | null
+  builtin_template?: string | null
+}
+
+export type ExportRenderPath =
+  | { kind: 'grid'; orientation: 'horizontal' | 'vertical'; columnKeys: ExportColumnKey[] }
+  | { kind: 'opaque'; renderer: 'scaffold' | 'modern'; label: string }
+
+export function resolveExportRenderPath(
+  program: ExportRenderSource,
+  enabledColumns: string[],
+): ExportRenderPath {
+  if (program.export_template_xlsx) {
+    return { kind: 'opaque', renderer: 'scaffold', label: 'your own imported Excel style' }
+  }
+
+  // Truthiness of the RAW field, not of the parsed template: an export_layout
+  // that fails to parse still steers buildProgramWorkbook away from the built-in
+  // branch, and the importer has to make the same call.
+  const hasLayout = !!program.export_layout
+  const builtin = program.builtin_template ?? DEFAULT_BUILTIN_TEMPLATE
+
+  if (!hasLayout && builtin === 'modern') {
+    return { kind: 'opaque', renderer: 'modern', label: 'the Modern layout' }
+  }
+
+  const template =
+    parseExportLayout(program.export_layout) ??
+    (!hasLayout && builtin === 'minimal' ? MINIMAL_DESCRIPTOR : null)
+
+  return {
+    kind: 'grid',
+    // The renderer branches on 'vertical' and treats every other orientation as
+    // the horizontal grid, so collapse the union the same way here.
+    orientation: template?.orientation === 'vertical' ? 'vertical' : 'horizontal',
+    columnKeys: exportColumnKeysFor(template, enabledColumns),
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Export layout template — the captured "fingerprint" of a coach's own Excel
 // layout, so programs derived from an import re-export in the coach's style

@@ -23,6 +23,11 @@ import {
  * Build an xlsx buffer that matches the export layout for a given program.
  * Replays the same algorithm as the exporter so the importer can read it.
  * Cell values must be supplied via the `fill` callback.
+ *
+ * NOTE: because this REPLAYS the layout maths rather than calling the exporter,
+ * it can only prove the importer agrees with itself — it cannot catch the two
+ * sides drifting apart. importRoundTrip.test.ts renders through the real
+ * buildProgramWorkbook and covers that; keep new layout cases there.
  */
 async function buildSheetForProgram(
   programId: string,

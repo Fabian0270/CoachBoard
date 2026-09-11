@@ -125,6 +125,7 @@ export default function ImportDialog({ open, onOpenChange, programId, onImported
 
   const matchCount = preview?.matched.length ?? 0
   const hasMatches = matchCount > 0
+  const hasErrors = !!preview && preview.errors.length > 0
   const hasWarnings = preview && preview.warnings.length > 0
   const hasE1rm = preview && preview.e1rmEstimates.length > 0
 
@@ -170,7 +171,19 @@ export default function ImportDialog({ open, onOpenChange, programId, onImported
         {/* Step: preview */}
         {step === 'preview' && preview && (
           <div className="space-y-4">
-            {!hasMatches && !hasWarnings && (
+            {hasErrors && (
+              <div className="rounded border border-destructive/40 bg-destructive/10 p-3 space-y-1">
+                <h3 className="text-sm font-semibold flex items-center gap-1 text-destructive">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  This file can&apos;t be imported
+                </h3>
+                {preview.errors.map((e, i) => (
+                  <p key={i} className="text-xs text-muted-foreground">{e}</p>
+                ))}
+              </div>
+            )}
+
+            {!hasErrors && !hasMatches && !hasWarnings && (
               <p className="text-sm text-muted-foreground">
                 No filled-in Load Used or RPE values were found in the sheet.
               </p>
@@ -204,7 +217,7 @@ export default function ImportDialog({ open, onOpenChange, programId, onImported
               <Button variant="outline" onClick={() => { reset() }}>
                 Cancel
               </Button>
-              <Button onClick={handleConfirm} disabled={!hasMatches}>
+              <Button onClick={handleConfirm} disabled={!hasMatches || hasErrors}>
                 Confirm import
               </Button>
             </div>

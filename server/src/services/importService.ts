@@ -4,10 +4,16 @@ import type { ImportMatch, ImportWarning, ImportPreview, E1RMEstimate } from 'co
 import { estimate1RM } from 'coachboard-shared/rpe'
 import {
   DAY_NAMES,
-  buildExportColumnKeys,
+  resolveExportRenderPath,
   weekColumnStart,
 } from 'coachboard-shared/exportLayout'
 import { findProgramForExport } from './programService.js'
+import {
+  cellText,
+  findResultsBlocks,
+  nameColForWeek,
+  type ResultsBlock,
+} from './resultsSheetLayout.js'
 import { getDb } from '../db.js'
 
 // Accept both comma and period decimal separators (Swedish Excel uses commas).
@@ -15,6 +21,91 @@ function parseCellValue(value: ExcelJS.CellValue): string | null {
   if (value === null || value === undefined || value === '') return null
   const str = String(value).trim().replace(',', '.')
   return str === '' ? null : str
+}
+
+/** One exercise's three cells, however they were located in the sheet. */
+interface CellRead {
+  exercise: { id: string; name: string }
+  weekIndex: number
+  dayOfWeek: number
+  rowIndex: number
+  sheetName: string | null
+  load_used: string | null
+  rpe: string | null
+}
+
+const textOrNull = (ws: ExcelJS.Worksheet, r: number, c: number): string | null => {
+  const t = cellText(ws, r, c).trim()
+  return t === '' ? null : t
+}
+const numberOrNull = (ws: ExcelJS.Worksheet, r: number, c: number): string | null => {
+  const t = cellText(ws, r, c).trim().replace(',', '.')
+  return t === '' ? null : t
+}
+
+/**
+ * Read using the sheet's own headers: each block knows which column holds a
+ * given week's Load Used, so no column count or stride is assumed anywhere.
+ */
+function readStructurally(
+  ws: ExcelJS.Worksheet,
+  blocks: ResultsBlock[],
+  dayPlans: Array<Array<Array<{ id: string; name: string }>>>,
+): CellRead[] {
+  const reads: CellRead[] = []
+  for (const block of blocks) {
+    const perWeek = dayPlans[block.dayOfWeek]
+    if (!perWeek) continue
+    const weekCount = Math.max(block.loadCols.length, block.rpeCols.length)
+
+    for (const [rowIndex, sheetRow] of block.bodyRows.entries()) {
+      for (let weekIndex = 0; weekIndex < weekCount; weekIndex++) {
+        const exercise = perWeek[weekIndex]?.[rowIndex]
+        if (!exercise) continue
+        const nameCol = nameColForWeek(block, weekIndex)
+        const loadCol = block.loadCols[weekIndex]
+        const rpeCol = block.rpeCols[weekIndex]
+        reads.push({
+          exercise,
+          weekIndex,
+          dayOfWeek: block.dayOfWeek,
+          rowIndex,
+          sheetName: nameCol ? textOrNull(ws, sheetRow, nameCol) : null,
+          load_used: loadCol ? numberOrNull(ws, sheetRow, loadCol) : null,
+          rpe: rpeCol ? numberOrNull(ws, sheetRow, rpeCol) : null,
+        })
+      }
+    }
+  }
+  return reads
+}
+
+/** Fallback: replay the exporter's offsets, for a sheet with no headers to read. */
+function readByGeometry(
+  ws: ExcelJS.Worksheet,
+  layout: Array<{
+    exercise: { id: string; name: string }
+    weekIndex: number
+    dayOfWeek: number
+    rowIndex: number
+    sheetRow: number
+    weekColStart: number
+  }>,
+  offsets: { nameOffset: number; loadUsedOffset: number; rpeOffset: number },
+): CellRead[] {
+  const { nameOffset, loadUsedOffset, rpeOffset } = offsets
+  return layout.map((entry) => {
+    const { sheetRow: r, weekColStart: col } = entry
+    return {
+      exercise: entry.exercise,
+      weekIndex: entry.weekIndex,
+      dayOfWeek: entry.dayOfWeek,
+      rowIndex: entry.rowIndex,
+      sheetName: nameOffset >= 0 ? parseCellValue(ws.getCell(r, col + nameOffset).value) : null,
+      load_used: loadUsedOffset >= 0 ? parseCellValue(ws.getCell(r, col + loadUsedOffset).value) : null,
+      rpe: rpeOffset >= 0 ? parseCellValue(ws.getCell(r, col + rpeOffset).value) : null,
+    }
+  })
 }
 
 function buildEnabledSet(rawEnabledColumns: string | null): Set<string> {
@@ -43,24 +134,24 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
     throw new Error('Program has no date range — cannot match import to exercises')
   }
 
+  // Which shape did THIS program export as? A captured coach style or a built-in
+  // descriptor replaces the enabled-columns set outright, and the column count
+  // feeds weekColumnStart — so reading it off enabled_columns alone silently
+  // misaligns every week after the first by a growing offset.
   const enabledSet = buildEnabledSet(program.enabled_columns)
-  const columnKeys = buildExportColumnKeys([...enabledSet])
-  const exportColumnCount = columnKeys.length
-  const getWeekColStart = (wi: number) => weekColumnStart(wi, exportColumnCount)
+  const renderPath = resolveExportRenderPath(program, [...enabledSet])
 
+  // Only meaningful for the geometry fallback below — a structural read derives
+  // all of this from the sheet's own headers instead.
+  const columnKeys = renderPath.kind === 'grid' ? renderPath.columnKeys : []
+  const getWeekColStart = (wi: number) => weekColumnStart(wi, columnKeys.length)
   const nameOffset = columnKeys.indexOf('name')       // always 0
   const loadUsedOffset = columnKeys.indexOf('load_used')
   const rpeOffset = columnKeys.indexOf('rpe')
-
-  if (loadUsedOffset < 0 && rpeOffset < 0) {
-    return {
-      matched: [],
-      warnings: [{
-        message: 'Neither "Load Used" nor "Last Set RPE" are enabled for this program — nothing to import.',
-      }],
-      e1rmEstimates: [],
-    }
-  }
+  const geometryReadable =
+    renderPath.kind === 'grid' &&
+    renderPath.orientation === 'horizontal' &&
+    (loadUsedOffset >= 0 || rpeOffset >= 0)
 
   // -------------------------------------------------------------------------
   // Rebuild the exercise layout — identical to the exporter's dayData loop
@@ -104,6 +195,10 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
   }
 
   const layout: LayoutEntry[] = []
+  // [dayOfWeek][weekIndex][rowIndex] — what the program says each cell holds.
+  // The structural reader matches against this by (day, week, row) too; only the
+  // way the sheet coordinates are found differs.
+  const dayPlans: ExerciseRow[][][] = []
 
   // Row 1 = week headers. Row 2 = first day's header row.
   // For each day: header row, then bodyCount exercise rows, then one blank row.
@@ -120,6 +215,7 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
       perWeek.push(exList)
       if (exList.length > maxRows) maxRows = exList.length
     }
+    dayPlans.push(perWeek)
 
     sheetRow++ // advance past header row → first exercise row
 
@@ -153,27 +249,53 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
 
   const matched: ImportMatch[] = []
   const warnings: ImportWarning[] = []
+  let namedRowCount = 0   // rows where the sheet had an exercise name at all
+  let mismatchCount = 0   // …of those, how many disagreed with the program
 
-  for (const entry of layout) {
-    const { exercise, weekIndex, dayOfWeek, rowIndex, sheetRow: r, weekColStart: col } = entry
+  // Prefer reading the sheet's own headers. A coach's captured style can share
+  // one exercise-name column across every week, start below a title block, or
+  // word its headers differently — none of which the offset replay can follow.
+  // The replay stays as the fallback for a sheet with no headers to read.
+  const blocks = findResultsBlocks(ws)
 
-    const sheetName =
-      nameOffset >= 0
-        ? parseCellValue(ws.getCell(r, col + nameOffset).value)
-        : null
+  if (blocks.length === 0 && !geometryReadable) {
+    // Nothing in the program to import into — a configuration note, not a bad file.
+    if (renderPath.kind === 'grid' && renderPath.orientation === 'horizontal') {
+      return {
+        matched: [],
+        warnings: [{
+          message: 'Neither "Load Used" nor "Last Set RPE" are enabled for this program — nothing to import.',
+        }],
+        e1rmEstimates: [],
+        errors: [],
+      }
+    }
 
-    const load_used =
-      loadUsedOffset >= 0
-        ? parseCellValue(ws.getCell(r, col + loadUsedOffset).value)
-        : null
+    const reason =
+      renderPath.kind === 'opaque'
+        ? `No "Load Used" or "Last Set RPE" columns were found in this sheet, and this program ` +
+          `exports through ${renderPath.label}, whose layout can't be reconstructed from the ` +
+          `program alone. Check you picked the filled-in file the athlete returned.`
+        : renderPath.orientation === 'vertical'
+          ? `This program's export style stacks weeks vertically, and this sheet has no per-week ` +
+            `result columns to read. Use "Import programs" on the Programs page for this file instead.`
+          : `No "Load Used" or "Last Set RPE" columns were found in this sheet. Check that you picked ` +
+            `the filled-in file the athlete returned — the one with those columns filled in.`
 
-    const rpe =
-      rpeOffset >= 0
-        ? parseCellValue(ws.getCell(r, col + rpeOffset).value)
-        : null
+    return { matched: [], warnings: [], e1rmEstimates: [], errors: [reason] }
+  }
 
+  const reads: CellRead[] =
+    blocks.length > 0
+      ? readStructurally(ws, blocks, dayPlans)
+      : readByGeometry(ws, layout, { nameOffset, loadUsedOffset, rpeOffset })
+
+  for (const { exercise, weekIndex, dayOfWeek, rowIndex, sheetName, load_used, rpe } of reads) {
     const nameMismatch =
       sheetName !== null && sheetName.toLowerCase() !== exercise.name.toLowerCase()
+
+    if (sheetName !== null) namedRowCount++
+    if (nameMismatch) mismatchCount++
 
     if (nameMismatch) {
       warnings.push({
@@ -198,6 +320,27 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
         rpe,
         nameMismatch,
       })
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Alignment gate. A name mismatch on one row is a coach renaming a lift in the
+  // sheet; a name mismatch on most rows means the cells being read are not the
+  // cells that were written, and every load/RPE below is junk. Refuse the file
+  // rather than let it be committed — that write sets load_used/rpe on every
+  // matched exercise and flips the program to completed.
+  // -------------------------------------------------------------------------
+  if (namedRowCount >= 3 && mismatchCount > namedRowCount / 2) {
+    return {
+      matched: [],
+      warnings,
+      e1rmEstimates: [],
+      errors: [
+        `The sheet doesn't line up with this program: ${mismatchCount} of ${namedRowCount} ` +
+        `rows held a different exercise than expected, so nothing was imported. This usually ` +
+        `means the file came from a different program, or rows were inserted or deleted — ` +
+        `re-export this program and fill in that copy.`,
+      ],
     }
   }
 
@@ -244,7 +387,7 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
     }
   }
 
-  return { matched, warnings, e1rmEstimates: [...bestByKeyword.values()] }
+  return { matched, warnings, e1rmEstimates: [...bestByKeyword.values()], errors: [] }
 }
 
 /**

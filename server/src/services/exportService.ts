@@ -2,11 +2,12 @@ import ExcelJS from 'exceljs'
 import {
   COLUMN_LABELS,
   dayLabelFor,
+  exportColumnKeysFor,
   parseExportLayout,
   type ExportColumnKey,
   type ExportLayoutTemplate,
 } from 'coachboard-shared/exportLayout'
-import { TOGGLEABLE_COLUMNS, type ToggleableColumn } from 'coachboard-shared'
+import { TOGGLEABLE_COLUMNS } from 'coachboard-shared'
 import { e1rmForExerciseName } from './exportE1RM.js'
 
 // ---------------------------------------------------------------------------
@@ -106,22 +107,18 @@ function resolveColumns(program: ProgramRow, template: ExportLayoutTemplate | nu
   const trackingColor = template?.colors.trackingHeader || DEFAULT_TRACKING_COLOR
   const colorFor = (key: ExportColumnKey) => (TRACKING_KEYS.has(key) ? trackingColor : headerColor)
 
-  let columns: ResolvedColumn[]
-  if (template && template.columns.length > 0) {
-    columns = template.columns.map((c) => ({
-      key: c.key,
-      label: c.label || COLUMN_LABELS[c.key],
-      color: colorFor(c.key),
-      width: COLUMN_WIDTH[c.key],
-    }))
-  } else {
-    const enabled = parseEnabledColumns(program.enabled_columns)
-    const order: ExportColumnKey[] = ['name', 'rest_time', 'sets', 'reps', 'intensity', 'load_cap', 'load_used', 'rpe']
-    const always = new Set<ExportColumnKey>(['name', 'sets', 'reps'])
-    columns = order
-      .filter((k) => always.has(k) || enabled.has(k as ToggleableColumn))
-      .map((k) => ({ key: k, label: COLUMN_LABELS[k], color: colorFor(k), width: COLUMN_WIDTH[k] }))
-  }
+  // Geometry comes from the shared helper the importer also calls, so the two
+  // sides cannot disagree on how many columns a week block is wide. Labels stay
+  // here: they're presentation, and only the exporter needs them.
+  const enabled = parseEnabledColumns(program.enabled_columns)
+  const keys = exportColumnKeysFor(template, [...enabled])
+  const templateColumns = template && template.columns.length > 0 ? template.columns : null
+  const columns: ResolvedColumn[] = keys.map((key, i) => ({
+    key,
+    label: (templateColumns ? templateColumns[i].label : null) || COLUMN_LABELS[key],
+    color: colorFor(key),
+    width: COLUMN_WIDTH[key],
+  }))
 
   return {
     columns,

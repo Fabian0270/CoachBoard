@@ -394,6 +394,14 @@ router.post(
         return
       }
 
+      // The commit path re-parses, so a sheet the preview refused must be refused
+      // here too — otherwise a client that skipped the preview could still write
+      // misaligned loads over the program.
+      if (preview.errors.length > 0) {
+        res.status(422).json({ error: preview.errors[0], errors: preview.errors })
+        return
+      }
+
       const result = await commitImport(programId, preview.matched)
       res.json({ ...result, warnings: preview.warnings })
     } catch (err) {
