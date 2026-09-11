@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { getList, errorMessage } from '../lib/api'
+import LoadError from '../components/LoadError'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -17,16 +19,30 @@ interface Athlete {
 export default function AthletesList() {
   const [athletes, setAthletes] = useState<Athlete[]>([])
   const [loading, setLoading] = useState(true)
+  // Separate from `loading` on purpose. With only a loading flag, a failed load
+  // is indistinguishable from an empty roster, and this screen's empty state
+  // reads "No athletes yet — add your first athlete to get started". A coach
+  // with forty athletes seeing that has every reason to think the data is gone.
+  const [error, setError] = useState<string | null>(null)
   const [toDelete, setToDelete] = useState<Athlete | null>(null)
   const [showArchived, setShowArchived] = useState(false)
 
-  useEffect(() => {
-    // Fetch archived too so the roster can offer a "show archived" toggle without a refetch.
-    fetch('/api/athletes?include_archived=1')
-      .then((r) => r.json())
-      .then((data) => { setAthletes(Array.isArray(data) ? data : []); setLoading(false) })
-      .catch(() => setLoading(false))
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      // Fetch archived too so the roster can offer a "show archived" toggle without a refetch.
+      setAthletes(await getList<Athlete>('/api/athletes?include_archived=1'))
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setLoading(false)
+    }
   }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const handleDelete = (e: React.MouseEvent, athlete: Athlete) => {
     e.preventDefault()
@@ -70,7 +86,11 @@ export default function AthletesList() {
         <h1 className="text-3xl font-bold">Athletes</h1>
         <Link to="/athletes/new"><Button><Plus className="h-4 w-4 mr-2" />New Athlete</Button></Link>
       </div>
-      {active.length === 0 ? (
+      {/* The error branch comes FIRST: an empty roster and an unreadable one look
+          the same in the data, and only one of them should say "No athletes yet". */}
+      {error ? (
+        <LoadError what="your athletes" message={error} onRetry={() => void load()} />
+      ) : active.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <Users className="h-12 w-12 text-muted-foreground mb-4" />

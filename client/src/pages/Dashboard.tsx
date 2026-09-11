@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { PaymentAlert } from 'coachboard-shared'
+import { getList, errorMessage } from '../lib/api'
+import LoadError from '../components/LoadError'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -22,23 +24,29 @@ export default function Dashboard() {
   const [onboardingDone, setOnboardingDone] = useState(isOnboardingComplete())
   const { configured: discordConfigured } = useDiscordConfigured()
   const [storage, setStorage] = useState<{ bytes: number; files: number } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setError(null)
+    try {
+      const [athletes, programs, alerts] = await Promise.all([
+        getList<unknown>('/api/athletes'),
+        getList<unknown>('/api/programs'),
+        getList<PaymentAlert>('/api/payments/alerts'),
+      ])
+      setStats({ athletes: athletes.length, programs: programs.length })
+      setPaymentAlerts(alerts)
+    } catch (err) {
+      // Previously every one of these swallowed its failure and left the tiles
+      // reading zero — which on a local-first app looks exactly like the
+      // database having been wiped, with nothing on screen to say otherwise.
+      setError(errorMessage(err))
+    }
+  }, [])
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/athletes').then((r) => r.json()).catch(() => []),
-      fetch('/api/programs').then((r) => r.json()).catch(() => []),
-    ]).then(([athletes, programs]) => {
-      setStats({
-        athletes: Array.isArray(athletes) ? athletes.length : 0,
-        programs: Array.isArray(programs) ? programs.length : 0,
-      })
-    }).catch(() => {})
-
-    fetch('/api/payments/alerts')
-      .then((r) => r.json())
-      .then((data) => setPaymentAlerts(Array.isArray(data) ? data : []))
-      .catch(() => {})
-  }, [])
+    void load()
+  }, [load])
 
   useEffect(() => {
     if (!discordConfigured) {
@@ -86,6 +94,13 @@ export default function Dashboard() {
         </Card>
       )}
 
+      {/* Replaces the tiles rather than sitting above them. Showing "Total
+          Athletes 0" next to an error message is still telling the coach their
+          roster is empty — the number has to go, not just be explained. */}
+      {error ? (
+        <LoadError what="your dashboard" message={error} onRetry={() => void load()} />
+      ) : (
+      <>
       <div className={`grid grid-cols-1 gap-4 ${storage ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -120,10 +135,15 @@ export default function Dashboard() {
           </Card>
         )}
       </div>
-      {/* Guided onboarding until the coach finishes (or skips) it; the style card after. */}
+      {/* Guided onboarding until the coach finishes (or skips) it; the style card
+          after. Inside the non-error branch because it keys off athleteCount:
+          a failed load would otherwise show an established coach the
+          "add your first athlete" walkthrough. */}
       {onboardingDone
         ? <MyStyleCard />
         : <Onboarding athleteCount={stats.athletes} onFinish={() => setOnboardingDone(true)} />}
+      </>
+      )}
     </div>
   )
 }

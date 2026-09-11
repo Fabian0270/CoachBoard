@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { getList, errorMessage } from '../lib/api'
+import LoadError from '../components/LoadError'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -38,23 +40,31 @@ export default function ProgramComparison() {
   const [suggestOpen, setSuggestOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   // The unassigned program being reassigned to an athlete, and the picked target.
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [assigning, setAssigning] = useState<Program | null>(null)
   const [assignTo, setAssignTo] = useState<string>('')
   const [savingAssign, setSavingAssign] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const newMenuRef = useRef<HTMLDivElement>(null)
 
-  const loadData = () => {
-    Promise.all([
-      fetch('/api/athletes').then((r) => r.json()).catch(() => []),
-      fetch('/api/programs').then((r) => r.json()).catch(() => []),
-    ]).then(([fetchedAthletes, fetchedPrograms]) => {
-      setAthletes(Array.isArray(fetchedAthletes) ? fetchedAthletes : [])
-      setPrograms(Array.isArray(fetchedPrograms) ? fetchedPrograms : [])
-    }).catch(() => {})
-  }
+  const loadData = useCallback(async () => {
+    setLoadError(null)
+    try {
+      const [fetchedAthletes, fetchedPrograms] = await Promise.all([
+        getList<Athlete>('/api/athletes'),
+        getList<Program>('/api/programs'),
+      ])
+      setAthletes(fetchedAthletes)
+      setPrograms(fetchedPrograms)
+    } catch (err) {
+      // Otherwise a failed load renders "No programs yet — create a training
+      // program for an athlete" to a coach whose library is the whole reason
+      // they bought this.
+      setLoadError(errorMessage(err))
+    }
+  }, [])
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => { void loadData() }, [loadData])
 
   // Deep link from onboarding: /programs?import=1 opens the bulk-import dialog
   // straight away, then drops the param so a refresh doesn't reopen it.
@@ -255,7 +265,9 @@ export default function ProgramComparison() {
           Bookmarked
         </Button>
       </div>
-      {filtered.length === 0 ? (
+      {loadError ? (
+        <LoadError what="your programs" message={loadError} onRetry={() => void loadData()} />
+      ) : filtered.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <Dumbbell className="h-12 w-12 text-muted-foreground mb-4" />
