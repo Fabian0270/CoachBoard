@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs'
 import { parseExternalFile } from './externalImportService.js'
-import { weekdayOffset } from './external-import/valueNormalizers.js'
+import { WEEK_BANNER, isWeekdayLabel, weekdayOffset } from './external-import/valueNormalizers.js'
 import { MAX_SHEET_COLS, sheetBounds, valueAt } from '../lib/sheetBounds.js'
 import type { ExternalExerciseRow } from 'coachboard-shared'
 
@@ -38,9 +38,11 @@ type ExerciseRow = {
 type WorkoutRow = { id: string; scheduled_date: string | null }
 type ProgramRow = { start_date: string | null }
 
-const WEEK_BANNER = /^week\s*\d+$/i
+// WEEK_BANNER and isWeekdayLabel are shared with the importer, so both read the
+// same banners and day labels.
+/** A banner renumbered for week w, keeping the coach's own wording (Vecka 3 stays Vecka). */
+const renumberBanner = (text: string, w: number): string => text.replace(/\d+/, String(w + 1))
 // English + Swedish weekday day-section labels (incl. ASCII-stripped forms).
-const WEEKDAY = /^(mon|tue|wed|thu|fri|sat|sun|mån|man|tis|ons|tor|fre|lör|lor|sön|son)/i
 const DAY_N = /^day\s*\d+/i
 
 /**
@@ -371,7 +373,7 @@ async function renderRowAxis(
     for (let r = blockTop; r < blockTop + rowStride; r++) {
       for (let c = 1; c <= maxCol; c++) {
         const cell = ws.getCell(r, c)
-        if (typeof cell.value === 'string' && WEEK_BANNER.test(cell.value)) { cell.value = `Week ${w + 1}`; break }
+        if (typeof cell.value === 'string' && WEEK_BANNER.test(cell.value)) { cell.value = renumberBanner(cell.value, w); break }
       }
     }
   }
@@ -494,7 +496,7 @@ function injectEmptyTrainedSections(ws: ExcelJS.Worksheet, geom: ColumnGeometry,
       if (typeof v !== 'string') continue
       const t = v.trim()
       let wd: number | null = null
-      if (t.length <= 10 && !/\d/.test(t) && WEEKDAY.test(t)) wd = weekdayOffset(t)
+      if (isWeekdayLabel(t)) wd = weekdayOffset(t)
       else { const m = t.match(/^day\s*(\d+)/i); if (m) wd = parseInt(m[1], 10) - 1 }
       if (wd !== null && wd >= 0 && wd <= 6) { labelRows.push({ row: r, weekday: wd }); break }
     }
@@ -589,7 +591,7 @@ export async function renderScaffold(
   // weekday when the template spans the whole week (DAY 7 present); otherwise it
   // falls back to the program's days in order, like a non-weekday/non-"DAY n"
   // template. The coach's labels are never renamed.
-  const hasWeekdayLabel = tEx.some((e) => WEEKDAY.test((e.dayLabel ?? '').trim()))
+  const hasWeekdayLabel = tEx.some((e) => isWeekdayLabel(e.dayLabel ?? ''))
   const hasDayN = tEx.some((e) => DAY_N.test((e.dayLabel ?? '').trim()))
   const maxTemplateDay = Math.max(...geom.days.map((d) => d.dayIndex))
   const weekdayMode = hasWeekdayLabel || (hasDayN && maxTemplateDay >= 6)
@@ -727,7 +729,7 @@ export async function renderScaffold(
       const t = v.trim()
       if (WEEK_BANNER.test(t) || DAY_N.test(t)) return true
       // Weekday day-section label (e.g. "Torsdag") in a non-movement row.
-      if (WEEKDAY.test(t) && t.length <= 10 && !/\d/.test(t)) return true
+      if (isWeekdayLabel(t)) return true
       const lower = t.toLowerCase()
       if (/\bsets?\b/.test(lower)) hasSet = true
       if (/\breps?\b/.test(lower)) hasRep = true
@@ -745,7 +747,7 @@ export async function renderScaffold(
   const isDayLabel = (v: ExcelJS.CellValue): boolean => {
     if (typeof v !== 'string') return false
     const t = v.trim()
-    return DAY_N.test(t) || (WEEKDAY.test(t) && t.length <= 10 && !/\d/.test(t))
+    return DAY_N.test(t) || isWeekdayLabel(t)
   }
   const leadLabelRows: number[] = []
   for (let r = regionTop; r <= lastRow; r++) {
@@ -817,7 +819,7 @@ export async function renderScaffold(
       for (let c = base; c < base + stride; c++) {
         const cell = ws.getCell(r, c)
         if (typeof cell.value === 'string' && WEEK_BANNER.test(cell.value)) {
-          cell.value = `Week ${w + 1}`
+          cell.value = renumberBanner(cell.value, w)
         }
       }
     }

@@ -56,18 +56,31 @@ export async function commitExternalProgram(
   // Monday so days still land on the calendar in order (the program is hidden
   // from the active roster anyway, and the relative week structure is preserved).
   const startMonday = mondayOf(meta.startDate || toIso(new Date()))
-  const weeks = Math.max(meta.weeks, 1)
   const now = new Date().toISOString()
   const programId = uuidv4()
 
-  // Group rows by (week, day) block, preserving in-sheet order.
-  const blocks = new Map<string, ExternalExerciseRow[]>()
+  // Group rows by the DATE they land on, preserving in-sheet order.
+  //
+  // This used to group by (week, day) block and clamp the day to Sunday, so a
+  // sheet with more than seven day sections in a week (a split written as
+  // Day 1..Day 9) put two workouts on the same Sunday — and the program grid
+  // shows one workout per date, so the other's exercises were stored but never
+  // seen. Day indices past 6 now roll into the following week, and any blocks
+  // that still meet on one date share a workout instead of hiding each other.
+  const offsetOf = (ex: ExternalExerciseRow) => ex.weekIndex * 7 + ex.dayIndex
+  const blocks = new Map<number, ExternalExerciseRow[]>()
   for (const ex of exercises) {
-    const key = `${ex.weekIndex}-${ex.dayIndex}`
-    const list = blocks.get(key) ?? []
+    const list = blocks.get(offsetOf(ex)) ?? []
     list.push(ex)
-    blocks.set(key, list)
+    blocks.set(offsetOf(ex), list)
   }
+
+  // Long enough to hold the LAST dated workout. This was the number of weeks
+  // that had any data, so a sheet with an empty week in the middle produced a
+  // program that ended before its final week — which the grid and every export
+  // then left out.
+  const lastOffset = Math.max(0, ...blocks.keys())
+  const weeks = Math.max(meta.weeks, Math.floor(lastOffset / 7) + 1, 1)
 
   const db = getDb()
   await db.transaction().execute(async (trx) => {
@@ -90,9 +103,8 @@ export async function commitExternalProgram(
       })
       .execute()
 
-    for (const rows of blocks.values()) {
-      const { weekIndex, dayIndex } = rows[0]
-      const workoutDate = addDays(startMonday, weekIndex * 7 + Math.min(dayIndex, 6))
+    for (const [offset, rows] of blocks) {
+      const workoutDate = addDays(startMonday, offset)
       const workoutId = uuidv4()
 
       await trx

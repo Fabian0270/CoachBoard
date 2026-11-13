@@ -12,6 +12,7 @@ import {
   normalizeLoadCap,
   normalizeRpe,
   weekdayOffset,
+  isWeekdayLabel,
 } from '../valueNormalizers.js'
 import { emptyMapping, type ParseResult, type ReadRow } from '../shared.js'
 
@@ -120,8 +121,9 @@ export function parseHorizontal(
   for (let r = labelRow; r <= maxRow; r++) {
     const cells = readRow(r)
 
-    // Weekday in column 1 starts a new day section (Mon=0 … Sun=6).
-    const wd = weekdayOffset(cells[0] ?? '')
+    // Weekday in column 1 starts a new day section (Mon=0 … Sun=6). The whole
+    // cell must BE a weekday: a prefix test read "French Press" as Fredag.
+    const wd = isWeekdayLabel(cells[0] ?? '') ? weekdayOffset(cells[0] ?? '') : null
     if (wd !== null) {
       dayIndex = wd
       dayLabel = (cells[0] ?? '').trim()

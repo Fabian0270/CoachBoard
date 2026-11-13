@@ -7,7 +7,8 @@ import type { ReadRow } from './shared.js'
 // horizontal "week block" variants) before dispatching to a layout parser.
 // ---------------------------------------------------------------------------
 
-const WEEK_BANNER = /^(week|w)\s*\d+$/i
+// Shared with the styled export, so both recognise the same banners.
+import { WEEK_BANNER } from './valueNormalizers.js'
 
 /**
  * A row holding ≥2 *distinct* "Week N" banners marks a horizontal layout.
