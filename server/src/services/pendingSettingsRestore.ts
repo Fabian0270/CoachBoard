@@ -65,14 +65,14 @@ export interface SettingsRestoreResult {
  *
  * So: try it. Keep what works, drop what doesn't, and say which.
  */
-function resolveSecret(parsed: Record<string, unknown>, secretKey: string): boolean {
+async function resolveSecret(parsed: Record<string, unknown>, secretKey: string): Promise<boolean> {
   const secret = parsed[secretKey]
   if (typeof secret !== 'string' || secret === '') return false
 
   // No keychain at all (outside Electron, or encryption unavailable on this box)
   // means the secret cannot be verified, and an unverifiable credential is
   // exactly the silent-failure case above.
-  if (!encryptionAvailable() || decryptFromBase64(secret) === null) {
+  if (!(await encryptionAvailable()) || (await decryptFromBase64(secret)) === null) {
     delete parsed[secretKey]
     return true
   }
@@ -87,7 +87,7 @@ function resolveSecret(parsed: Record<string, unknown>, secretKey: string): bool
  * to tell a same-machine restore from a cross-machine one. Called from the
  * Electron main process rather than from initializeDatabase for that reason.
  */
-export function applyPendingSettingsRestore(dbPath: string): SettingsRestoreResult | null {
+export async function applyPendingSettingsRestore(dbPath: string): Promise<SettingsRestoreResult | null> {
   if (!hasPendingSettings(dbPath)) return null
   const dir = pendingSettingsDir(dbPath)
   const result: SettingsRestoreResult = { restored: [], secretsDropped: [] }
@@ -97,7 +97,7 @@ export function applyPendingSettingsRestore(dbPath: string): SettingsRestoreResu
     if (!fs.existsSync(staged)) continue
     try {
       const parsed = JSON.parse(fs.readFileSync(staged, 'utf8')) as Record<string, unknown>
-      if (resolveSecret(parsed, secretKey)) result.secretsDropped.push(name)
+      if (await resolveSecret(parsed, secretKey)) result.secretsDropped.push(name)
       fs.mkdirSync(userDataDir(), { recursive: true })
       const live = path.join(userDataDir(), name)
       // Kept, the same way the database keeps `.replaced`, so "Undo last

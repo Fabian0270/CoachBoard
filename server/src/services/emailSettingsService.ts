@@ -110,12 +110,12 @@ async function saveSettingsNow(input: EmailSettingsInput): Promise<PublicEmailSe
   let passwordEnc = existing?.passwordEnc ?? null
 
   if (input.password && input.password.length > 0) {
-    if (!encryptionAvailable()) {
+    if (!(await encryptionAvailable())) {
       throw new EmailSettingsError(
         'Secure storage is unavailable on this system, so the email password cannot be saved safely.',
       )
     }
-    passwordEnc = encryptToBase64(input.password)
+    passwordEnc = await encryptToBase64(input.password)
   }
 
   const stored: StoredEmailSettings = {
@@ -138,7 +138,7 @@ async function saveSettingsNow(input: EmailSettingsInput): Promise<PublicEmailSe
 export async function getTransportConfig(): Promise<TransportConfig | null> {
   const s = await readStored()
   if (!s || !s.passwordEnc) return null
-  const password = decryptFromBase64(s.passwordEnc)
+  const password = await decryptFromBase64(s.passwordEnc)
   if (password === null) return null
   return {
     host: s.host,

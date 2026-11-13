@@ -11,12 +11,12 @@ name: Release
 # version to match the tag before tagging — otherwise a v1.14.0 release ends up
 # with a CoachBoard-1.13.1 file on it.
 #
-# Native note: better-sqlite3 is a native module compiled per-OS/per-arch and
-# copied straight into the app, so each installer must be built ON its target
-# platform — the macOS DMG on a Mac runner, the Windows EXE on a Windows runner.
-# It cannot be cross-built. macOS is Apple Silicon (arm64) only; GitHub's free
-# Intel (macos-13) runners were retired. To add Intel back, build x64 on a
-# billable macos-13-large runner or a self-hosted Intel Mac.
+# Native note: until 1.17.0 better-sqlite3 was compiled per-OS/per-arch, so each
+# installer had to be built on its own platform. better-sqlite3 13 ships prebuilt
+# Node-API binaries for every platform, so that constraint is gone, but the
+# builds still run on matching runners (unchanged and known to work). macOS is
+# Apple Silicon (arm64) only; an Intel build could now come from the same runner
+# by adding the x64 arch, untried so far.
 #
 # You can also run this manually from the Actions tab (workflow_dispatch) to get
 # the installers as downloadable artifacts without publishing a release.
@@ -57,14 +57,10 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      # --ignore-scripts skips the postinstall electron-rebuild: the tests run
-      # under plain Node, not Electron, so the Node-ABI build below is what they
-      # actually need.
+      # better-sqlite3 13 ships a prebuilt Node-API binary that loads under Node
+      # and Electron alike, so nothing is compiled or rebuilt for the tests.
       - name: Install dependencies
         run: npm ci --ignore-scripts
-
-      - name: Build better-sqlite3 for Node.js
-        run: npm rebuild better-sqlite3
 
       - name: Typecheck
         run: npm run typecheck
@@ -86,8 +82,9 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      # npm ci's postinstall runs electron-rebuild for the host arch, which is
-      # exactly the arch this runner builds for.
+      # Nothing native is compiled: better-sqlite3 ships prebuilt binaries, and the
+      # package script fetches the Electron binary with install-electron (Electron
+      # 42+ no longer downloads itself on npm install).
       - name: Install dependencies
         run: npm ci
 

@@ -73,10 +73,16 @@ const NEVER_USEFUL = new Set([
 ])
 
 let injectedCapturer: DesktopCapturerLike | null = null
+/** Capture ids of the app's own windows. See listSources. */
+let ownSourceIds: () => string[] = () => []
 
 /** Wired once at startup by the Electron main process (and by tests with fakes). */
-export function configureCapture(opts: { desktopCapturer?: DesktopCapturerLike | null }): void {
+export function configureCapture(opts: {
+  desktopCapturer?: DesktopCapturerLike | null
+  ownSourceIds?: () => string[]
+}): void {
   if ('desktopCapturer' in opts) injectedCapturer = opts.desktopCapturer ?? null
+  if ('ownSourceIds' in opts) ownSourceIds = opts.ownSourceIds ?? (() => [])
 }
 
 /** False outside Electron, so the UI can explain rather than offer a dead button. */
@@ -119,7 +125,12 @@ export async function listSources(): Promise<CaptureSourceDto[]> {
     thumbnailSize: THUMBNAIL,
   })
 
+  // Electron 33 left our own window out of the list; from 45 it is in it. It is
+  // already offered first as "CoachBoard" (the 'self' entry, captured by frame),
+  // so the window copy would only be a confusing duplicate.
+  const own = new Set(ownSourceIds())
   const rest: CaptureSourceDto[] = sources
+    .filter((s) => !own.has(s.id))
     .filter((s) => !NEVER_USEFUL.has(s.name.trim()))
     .map((s) => ({
       id: s.id,

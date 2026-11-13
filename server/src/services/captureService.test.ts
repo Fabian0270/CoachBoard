@@ -39,7 +39,7 @@ const SOURCES = [
 ]
 
 beforeEach(() => {
-  configureCapture({ desktopCapturer: fakeCapturer(SOURCES) })
+  configureCapture({ desktopCapturer: fakeCapturer(SOURCES), ownSourceIds: () => [] })
   setPendingSource(null)
 })
 
@@ -62,12 +62,22 @@ describe('listSources', () => {
     expect(list[0].id).toBe(SELF_SOURCE_ID)
   })
 
-  it('always offers CoachBoard, which Electron never enumerates', async () => {
+  it('always offers CoachBoard, which Electron 33 never enumerated', async () => {
     // The regression this guards: our own window is absent from getSources, so
     // the one thing a coach most wants to record was unofferable.
     configureCapture({ desktopCapturer: fakeCapturer([fakeSource('screen:0:0', 'Screen')]) })
     const list = await listSources()
     expect(list.some((s) => s.id === SELF_SOURCE_ID)).toBe(true)
+  })
+
+  it("leaves the app's own window out, since it is already offered first", async () => {
+    // Electron 45 started listing our own window; offering it as a second
+    // "CoachBoard" next to the frame-captured one would only confuse.
+    configureCapture({ desktopCapturer: fakeCapturer(SOURCES), ownSourceIds: () => ['window:12:0'] })
+    const list = await listSources()
+    expect(list.find((s) => s.id === 'window:12:0')).toBeUndefined()
+    expect(list.filter((s) => s.name === 'CoachBoard')).toHaveLength(1)
+    expect(list[0].id).toBe(SELF_SOURCE_ID)
   })
 
   it('classifies screens and windows by Electron s id prefix', async () => {

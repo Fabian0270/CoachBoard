@@ -17,9 +17,9 @@ import {
 } from './discordSettingsService.js'
 
 const fakeSafeStorage: SafeStorageLike = {
-  isEncryptionAvailable: () => true,
-  encryptString: (s) => Buffer.from(`enc:${s}`, 'utf8'),
-  decryptString: (b) => b.toString('utf8').replace(/^enc:/, ''),
+  isAsyncEncryptionAvailable: async () => true,
+  encryptStringAsync: async (s) => Buffer.from(`enc:${s}`, 'utf8'),
+  decryptStringAsync: async (b) => ({ result: b.toString('utf8').replace(/^enc:/, '') }),
 }
 
 const TOKEN = 'discord-bot-token-1234567890'
@@ -99,7 +99,7 @@ describe('discordSettingsService', () => {
 
   it('refuses to save when secure storage is unavailable', async () => {
     configureSecureStore({
-      safeStorage: { ...fakeSafeStorage, isEncryptionAvailable: () => false },
+      safeStorage: { ...fakeSafeStorage, isAsyncEncryptionAvailable: async () => false },
       userDataDir: tmpDir,
     })
     await expect(saveToken(TOKEN, META)).rejects.toBeInstanceOf(DiscordSettingsError)

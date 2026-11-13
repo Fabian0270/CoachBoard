@@ -53,7 +53,7 @@ interface ServerBundle {
   createApp(staticDir: string, logPath: string): RequestListener
   configureSecureStore(opts: { safeStorage: unknown; userDataDir: string }): void
   configureSystem?(opts: { shell: unknown }): void
-  configureCapture?(opts: { desktopCapturer: unknown }): void
+  configureCapture?(opts: { desktopCapturer: unknown; ownSourceIds?: () => string[] }): void
   /** The source the coach picked, consumed once. See services/captureService. */
   resolvePendingSource?(): Promise<
     { kind: 'self' } | { kind: 'source'; source: Electron.DesktopCapturerSource } | null
@@ -63,10 +63,10 @@ interface ServerBundle {
   runStartupBackup?(): Promise<string | null>
   /** The settings half of a staged restore. Needs the keychain, so it runs
    *  after configureSecureStore rather than inside initializeDatabase. */
-  applyPendingSettingsRestore?(dbPath: string): {
+  applyPendingSettingsRestore?(dbPath: string): Promise<{
     restored: string[]
     secretsDropped: string[]
-  } | null
+  } | null>
   sweepRecordings?(): Promise<number>
   sweepAnalysisVideos?(): Promise<number>
   sweepPartialMedia?(): Promise<number>
@@ -74,6 +74,9 @@ interface ServerBundle {
 }
 
 let serverBundle: ServerBundle | null = null
+
+/** The app window, once created — the recorder leaves it out of the window list. */
+let ownWindow: BrowserWindow | null = null
 
 let logPath = ''
 
@@ -178,7 +181,7 @@ async function startServer(): Promise<void> {
   // credential means attempting a decrypt, and safeStorage only exists from the
   // line above. Same machine, the app password survives; anywhere else it is
   // undecryptable bytes and gets dropped rather than left to fail at send time.
-  const settingsRestore = bundle.applyPendingSettingsRestore?.(dbPath)
+  const settingsRestore = await bundle.applyPendingSettingsRestore?.(dbPath)
   if (settingsRestore?.restored.length) {
     log(`Restored settings: ${settingsRestore.restored.join(', ')}`)
     if (settingsRestore.secretsDropped.length) {
@@ -190,7 +193,12 @@ async function startServer(): Promise<void> {
   // the data folder from Settings and from the error screen). Optional-chained so
   // a stale bundle without the export can't break startup.
   bundle.configureSystem?.({ shell })
-  bundle.configureCapture?.({ desktopCapturer })
+  // From Electron 45 the window list includes our own window, which the picker
+  // already offers as "CoachBoard" (captured by frame, see the display handler).
+  bundle.configureCapture?.({
+    desktopCapturer,
+    ownSourceIds: () => (ownWindow && !ownWindow.isDestroyed() ? [ownWindow.getMediaSourceId()] : []),
+  })
 
   // Feedback recordings are scratch space: the coach keeps one only by saving or
   // sending it. Anything still on disk after a restart is therefore abandoned —
@@ -344,8 +352,14 @@ function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): voi
   // recording was played back — the <video> fullscreen button goes through this
   // handler, and so does the Excel preview. Exactly the case the logging below
   // exists to surface.
+  //
+  // 'display-capture' is screen and window capture — the recorder. Until
+  // Electron 45 Chromium reported it as 'media' (with an empty mediaTypes
+  // list); from 45 it arrives under its own name, and without it here every
+  // screen recording would be refused while camera and microphone still worked.
   const ALLOWED = new Set([
     'media',
+    'display-capture',
     'clipboard-write',
     'clipboard-sanitized-write',
     'fullscreen',
@@ -368,12 +382,30 @@ function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): voi
   sess.setDisplayMediaRequestHandler(
     (_request, callback) => {
       // useSystemPicker stays on so this handler is skipped wherever the OS does
-      // provide a picker (recent macOS). It does NOT engage on Windows in
+      // provide a picker (recent macOS). It did NOT engage on Windows in
       // Electron 33 — measured during the 11c spike, where every capture landed
       // here — so on Windows the app's own picker is the real path, and the
       // source it parked is what gets recorded.
-      void serverBundle
-        ?.resolvePendingSource?.()
+      //
+      // The callback is one-shot and must be answered exactly once. Refusal is
+      // `null`: from Electron 45 `{ video: undefined }` throws ("video must be a
+      // WebFrameMain or DesktopCapturerSource"), and the catch below then
+      // answered a second time — an unhandled error in the main process.
+      let answered = false
+      const answer = (streams: Electron.Streams | null): void => {
+        if (answered) return
+        answered = true
+        callback(streams)
+      }
+      const pending = serverBundle?.resolvePendingSource?.()
+      if (!pending) {
+        // No server bundle (or one without the picker): nothing can have been
+        // chosen. Answering keeps the capture from hanging forever.
+        log('Display capture refused: the source picker is unavailable')
+        answer(null)
+        return
+      }
+      pending
         .then((chosen) => {
           if (!chosen) {
             // No choice parked: the request did not come from our picker, or the
@@ -381,7 +413,7 @@ function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): voi
             // answer — defaulting to the whole screen would record something
             // they never agreed to share.
             log('Display capture refused: no source was chosen')
-            callback({ video: undefined })
+            answer(null)
             return
           }
           // 'loopback' mixes the machine's own audio in, so a lift video's sound
@@ -392,15 +424,15 @@ function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): voi
             // 11c — is done by capturing the frame rather than the window.
             // Also strictly better: nothing overlapping the window can bleed in.
             log('Display capture: CoachBoard (frame)')
-            callback({ video: win.webContents.mainFrame, audio: 'loopback' })
+            answer({ video: win.webContents.mainFrame, audio: 'loopback' })
             return
           }
           log(`Display capture: ${chosen.source.name}`)
-          callback({ video: chosen.source, audio: 'loopback' })
+          answer({ video: chosen.source as Electron.Video, audio: 'loopback' })
         })
         .catch((err: unknown) => {
           log(`Display capture failed: ${describeError(err)}`)
-          callback({ video: undefined })
+          answer(null)
         })
     },
     { useSystemPicker: true },
@@ -460,6 +492,8 @@ async function createWindow(): Promise<void> {
       contextIsolation: true,
     },
   })
+
+  ownWindow = win
 
   // Needs the window: recording CoachBoard itself captures its frame, not a
   // desktopCapturer source. Handlers only have to exist before the first

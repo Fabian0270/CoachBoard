@@ -18,11 +18,10 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
+      # better-sqlite3 13 ships a prebuilt Node-API binary that loads under Node
+      # and Electron alike, so nothing is compiled or rebuilt for the tests.
       - name: Install dependencies
         run: npm ci --ignore-scripts
-
-      - name: Build better-sqlite3 for Node.js
-        run: npm rebuild better-sqlite3
 
       - name: Typecheck
         run: npm run typecheck

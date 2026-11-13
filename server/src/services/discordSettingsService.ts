@@ -124,12 +124,12 @@ export async function saveToken(
   token: string,
   meta: { applicationId: string; botUserId: string; botUsername: string },
 ): Promise<PublicDiscordSettings> {
-  if (!encryptionAvailable()) {
+  if (!(await encryptionAvailable())) {
     throw new DiscordSettingsError(
       'Secure storage is unavailable on this system, so the bot token cannot be saved safely.',
     )
   }
-  const tokenEnc = encryptToBase64(token)
+  const tokenEnc = await encryptToBase64(token)
   const stored = await update((existing) => ({
     ...existing,
     tokenEnc,
@@ -145,7 +145,7 @@ export async function saveToken(
 export async function getToken(): Promise<string | null> {
   const s = await readStored()
   if (!s.tokenEnc) return null
-  return decryptFromBase64(s.tokenEnc)
+  return await decryptFromBase64(s.tokenEnc)
 }
 
 export async function getBotUserId(): Promise<string | null> {

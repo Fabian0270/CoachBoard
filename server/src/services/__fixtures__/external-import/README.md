@@ -26,7 +26,7 @@ Driven by [`externalImportFixtures.test.ts`](../../externalImportFixtures.test.t
 3. To lock it in as a regression case, generate its golden:
 
    ```sh
-   cd server && UPDATE_FIXTURES=1 node scripts/run-tests.cjs run src/services/externalImportFixtures.test.ts
+   cd server && UPDATE_FIXTURES=1 npx vitest run src/services/externalImportFixtures.test.ts
    ```
 
    Review the new `*.expected.json`, confirm it reflects how the sheet *should*
@@ -38,7 +38,7 @@ Driven by [`externalImportFixtures.test.ts`](../../externalImportFixtures.test.t
 ## Regenerating goldens after an intentional parser change
 
 ```sh
-cd server && UPDATE_FIXTURES=1 node scripts/run-tests.cjs run src/services/externalImportFixtures.test.ts
+cd server && UPDATE_FIXTURES=1 npx vitest run src/services/externalImportFixtures.test.ts
 ```
 
 Then **review the `*.expected.json` diff** — it is the human check that the change

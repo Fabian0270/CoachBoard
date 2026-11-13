@@ -230,7 +230,7 @@ describe('restoring the settings half', () => {
     // Staged, not yet applied — the same two-step the database uses.
     expect(fs.existsSync(emailPath())).toBe(false)
 
-    const result = applyPendingSettingsRestore(dbPath)
+    const result = await applyPendingSettingsRestore(dbPath)
     expect(result?.restored).toContain('email-settings.json')
     expect(fs.existsSync(emailPath())).toBe(true)
 
@@ -249,7 +249,7 @@ describe('restoring the settings half', () => {
       JSON.stringify({ host: 'smtp.gmail.com', port: 465, user: 'c@example.com', passwordEnc: 'SEALED' }),
     )
     await stageRestore(await exportToBuffer())
-    const result = applyPendingSettingsRestore(dbPath)
+    const result = await applyPendingSettingsRestore(dbPath)
 
     expect(result?.secretsDropped).toContain('email-settings.json')
     const restored = JSON.parse(fs.readFileSync(emailPath(), 'utf8'))
@@ -258,8 +258,8 @@ describe('restoring the settings half', () => {
     cancelPendingRestore()
   })
 
-  it('has nothing to do when no restore is staged', () => {
-    expect(applyPendingSettingsRestore(dbPath)).toBeNull()
+  it('has nothing to do when no restore is staged', async () => {
+    expect(await applyPendingSettingsRestore(dbPath)).toBeNull()
   })
 })
 

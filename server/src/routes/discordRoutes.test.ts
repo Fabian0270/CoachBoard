@@ -61,9 +61,9 @@ describe('checking a bot token', () => {
     configureSecureStore({
       userDataDir: dir,
       safeStorage: {
-        isEncryptionAvailable: () => true,
-        encryptString: (s) => Buffer.from(s),
-        decryptString: (b) => b.toString(),
+        isAsyncEncryptionAvailable: async () => true,
+        encryptStringAsync: async (s) => Buffer.from(s),
+        decryptStringAsync: async (b) => ({ result: b.toString() }),
       },
     })
 

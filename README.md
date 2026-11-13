@@ -90,7 +90,7 @@ cd CoachBoard
 npm install
 ```
 
-This also runs `electron-rebuild` automatically (via `postinstall`) to compile the native `better-sqlite3` module for your Electron version.
+Nothing is compiled: `better-sqlite3` ships a prebuilt Node-API binary for each platform that loads under both Electron and plain Node. Electron (45+) downloads its own binary the first time it is run (`npm run dev`), or via `npm exec -w electron -- install-electron`; the package scripts do the latter.
 
 ### 3. Start in development mode
 
@@ -110,14 +110,11 @@ The Electron window connects to the Vite dev server, so React hot-reload works n
 ```bash
 npm run typecheck     # tsc --noEmit across client, server and electron
 npm test              # Vitest suites for client + server
-npm run sqlite:repair # rebuild the native better-sqlite3 binding if it breaks
 ```
 
-`better-sqlite3` is a native addon built for one ABI: the app runs it under
-Electron, the tests under plain Node. The server suite goes through
-[`server/scripts/run-tests.cjs`](server/scripts/run-tests.cjs), which builds a
-Node-ABI copy into `node_modules/.cache` once and points the tests at it —
-`node_modules` keeps its Electron build and is never written to during a run.
+The server suite runs under plain Node against the same prebuilt `better-sqlite3`
+binary the app uses under Electron (it is Node-API, so ABI-stable). Until 1.17.0
+this needed a per-ABI rebuild and a test runner that swapped binaries; both are gone.
 
 ---
 

@@ -170,7 +170,7 @@ describe('undo last restore', () => {
     await stageRestore(snapshot)
     await getDb().destroy()
     await initializeDatabase(dbPath)
-    applyPendingSettingsRestore(dbPath)
+    await applyPendingSettingsRestore(dbPath)
     expect(await names()).toEqual(['In The Backup'])
     expect(emailUser()).toBe('backup@example.com')
     expect(backupInfo().canUndoRestore).toBe(true)
@@ -179,7 +179,7 @@ describe('undo last restore', () => {
     expect(staged.settings).toEqual(['email-settings.json'])
     await getDb().destroy()
     await initializeDatabase(dbPath)
-    applyPendingSettingsRestore(dbPath)
+    await applyPendingSettingsRestore(dbPath)
 
     expect(await names()).toEqual(['Added Later', 'In The Backup'])
     expect(emailUser()).toBe('later@example.com')

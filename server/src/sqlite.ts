@@ -1,50 +1,22 @@
-import { existsSync } from 'fs'
 import BetterSqlite3 from 'better-sqlite3'
 
 // ---------------------------------------------------------------------------
 // Every better-sqlite3 handle in the server is opened through here.
 //
-// WHY THIS EXISTS: better-sqlite3 is a native addon, so the compiled .node file
-// only loads under the ABI it was built for. The app runs it under Electron
-// (postinstall runs electron-rebuild), but the test suite runs under plain Node,
-// and the two ABIs are incompatible.
+// better-sqlite3 is a native addon. Up to 1.16 it was compiled per ABI, so the
+// app (Electron) and the test suite (plain Node) each needed their own build,
+// and an elaborate test runner swapped and cached binaries between them — an
+// interrupted run once left the app dying at launch with NODE_MODULE_VERSION.
 //
-// The test runner used to resolve that by swapping the binary inside
-// node_modules for the duration of the run and restoring it afterwards. That
-// made an interrupted run (Ctrl+C, a killed terminal, a crash) leave the repo
-// holding a Node-ABI binary, and the symptom showed up much later and somewhere
-// else entirely: the app dying at launch with a raw NODE_MODULE_VERSION error.
-//
-// So the shared file is no longer touched at all. better-sqlite3 accepts an
-// explicit `nativeBinding` path, and the test runner points this at a cached
-// Node-ABI copy via COACHBOARD_SQLITE_BINDING. node_modules keeps its Electron
-// build permanently, and there is no window in which an interruption can leave
-// the checkout broken.
+// From better-sqlite3 13 (adopted with the Electron 45 upgrade in 1.17.0) the
+// addon is built against Node-API, which is ABI-stable: one prebuilt binary per
+// platform, shipped inside the package, loads under Electron and Node alike. No
+// rebuild, no override, nothing to swap. Kept as the single entry point so a
+// future change of driver or options has one place to land.
 // ---------------------------------------------------------------------------
-
-/**
- * Path to an alternate compiled better-sqlite3 addon, or undefined to use the
- * one in node_modules. Set only by `server/scripts/run-tests.cjs`; production
- * never sets it.
- */
-function overrideBindingPath(): string | undefined {
-  const configured = process.env.COACHBOARD_SQLITE_BINDING
-  if (!configured) return undefined
-  if (!existsSync(configured)) {
-    // Loud rather than mysterious: a stale path here would otherwise surface as
-    // an opaque module-load failure from deep inside better-sqlite3.
-    throw new Error(
-      `COACHBOARD_SQLITE_BINDING points at a file that does not exist: ${configured}\n` +
-        'Delete node_modules/.cache/coachboard-sqlite-abi and re-run the tests to rebuild it.',
-    )
-  }
-  return configured
-}
 
 export type SqliteOptions = BetterSqlite3.Options
 
-/** Opens a database using whichever compiled addon suits the current runtime. */
 export function openSqlite(path: string, options: SqliteOptions = {}): BetterSqlite3.Database {
-  const nativeBinding = overrideBindingPath()
-  return new BetterSqlite3(path, nativeBinding ? { ...options, nativeBinding } : options)
+  return new BetterSqlite3(path, options)
 }
