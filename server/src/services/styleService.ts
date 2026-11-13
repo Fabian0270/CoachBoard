@@ -1,6 +1,7 @@
 import { getDb } from '../db.js'
 import { findProgramForExport } from './programService.js'
-import { buildWorkoutWeekMap } from './analysisService.js'
+import { buildWorkoutWeekMap, parseRpeFromIntensity } from './analysisService.js'
+import { mainLiftKey, type MainLiftKey } from 'coachboard-shared/vbt'
 import { STYLE_MIN_SAMPLE } from 'coachboard-shared'
 import { PERIODIZATION_PATTERNS } from 'coachboard-shared'
 import type {
@@ -69,7 +70,13 @@ function mode<T extends string>(xs: T[]): T | null {
  * rising vs flat. `eps` is the smallest week-to-week change considered real.
  */
 function rampOf(weekValues: number[], eps: number): RampDirection {
-  const vals = weekValues.filter((v) => !isNaN(v))
+  let vals = weekValues.filter((v) => !isNaN(v))
+  // A final week that drops is a deload, not the start of a second wave. Read
+  // as one, it turned every linear block that ended in a deload — the common
+  // case — into "wave loading", and the pattern suggested from it was wrong.
+  if (vals.length >= 3 && vals[vals.length - 1] < vals[vals.length - 2] - eps) {
+    vals = vals.slice(0, -1)
+  }
   if (vals.length < 2) return 'flat'
   let ups = 0
   let downs = 0
@@ -97,8 +104,18 @@ export function computeFingerprint(data: ExportData): ProgramFingerprint {
   const repBuckets: RepRangeBucket[] = []
   const setsByWeek = new Map<number, number>()
   const rpeByWeek = new Map<number, number[]>()
-  const loadByWeek = new Map<number, number[]>()
+  /** Competition-lift loads, by lift then week — see the intensity ramp below. */
+  const loadsByLiftWeek = new Map<MainLiftKey, Map<number, number[]>>()
   const daysByWeek = new Map<number, Set<number>>()
+
+  // ONE meaning of RPE per program: the prescribed target. A native program
+  // writes the target into the intensity field ("RPE 8") and keeps `rpe` for
+  // what the athlete reported; an imported sheet's RPE column lands in `rpe`
+  // and IS the target. Reading `rpe` everywhere mixed the two, and the
+  // "typical start and peak RPE" this produces are fed back into new drafts
+  // as targets. So: intensity targets when the program has any, else `rpe`.
+  const targetRpes = exercises.map((ex) => parseRpeFromIntensity(ex.intensity))
+  const programHasTargets = targetRpes.some((r) => r !== null)
 
   for (const w of workouts) {
     const wk = weekOf(w.id)
@@ -107,7 +124,7 @@ export function computeFingerprint(data: ExportData): ProgramFingerprint {
     daysByWeek.get(wk)!.add(dayOf(w.id))
   }
 
-  for (const ex of exercises) {
+  exercises.forEach((ex, i) => {
     const wk = weekOf(ex.workout_id)
     weeks.add(wk)
 
@@ -117,18 +134,20 @@ export function computeFingerprint(data: ExportData): ProgramFingerprint {
     const sets = num(ex.sets)
     if (sets !== null) setsByWeek.set(wk, (setsByWeek.get(wk) ?? 0) + sets)
 
-    const rpe = num(ex.rpe)
+    const rpe = programHasTargets ? targetRpes[i] : num(ex.rpe)
     if (rpe !== null) {
       if (!rpeByWeek.has(wk)) rpeByWeek.set(wk, [])
       rpeByWeek.get(wk)!.push(rpe)
     }
 
+    const lift = mainLiftKey(ex.name)
     const load = num(ex.load_used)
-    if (load !== null) {
-      if (!loadByWeek.has(wk)) loadByWeek.set(wk, [])
-      loadByWeek.get(wk)!.push(load)
+    if (lift && load !== null) {
+      const byWeek = loadsByLiftWeek.get(lift) ?? new Map<number, number[]>()
+      loadsByLiftWeek.set(lift, byWeek)
+      byWeek.set(wk, [...(byWeek.get(wk) ?? []), load])
     }
-  }
+  })
 
   const sortedWeeks = [...weeks].sort((a, b) => a - b)
   const firstWeek = sortedWeeks[0] ?? 0
@@ -147,14 +166,33 @@ export function computeFingerprint(data: ExportData): ProgramFingerprint {
   if (lastSets > firstSets * 1.05) volumeDirection = 'rising'
   else if (lastSets < firstSets * 0.95) volumeDirection = 'tapering'
 
-  // Intensity ramp from per-week average load (fall back to per-week average RPE
-  // when no loads were recorded — common for prescribed-only historical sheets).
-  const weekLoadSeries = sortedWeeks.map((wk) => avg(loadByWeek.get(wk)) ?? NaN)
-  const hasLoads = weekLoadSeries.some((v) => !isNaN(v))
+  // Intensity ramp from the COMPETITION lifts' loads, each relative to its own
+  // first week, averaged across the lifts trained that week.
+  //
+  // This was the plain average of every logged load, accessories included —
+  // so a week with curls logged in it read as a heavy dip, and squat rising
+  // 100 -> 120 with curls in weeks 2 and 4 came out as "wave loading". And
+  // averaging raw kilos across lifts moved with WHICH lifts were trained that
+  // week. Falls back to RPE when no competition-lift loads were recorded —
+  // common for prescribed-only historical sheets.
+  const relativeByWeek = new Map<number, number[]>()
+  for (const byWeek of loadsByLiftWeek.values()) {
+    const firstWithLoad = sortedWeeks.find((wk) => byWeek.has(wk))
+    const base = firstWithLoad === undefined ? null : avg(byWeek.get(firstWithLoad))
+    if (!base) continue
+    for (const [wk, loads] of byWeek) {
+      relativeByWeek.set(wk, [...(relativeByWeek.get(wk) ?? []), avg(loads)! / base])
+    }
+  }
+  const hasLoads = relativeByWeek.size > 0
   const intensitySeries = hasLoads
-    ? weekLoadSeries
+    ? sortedWeeks.map((wk) => {
+        const ratios = relativeByWeek.get(wk)
+        return ratios?.length ? ratios.reduce((a, b) => a + b, 0) / ratios.length : NaN
+      })
     : sortedWeeks.map((wk) => avg(rpeByWeek.get(wk)) ?? NaN)
-  const intensityRamp = rampOf(intensitySeries, hasLoads ? 1 : 0.25)
+  // One percent of the lift's starting load, or a quarter of an RPE point.
+  const intensityRamp = rampOf(intensitySeries, hasLoads ? 0.01 : 0.25)
 
   const dayCounts = sortedWeeks.map((wk) => daysByWeek.get(wk)?.size ?? 0).filter((n) => n > 0)
   const daysPerWeek = dayCounts.length

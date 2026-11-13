@@ -146,7 +146,7 @@ export function latestE1RMByLift(
 // A field containing a percentage (e.g. "70%") is a load target, not an RPE, so a
 // bare percentage is ignored. The result is snapped to the nearest 0.5 within the
 // 5–10 RPE band; anything outside it (weights, reps) is rejected.
-function parseRpeFromIntensity(intensity: string | null): number | null {
+export function parseRpeFromIntensity(intensity: string | null): number | null {
   if (!intensity) return null
   const text = intensity.trim()
   if (!text) return null
