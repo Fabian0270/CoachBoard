@@ -102,7 +102,7 @@ export function exportColumnKeysFor(
 export interface ExportRenderSource {
   enabled_columns: string | null
   export_layout: string | null
-  export_template_xlsx?: string | null
+  export_template_sha?: string | null
   builtin_template?: string | null
 }
 
@@ -114,7 +114,7 @@ export function resolveExportRenderPath(
   program: ExportRenderSource,
   enabledColumns: string[],
 ): ExportRenderPath {
-  if (program.export_template_xlsx) {
+  if (program.export_template_sha) {
     return { kind: 'opaque', renderer: 'scaffold', label: 'your own imported Excel style' }
   }
 

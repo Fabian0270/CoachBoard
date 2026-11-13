@@ -36,12 +36,8 @@ function mondayOf(date: Date): Date {
 // ---------------------------------------------------------------------------
 
 /**
- * Every program, WITHOUT the stored original Excel file.
- *
- * export_template_xlsx is the coach's whole imported workbook as base64, and
- * it is copied into every program and draft derived from that import — the
- * list used to read and send all of them, megabytes each, to a client that
- * never looks at it. A flag says whether one exists.
+ * Every program, with a flag for whether it has an imported Excel workbook.
+ * The workbook itself lives in template_blobs (see templateBlobStore).
  */
 export async function findAllPrograms(athleteId?: string) {
   let query = getDb()
@@ -51,22 +47,22 @@ export async function findAllPrograms(athleteId?: string) {
       'created_at', 'updated_at', 'enabled_columns', 'focus', 'export_layout',
       'builtin_template', 'bookmarked',
     ])
-    .select(sql<number>`export_template_xlsx IS NOT NULL`.as('has_export_template'))
+    .select(sql<number>`export_template_sha IS NOT NULL`.as('has_export_template'))
   if (athleteId) query = query.where('athlete_id', '=', athleteId)
   const rows = await query.orderBy('created_at', 'desc').execute()
   return rows.map((r) => ({ ...withParsedColumns(r), has_export_template: r.has_export_template === 1 }))
 }
 
 /**
- * A program as it goes over HTTP: the stored workbook replaced by a flag. The
- * services keep the blob — the export and draft generation need it — but no
- * response has a use for it.
+ * A program as it goes over HTTP: the workbook's storage key replaced by a
+ * flag. The key is an internal detail; the client only ever needs to know
+ * whether the program exports in an imported style.
  */
-export function withoutTemplateBlob<T extends { export_template_xlsx?: string | null }>(
+export function withoutTemplateBlob<T extends { export_template_sha?: string | null }>(
   program: T,
-): Omit<T, 'export_template_xlsx'> & { has_export_template: boolean } {
-  const { export_template_xlsx, ...rest } = program
-  return { ...rest, has_export_template: !!export_template_xlsx }
+): Omit<T, 'export_template_sha'> & { has_export_template: boolean } {
+  const { export_template_sha, ...rest } = program
+  return { ...rest, has_export_template: !!export_template_sha }
 }
 
 export async function findProgramById(id: string) {
@@ -153,27 +149,29 @@ export async function createProgram(data: {
   const now = new Date().toISOString()
 
   let exportLayout: string | null = null
-  let exportTemplateXlsx: string | null = null
+  // The workbook is shared by key, not copied — that copying is what used to
+  // multiply one import into tens of megabytes.
+  let exportTemplateSha: string | null = null
   let enabledColumns = serializeEnabledColumns(data.enabled_columns)
   if (data.export_style_id) {
     const style = await getDb()
       .selectFrom('export_styles')
-      .select(['descriptor', 'template_xlsx'])
+      .select(['descriptor', 'template_sha'])
       .where('id', '=', data.export_style_id)
       .executeTakeFirst()
     if (style) {
       exportLayout = style.descriptor
-      exportTemplateXlsx = style.template_xlsx
+      exportTemplateSha = style.template_sha
     }
   } else if (data.style_source_program_id) {
     const source = await getDb()
       .selectFrom('programs')
-      .select(['export_layout', 'export_template_xlsx', 'enabled_columns'])
+      .select(['export_layout', 'export_template_sha', 'enabled_columns'])
       .where('id', '=', data.style_source_program_id)
       .executeTakeFirst()
     if (source) {
       exportLayout = source.export_layout
-      exportTemplateXlsx = source.export_template_xlsx
+      exportTemplateSha = source.export_template_sha
       if (data.enabled_columns === undefined) enabledColumns = source.enabled_columns
     }
   }
@@ -191,7 +189,7 @@ export async function createProgram(data: {
       enabled_columns: enabledColumns,
       focus: data.focus ?? null,
       export_layout: exportLayout,
-      export_template_xlsx: exportTemplateXlsx,
+      export_template_sha: exportTemplateSha,
       builtin_template: data.builtin_template ?? 'coachboard',
       created_at: now,
       updated_at: now,

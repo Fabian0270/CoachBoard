@@ -367,9 +367,9 @@ export async function generateDraftProgram(
         status: 'draft',
         enabled_columns: source.enabled_columns ? JSON.stringify(source.enabled_columns) : null,
         // Carry the source's captured Excel layout + original file so the draft
-        // exports in the coach's own style (Feature: export style templates).
+        // exports in the coach's own style. The workbook is shared by key, not copied.
         export_layout: source.export_layout ? JSON.stringify(source.export_layout) : null,
-        export_template_xlsx: source.export_template_xlsx ?? null,
+        export_template_sha: source.export_template_sha ?? null,
         // Override > inherit the source's built-in look > CoachBoard default. (Moot
         // when the draft inherits an imported coach style, which wins at export.)
         builtin_template: body.builtin_template ?? source.builtin_template ?? 'coachboard',

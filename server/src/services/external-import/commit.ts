@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../../db.js'
 import { findAthleteById } from '../athleteService.js'
+import { storeTemplate } from '../templateBlobStore.js'
 import type {
   ExternalExerciseRow,
   ExternalImportCommitResult,
@@ -84,6 +85,9 @@ export async function commitExternalProgram(
 
   const db = getDb()
   await db.transaction().execute(async (trx) => {
+    // Stored in the same transaction, so a failed import leaves no workbook
+    // behind and a committed program never points at a missing one.
+    const templateSha = meta.templateXlsx ? await storeTemplate(meta.templateXlsx, trx) : null
     await trx
       .insertInto('programs')
       .values({
@@ -97,7 +101,7 @@ export async function commitExternalProgram(
         enabled_columns: null,
         focus: meta.focus ?? null,
         export_layout: meta.exportLayout ? JSON.stringify(meta.exportLayout) : null,
-        export_template_xlsx: meta.templateXlsx ?? null,
+        export_template_sha: templateSha,
         created_at: now,
         updated_at: now,
       })

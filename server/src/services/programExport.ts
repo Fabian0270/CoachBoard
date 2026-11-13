@@ -2,6 +2,7 @@ import { findProgramForExport } from './programService.js'
 import { renderProgramWorkbook } from './exportService.js'
 import { renderScaffold, ScaffoldDoesNotFitError } from './templateScaffoldService.js'
 import { logError } from '../lib/logger.js'
+import { loadTemplate } from './templateBlobStore.js'
 import { latestE1RMByLift } from './analysisService.js'
 import { MINIMAL_DESCRIPTOR } from 'coachboard-shared/exportLayout'
 
@@ -52,9 +53,17 @@ export async function buildProgramWorkbook(programId: string): Promise<BuiltWork
 
   let buffer: Buffer | null = null
   let notice: string | null = null
-  if (program.export_template_xlsx) {
+  const templateXlsx = await loadTemplate(program.export_template_sha)
+  if (program.export_template_sha && !templateXlsx) {
+    // A key with nothing behind it. Should not happen — the import stores both
+    // in one transaction — but if it does the coach is told, not handed a
+    // different look without a word.
+    notice = "Your imported Excel style could not be found, so CoachBoard's own layout was used."
+    logError(`Program ${programId} points at a missing Excel template`, `no stored workbook for ${program.export_template_sha}`)
+  }
+  if (templateXlsx) {
     try {
-      buffer = await renderScaffold(program.export_template_xlsx, program, workouts, exercises)
+      buffer = await renderScaffold(templateXlsx, program, workouts, exercises)
       // Null means the template's layout is one the styled export cannot
       // reproduce. Same outcome as a failure, and it was just as silent.
       if (!buffer) {

@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs'
 import { initializeDatabase } from '../db.js'
 import { createAthlete } from './athleteService.js'
 import { findProgramById } from './programService.js'
+import { loadTemplate } from './templateBlobStore.js'
 import { getProgramReport } from './analysisService.js'
 import { parseExternalFile, commitExternalProgram } from './externalImportService.js'
 
@@ -66,7 +67,7 @@ describe('commitExternalProgram', () => {
     expect(program!.export_layout).not.toBeNull()
     expect(program!.export_layout!.orientation).toBe('vertical')
     expect(program!.export_layout!.columns.map((c) => c.key)).toContain('name')
-    expect(program!.export_template_xlsx).toBe('T0JJR0lOQUw=')
+    expect(await loadTemplate(program!.export_template_sha)).toBe('T0JJR0lOQUw=')
   })
 
   it('leaves export_layout null when none is provided', async () => {

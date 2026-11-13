@@ -60,7 +60,7 @@ async function createAthleteWithWorkout(opts: {
   await db.insertInto('programs').values({
     id: programId, athlete_id: athleteId, name: `${opts.name} block`, description: null,
     start_date: null, end_date: null, status: 'active', created_at: now(), updated_at: now(),
-    enabled_columns: null, focus: null, export_layout: null, export_template_xlsx: null,
+    enabled_columns: null, focus: null, export_layout: null, export_template_sha: null,
     builtin_template: 'coachboard',
   }).execute()
   await db.insertInto('workouts').values({
@@ -401,7 +401,7 @@ describe('suggestion windows (via assignMediaToAthlete)', () => {
     await db.insertInto('programs').values({
       id: orphanProgram, athlete_id: null, name: 'Detached', description: null,
       start_date: null, end_date: null, status: 'archived', created_at: now(), updated_at: now(),
-      enabled_columns: null, focus: null, export_layout: null, export_template_xlsx: null,
+      enabled_columns: null, focus: null, export_layout: null, export_template_sha: null,
       builtin_template: 'coachboard',
     }).execute()
     await db.insertInto('workouts').values({
@@ -501,7 +501,7 @@ describe('listMedia / counts / candidates', () => {
     await db.insertInto('programs').values({
       id: draftProgram, athlete_id: athleteId, name: '[Draft] Next block', description: null,
       start_date: null, end_date: null, status: 'draft', created_at: now(), updated_at: now(),
-      enabled_columns: null, focus: null, export_layout: null, export_template_xlsx: null,
+      enabled_columns: null, focus: null, export_layout: null, export_template_sha: null,
       builtin_template: 'coachboard',
     }).execute()
     await db.insertInto('workouts').values({

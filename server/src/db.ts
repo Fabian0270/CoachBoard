@@ -5,6 +5,7 @@ import { dirname } from 'path'
 import { openSqlite } from './sqlite.js'
 import { applyPendingRestore, rollBackFailedRestore } from './services/pendingRestore.js'
 import { clearPendingSettings } from './services/pendingSettingsRestore.js'
+import { migrateTemplateBlobs, pruneOrphanTemplates } from './templateBlobMigration.js'
 
 export interface AthleteTable {
   id: string
@@ -33,7 +34,7 @@ export interface ProgramTable {
   enabled_columns: string | null
   focus: string | null
   export_layout: string | null         // JSON ExportLayoutTemplate, or null = generic export
-  export_template_xlsx: string | null  // base64 of the original imported .xlsx, for high-fidelity re-fill export
+  export_template_sha: string | null   // template_blobs key of the original imported .xlsx, for high-fidelity re-fill export
   builtin_template: string | null      // chosen starter look ('coachboard' | 'minimal' | 'modern') when no imported style
   // 0/1 — coach favorited this program for reuse. Generated: has a SQL default,
   // so existing inserts that predate this column don't need to set it.
@@ -45,7 +46,15 @@ export interface ExportStyleTable {
   id: string
   name: string
   descriptor: string            // JSON ExportLayoutTemplate
-  template_xlsx: string | null  // base64 of the original .xlsx for re-fill export
+  template_sha: string | null   // template_blobs key of the original .xlsx for re-fill export
+  created_at: string
+}
+
+/** Each imported workbook once, keyed by the SHA-256 of its bytes. See templateBlobStore. */
+export interface TemplateBlobTable {
+  sha256: string
+  data: Buffer
+  size_bytes: number
   created_at: string
 }
 
@@ -312,6 +321,7 @@ export interface DB {
   athlete_mvt: AthleteMvtTable
   payments: PaymentTable
   export_styles: ExportStyleTable
+  template_blobs: TemplateBlobTable
   discord_channels: DiscordChannelTable
   discord_users: DiscordUserTable
   discord_media: DiscordMediaTable
@@ -497,8 +507,36 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   await addColumnIfMissing('programs', 'enabled_columns', 'TEXT')
   await addColumnIfMissing('programs', 'focus', 'TEXT')
   await addColumnIfMissing('programs', 'export_layout', 'TEXT')
-  await addColumnIfMissing('programs', 'export_template_xlsx', 'TEXT')
   await addColumnIfMissing('programs', 'builtin_template', "TEXT DEFAULT 'coachboard'")
+
+  // Imported workbooks, stored once each (1.17.0). Runs BEFORE the athlete_id
+  // rebuild below, so a legacy table is rebuilt with the sha column and the
+  // workbooks are already safe in template_blobs. export_styles is created here
+  // rather than further down because its workbooks move in the same step.
+  // The legacy export_template_xlsx / template_xlsx columns must never be
+  // re-added: they would be re-created and re-dropped on every launch.
+  await addColumnIfMissing('programs', 'export_template_sha', 'TEXT')
+  await sql`
+    CREATE TABLE IF NOT EXISTS export_styles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      descriptor TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `.execute(_db)
+  await addColumnIfMissing('export_styles', 'template_sha', 'TEXT')
+  await sql`
+    CREATE TABLE IF NOT EXISTS template_blobs (
+      sha256 TEXT PRIMARY KEY,
+      data BLOB NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `.execute(_db)
+  const templates = migrateTemplateBlobs(_sqlite!)
+  if (templates.dropped) {
+    console.log(`Moved ${templates.moved} stored Excel template(s) into shared storage`)
+  }
 
   // Databases created before the "keep programs on athlete delete" feature made
   // `programs.athlete_id` NOT NULL. Dropping a NOT NULL constraint in SQLite requires
@@ -526,18 +564,18 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
           enabled_columns TEXT,
           focus TEXT,
           export_layout TEXT,
-          export_template_xlsx TEXT,
           builtin_template TEXT DEFAULT 'coachboard',
+          export_template_sha TEXT,
           FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE
         )
       `.execute(trx)
       await sql`
         INSERT INTO programs_new
           (id, athlete_id, name, description, start_date, end_date, status,
-           created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx, builtin_template)
+           created_at, updated_at, enabled_columns, focus, export_layout, builtin_template, export_template_sha)
         SELECT
           id, athlete_id, name, description, start_date, end_date, status,
-          created_at, updated_at, enabled_columns, focus, export_layout, export_template_xlsx, builtin_template
+          created_at, updated_at, enabled_columns, focus, export_layout, builtin_template, export_template_sha
         FROM programs
       `.execute(trx)
       await sql`DROP TABLE programs`.execute(trx)
@@ -652,16 +690,6 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   }
 
   await sql`CREATE INDEX IF NOT EXISTS idx_payments_athlete_id ON payments(athlete_id)`.execute(_db)
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS export_styles (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      descriptor TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `.execute(_db)
-  await addColumnIfMissing('export_styles', 'template_xlsx', 'TEXT')
 
   // --- Discord integration -------------------------------------------------
   // ON DELETE SET NULL throughout: deleting an athlete returns their Discord
@@ -850,4 +878,21 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_inbound_athlete ON discord_inbound_messages(athlete_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_inbound_read ON discord_inbound_messages(read)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_inbound_user ON discord_inbound_messages(discord_user_id)`.execute(_db)
+
+  // Workbooks whose last program or style is gone. Done here rather than on
+  // delete: deleting an athlete cascades to their programs inside SQLite, where
+  // no application code sees it.
+  const pruned = pruneOrphanTemplates(_sqlite!)
+
+  // Dropping a column frees its pages but does not shrink the file; VACUUM
+  // does. Once, right after the move — that is the run where it pays off. A
+  // failure (usually too little free disk for the copy VACUUM makes) costs only
+  // the space, so it is logged and start-up carries on.
+  if (templates.dropped || pruned > 0) {
+    try {
+      _sqlite!.exec('VACUUM')
+    } catch (err) {
+      console.log(`Could not compact the database after moving templates: ${String(err)}`)
+    }
+  }
 }

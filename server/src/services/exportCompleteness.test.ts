@@ -6,6 +6,7 @@ import { createAthlete } from './athleteService.js'
 import { createProgram, setProgramDuration, createWorkout, createExercise } from './programService.js'
 import { buildProgramWorkbook } from './programExport.js'
 import { parseExternalFile } from './externalImportService.js'
+import { storeTemplate } from './templateBlobStore.js'
 
 // An export must contain the whole program, whatever style it is rendered in.
 //
@@ -41,7 +42,7 @@ async function programOutgrowing(fixture: string): Promise<{ programId: string; 
   await setProgramDuration(program.id, start, 1)
   await getDb()
     .updateTable('programs')
-    .set({ export_template_xlsx: buffer.toString('base64') })
+    .set({ export_template_sha: await storeTemplate(buffer.toString('base64')) })
     .where('id', '=', program.id)
     .execute()
 
