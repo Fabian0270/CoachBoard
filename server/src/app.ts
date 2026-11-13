@@ -1,7 +1,7 @@
 import express, { NextFunction, Request, Response } from 'express'
-import cors from 'cors'
 import { join } from 'path'
 import { configureLogger, logError } from './lib/logger.js'
+import { originGuard, securityHeaders } from './lib/originGuard.js'
 import athletesRouter from './routes/athletes.js'
 import programsRouter from './routes/programs.js'
 import progressRouter from './routes/progress.js'
@@ -23,7 +23,14 @@ export function createApp(staticDir?: string, logPath?: string) {
   // anywhere in the tree can record why it failed.
   configureLogger(logPath)
 
-  app.use(cors({ origin: ['http://localhost:3000', 'http://localhost:3001'] }))
+  // FIRST, ahead of every parser and route, so a request from another website
+  // is refused before anything reads its body. See lib/originGuard.ts.
+  //
+  // This replaces the cors() middleware that used to sit here. Nothing in the
+  // app makes a cross-origin request — production is same-origin and dev goes
+  // through the Vite proxy — so CORS headers only ever widened who could call.
+  app.use(securityHeaders)
+  app.use(originGuard)
 
   // Bar-path and pose payloads are megabytes, not kilobytes, so /api/analysis
   // gets its own parser MOUNTED FIRST. Order is the whole mechanism: body-parser
@@ -39,8 +46,10 @@ export function createApp(staticDir?: string, logPath?: string) {
   // merely flaky rather than broken, and no skeleton was ever stored.
   app.use('/api/analysis', express.json({ limit: ANALYSIS_JSON_LIMIT }), analysisRouter)
 
+  // JSON only. A urlencoded parser used to be mounted too, which nothing in the
+  // client ever sent — but it is exactly the body an HTML <form> on another
+  // site can post without a CORS preflight, so it only ever served an attacker.
   app.use(express.json())
-  app.use(express.urlencoded({ extended: true }))
 
   app.use('/api/athletes', athletesRouter)
   app.use('/api/programs', programsRouter)

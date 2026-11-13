@@ -57,6 +57,15 @@ const router = Router()
 // All Discord API calls stay server-side; the bot token never leaves this
 // process. The ONLY route that ever receives it is PUT /settings/token.
 
+/**
+ * A Discord id: a snowflake, which is only ever digits.
+ *
+ * Ids taken from a request are spliced into Discord API PATHS that carry the
+ * bot token. URL parsing resolves `..`, so an unchecked id of `../../x` would
+ * send an authenticated request to an endpoint this app never meant to call.
+ */
+const snowflake = z.string().regex(/^\d{1,25}$/, 'Not a Discord id')
+
 async function requireClient() {
   const token = await getToken()
   if (!token) return null
@@ -181,6 +190,10 @@ router.get('/guilds', async (_req, res) => {
 })
 
 router.get('/guilds/:guildId/channels', async (req, res) => {
+  if (!snowflake.safeParse(req.params.guildId).success) {
+    res.status(400).json({ error: 'Not a Discord server id' })
+    return
+  }
   const client = await requireClient()
   if (!client) {
     res.status(400).json({ error: 'Discord is not configured' })
@@ -206,6 +219,10 @@ router.get('/guilds/:guildId/channels', async (req, res) => {
 })
 
 router.get('/guilds/:guildId/members/search', async (req, res) => {
+  if (!snowflake.safeParse(req.params.guildId).success) {
+    res.status(400).json({ error: 'Not a Discord server id' })
+    return
+  }
   const client = await requireClient()
   if (!client) {
     res.status(400).json({ error: 'Discord is not configured' })
@@ -266,10 +283,11 @@ router.get('/channels', async (_req, res) => {
 })
 
 const addChannelSchema = z.object({
-  channelId: z.string().min(1),
-  guildId: z.string().min(1),
-  name: z.string().min(1),
-  guildName: z.string().optional().default(''),
+  // Stored, then used as a path segment on every sync — see `snowflake`.
+  channelId: snowflake,
+  guildId: snowflake,
+  name: z.string().min(1).max(200),
+  guildName: z.string().max(200).optional().default(''),
   historyDays: z.union([z.literal(30), z.literal(90), z.null()]),
 })
 

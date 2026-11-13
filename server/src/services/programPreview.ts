@@ -67,6 +67,26 @@ function parseMerges(merges: string[]): {
   return { masters, covered }
 }
 
+/**
+ * Excel horizontal alignment -> CSS text-align, by allowlist.
+ *
+ * The value comes out of the workbook's styles.xml, which is attacker-shaped
+ * whenever the coach imports a sheet someone else built. It used to be pasted
+ * into the style attribute as-is, so an alignment of
+ * `center" onmouseover="…` closed the attribute and added an event handler to
+ * HTML the client renders with dangerouslySetInnerHTML. Only known values map
+ * to anything; the rest are dropped.
+ */
+const CSS_TEXT_ALIGN: Record<string, string> = {
+  left: 'left',
+  center: 'center',
+  right: 'right',
+  justify: 'justify',
+  distributed: 'justify',
+  centerContinuous: 'center',
+  fill: 'left',
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -111,7 +131,7 @@ export async function renderWorkbookHtml(buffer: Buffer): Promise<string> {
       const fontColor = argbToCss(font?.color?.argb)
       if (fontColor) styles.push(`color:${fontColor}`)
 
-      const align = cell.alignment?.horizontal
+      const align = CSS_TEXT_ALIGN[String(cell.alignment?.horizontal ?? '')]
       if (align) styles.push(`text-align:${align}`)
 
       const spanAttr = span ? ` rowspan="${span.rowspan}" colspan="${span.colspan}"` : ''

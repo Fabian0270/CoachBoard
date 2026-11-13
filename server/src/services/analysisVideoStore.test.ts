@@ -146,3 +146,12 @@ describe('sweepOrphanVideos', () => {
     expect(await sweepOrphanVideos(new Set())).toBe(0)
   })
 })
+
+describe('the extension on chunk and finish requests is not trusted', () => {
+  it('refuses an extension beginVideo would never have chosen', async () => {
+    const { id } = await beginVideo('squat.mp4')
+    await expect(appendVideoChunk(id, '.exe', Buffer.from('x'))).rejects.toThrow('Invalid video extension')
+    await expect(appendVideoChunk(id, '/../../x', Buffer.from('x'))).rejects.toThrow('Invalid video extension')
+    await expect(finishVideo(id, '')).rejects.toThrow('Invalid video extension')
+  })
+})

@@ -377,10 +377,18 @@ function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): voi
 }
 
 /** Dev serves the renderer from :3000, production from the embedded server. */
+const APP_ORIGIN = isDev ? 'http://localhost:3000' : `http://localhost:${SERVER_PORT}`
+
+/**
+ * Whether a URL is the app's own page.
+ *
+ * Exact origin, not "any localhost". The looser check granted camera,
+ * microphone and clipboard to any page served from ANY local port — another
+ * dev server, or a page the window had been navigated to.
+ */
 function isOwnOrigin(url: string): boolean {
   try {
-    const { hostname } = new URL(url)
-    return hostname === 'localhost' || hostname === '127.0.0.1'
+    return new URL(url).origin === APP_ORIGIN
   } catch {
     return false
   }
@@ -450,12 +458,24 @@ async function createWindow(): Promise<void> {
     return { action: 'deny' }
   })
 
-  if (isDev) {
-    await win.loadURL('http://localhost:3000')
-    win.webContents.openDevTools()
-  } else {
-    await win.loadURL(`http://localhost:${SERVER_PORT}`)
+  // The same rule for navigation in place. Without it, a link without
+  // target=_blank — or a redirect — replaced the app with whatever it pointed
+  // at, inside a window that holds camera, microphone and screen-capture
+  // grants and has no address bar to show where it had gone. External links go
+  // to the system browser instead; hash routing never fires this event.
+  const keepInApp = (event: Electron.Event, url: string): void => {
+    if (isOwnOrigin(url)) return
+    event.preventDefault()
+    log(`Blocked navigation away from the app: ${url}`)
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
   }
+  win.webContents.on('will-navigate', keepInApp)
+  win.webContents.on('will-redirect', keepInApp)
+  // The app never uses <webview>, and one would be a second, unguarded window.
+  win.webContents.on('will-attach-webview', (event) => event.preventDefault())
+
+  await win.loadURL(APP_ORIGIN)
+  if (isDev) win.webContents.openDevTools()
 }
 
 // A second instance would fail to bind the server port — focus the existing window instead.
