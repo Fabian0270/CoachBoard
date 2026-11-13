@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs'
 import { TOGGLEABLE_COLUMNS } from 'coachboard-shared'
 import type { ImportMatch, ImportWarning, ImportPreview, E1RMEstimate } from 'coachboard-shared'
 import { estimate1RM } from 'coachboard-shared/rpe'
+import { mainLiftKey } from 'coachboard-shared/vbt'
 import {
   DAY_NAMES,
   resolveExportRenderPath,
@@ -348,7 +349,6 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
   // e1RM estimates: per main-lift keyword, use the last week that lift
   // appears with data and the heaviest set (highest e1RM) in that week.
   // -------------------------------------------------------------------------
-  const MAIN_LIFT_KEYWORDS = ['squat', 'bench', 'deadlift'] as const
   const exerciseMap = new Map(exercises.map((e) => [e.id, e]))
 
   // Group by keyword so "Squat" and "High Bar Squat" collapse into one entry.
@@ -358,8 +358,9 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
   for (const m of matched) {
     if (!m.load_used || !m.rpe) continue
 
-    const liftLower = m.exerciseName.toLowerCase()
-    const keyword = MAIN_LIFT_KEYWORDS.find((k) => liftLower.includes(k))
+    // The shared matcher, so a Romanian deadlift or a front squat cannot stand
+    // in for the competition lift's estimate. See mainLiftKey.
+    const keyword = mainLiftKey(m.exerciseName)
     if (!keyword) continue
 
     const ex = exerciseMap.get(m.exerciseId)

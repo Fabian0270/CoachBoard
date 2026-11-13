@@ -5,10 +5,10 @@ import { findProgramById } from './programService.js'
 import { findTemplate } from '../lib/suggestionTemplates.js'
 import { SUGGESTION_TEMPLATES } from 'coachboard-shared'
 import { ACCESSORY_POOLS } from 'coachboard-shared/knowledge'
+import { bestStoredMax, mainLiftKey, type MainLiftKey } from 'coachboard-shared/vbt'
 import type { SuggestProgramBody, SuggestProgramResult, WeekSlot } from 'coachboard-shared'
 
-const MAIN_LIFT_KEYWORDS = ['squat', 'bench', 'deadlift'] as const
-type LiftKey = (typeof MAIN_LIFT_KEYWORDS)[number]
+type LiftKey = MainLiftKey
 
 // Day-of-week offsets (0 = Monday) and lift assignments per training-day count.
 const DAY_OFFSETS: Record<number, number[]> = {
@@ -31,15 +31,22 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
 }
 
-function liftKeyFor(name: string): LiftKey | null {
-  const lower = name.toLowerCase()
-  for (const k of MAIN_LIFT_KEYWORDS) {
-    if (lower.includes(k)) return k
+// The shared matcher, not a substring test — see mainLiftKey in shared/vbt.ts.
+const liftKeyFor = mainLiftKey
+
+const MAIN_LIFTS: LiftKey[] = ['squat', 'bench', 'deadlift']
+
+/** The stored max per main lift — plain lift name first, then most recent. */
+function storedMaxMap(rows: { lift_name: string; weight: number; recorded_at: string }[]): Map<LiftKey, number> {
+  const map = new Map<LiftKey, number>()
+  for (const key of MAIN_LIFTS) {
+    const best = bestStoredMax(key, rows)
+    if (best) map.set(key, best.weight)
   }
-  return null
+  return map
 }
 
-// Latest stored 1RM per main lift for an athlete, keyed by lift. Used to scale a
+// Stored 1RM per main lift for an athlete, keyed by lift. Used to scale a
 // draft's loads to the athlete it's being generated for — essential when the
 // source program belongs to a different athlete.
 async function storedMaxE1rmMap(athleteId: string): Promise<Map<LiftKey, number>> {
@@ -47,15 +54,8 @@ async function storedMaxE1rmMap(athleteId: string): Promise<Map<LiftKey, number>
     .selectFrom('athlete_maxes')
     .selectAll()
     .where('athlete_id', '=', athleteId)
-    .orderBy('lift_name', 'asc')
-    .orderBy('recorded_at', 'desc')
     .execute()
-  const map = new Map<LiftKey, number>()
-  for (const m of rows) {
-    const key = liftKeyFor(m.lift_name)
-    if (key && !map.has(key)) map.set(key, m.weight) // most-recent row per lift wins
-  }
-  return map
+  return storedMaxMap(rows)
 }
 
 function toIso(d: Date): string {
@@ -317,9 +317,8 @@ export async function generateDraftProgram(
     for (const trend of report.e1rmTrends) {
       if (trend.latestE1RM !== null) e1rmMap.set(trend.liftKey as LiftKey, trend.latestE1RM)
     }
-    for (const max of report.storedMaxes) {
-      const key = liftKeyFor(max.lift_name)
-      if (key && !e1rmMap.has(key)) e1rmMap.set(key, max.weight)
+    for (const [key, weight] of storedMaxMap(report.storedMaxes)) {
+      if (!e1rmMap.has(key)) e1rmMap.set(key, weight)
     }
   }
 

@@ -375,7 +375,12 @@ export interface WeekSlot {
   sets: number
   reps: number
   targetRpe: number
-  weight: number       // kg, rounded to 2.5
+  /**
+   * kg, rounded to 2.5. Null when the reps and RPE fall outside the RPE chart
+   * (a rep bias can push reps past 10), so there is no defensible load — left
+   * blank for the coach rather than prescribed as 0 kg.
+   */
+  weight: number | null
   explanation: string  // tooltip text shown in the calendar editor
 }
 

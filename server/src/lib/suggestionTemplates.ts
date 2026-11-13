@@ -29,7 +29,19 @@ function makeSlot(
   label: string,
 ): WeekSlot {
   const snapped = snapRpe(rpe)
-  const weight = targetWeight(e1RM, reps, snapped) ?? 0
+  const weight = targetWeight(e1RM, reps, snapped)
+  // Off the chart — more than 10 reps once the coach's rep bias is applied.
+  // This used to fall back to 0, and a draft went out prescribing 0 kg.
+  if (weight === null) {
+    return {
+      week,
+      sets,
+      reps,
+      targetRpe: snapped,
+      weight: null,
+      explanation: `${reps} reps @ RPE ${snapped} is outside the RPE chart, so no load is suggested — set it yourself (${label})`,
+    }
+  }
   const pct = e1RM > 0 ? Math.round((weight / e1RM) * 100) : 0
   return {
     week,

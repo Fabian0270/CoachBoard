@@ -181,3 +181,46 @@ describe('countExpiring', () => {
     expect(await countExpiring(0)).toEqual({ videos: 0, messages: 0 })
   })
 })
+
+describe('generated drafts use the competition lifts, not their variations', () => {
+  it('keeps a Romanian deadlift as an accessory and loads from the plain max', async () => {
+    const athlete = await createAthlete({ name: 'Lifter' })
+    const { createAthleteMax } = await import('./athleteService.js')
+    // Sorts first alphabetically, and used to set the whole block's bench loads.
+    await createAthleteMax({ athlete_id: athlete.id, lift_name: 'Banded Bench', weight: 60, recorded_at: '2026-06-01' })
+    await createAthleteMax({ athlete_id: athlete.id, lift_name: 'Bench Press', weight: 140, recorded_at: '2026-01-01' })
+
+    const other = await createAthlete({ name: 'Source Owner' })
+    const source = await createProgram({
+      athlete_id: other.id, name: 'Done Block', start_date: '2026-01-05', end_date: '2026-01-11', status: 'completed',
+    })
+    const days: [string, string[]][] = [
+      ['2026-01-05', ['Squat']],
+      ['2026-01-07', ['Bench Press']],
+      ['2026-01-09', ['Deadlift', 'Romanian Deadlift']],
+    ]
+    for (const [date, names] of days) {
+      const w = await createWorkout({ program_id: source.id, name: date, scheduled_date: date })
+      for (const [i, name] of names.entries()) {
+        await createExercise({ workout_id: w.id, name, sets: '3', reps: '5', order_index: i })
+      }
+    }
+
+    // A different athlete, so loads come from THEIR stored maxes.
+    const { draftProgramId } = await generateDraftProgram(source.id, {
+      athleteId: athlete.id, templateId: 'strength_linear', weeks: 1, trainingDaysPerWeek: 3, startDate: '2026-02-02',
+    })
+    const rows = await getDb()
+      .selectFrom('exercises')
+      .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+      .select(['exercises.name as name', 'exercises.weight as weight', 'exercises.suggestion_note as note'])
+      .where('workouts.program_id', '=', draftProgramId)
+      .execute()
+
+    const rdl = rows.find((r) => r.name === 'Romanian Deadlift')
+    expect(rdl).toBeDefined() // carried over as an accessory, not folded into the deadlift
+    const bench = rows.find((r) => r.name === 'Bench Press')!
+    // strength_linear week 1: 5 reps @ RPE 7.5 is about 80% — of 140, not of 60.
+    expect(bench.weight).toBeGreaterThan(100)
+  })
+})
