@@ -4,7 +4,7 @@ import os from 'os'
 import path from 'path'
 import { initializeDatabase, getDb } from '../db.js'
 import { configureSecureStore, type SafeStorageLike } from './secureStore.js'
-import { saveToken } from './discordSettingsService.js'
+import { saveToken, setRetentionDays } from './discordSettingsService.js'
 import {
   runSyncToCompletion,
   getSyncStatus,
@@ -155,7 +155,20 @@ const textMsg = (
   attachments: [],
 })
 
+/**
+ * "Now", for every test in this file.
+ *
+ * The fixtures are dated 2026-07-03, and retention (90 days by default) is
+ * measured against the clock. Against the real clock they started counting as
+ * expired on 2026-10-01 and every sync test failed with an empty table — a date
+ * bomb, not a regression. Only Date is faked: the engine's timers (rate-limit
+ * backoff) must keep running for real.
+ */
+const NOW = new Date('2026-07-04T12:00:00.000Z')
+
 beforeEach(async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(NOW)
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-sync-'))
   configureSecureStore({ safeStorage: fakeSafeStorage, userDataDir: tmpDir })
   await initializeDatabase(path.join(tmpDir, 'test.sqlite'))
@@ -169,6 +182,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   // Close the sqlite handle before deleting the temp dir (Windows EBUSY).
   await getDb().destroy()
@@ -465,6 +479,44 @@ describe('discordSyncService', () => {
     await runSyncToCompletion()
     await runSyncToCompletion()
     expect(await getDb().selectFrom('discord_inbound_messages').selectAll().execute()).toHaveLength(1)
+  })
+
+  it('does not download media already past the retention window', async () => {
+    // 125 days before NOW, against the default 90-day retention. Downloading it
+    // only for the same run's retention sweep to delete it again cost up to
+    // 500 MB per file on a full-history channel.
+    await addChannel('c1')
+    fake.messages.set('c1', [
+      videoMsg('950', 'c1', Buffer.from('old-bytes'), { timestamp: '2026-03-01T10:00:00.000Z' }),
+      videoMsg('951', 'c1', Buffer.from('new-bytes'), { timestamp: '2026-07-03T10:00:00.000Z' }),
+    ])
+
+    await runSyncToCompletion()
+
+    const media = await getDb().selectFrom('discord_media').selectAll().execute()
+    expect(media.map((m) => m.message_id)).toEqual(['951'])
+    const fetched = (vi.mocked(fetch).mock.calls as unknown[][]).map((c) => String(c[0]))
+    expect(fetched.some((u) => u.endsWith('/950.mp4'))).toBe(false)
+    expect(getSyncStatus().lastResult?.newMedia).toBe(1)
+
+    // The cursor still moves past it: the end state is what retention would
+    // have produced anyway, just without the download.
+    const c1 = await getDb()
+      .selectFrom('discord_channels').selectAll().where('id', '=', 'c1').executeTakeFirstOrThrow()
+    expect(c1.last_message_id).toBe('951')
+  })
+
+  it('keeps old media when retention is set to Never', async () => {
+    await setRetentionDays(0)
+    await addChannel('c1')
+    fake.messages.set('c1', [
+      videoMsg('960', 'c1', Buffer.from('old-bytes'), { timestamp: '2025-01-01T10:00:00.000Z' }),
+    ])
+
+    await runSyncToCompletion()
+
+    const media = await getDb().selectFrom('discord_media').selectAll().executeTakeFirstOrThrow()
+    expect(media.download_status).toBe('downloaded')
   })
 
   it('skips oversized attachments without fetching them', async () => {

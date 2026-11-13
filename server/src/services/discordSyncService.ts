@@ -132,6 +132,16 @@ async function runSync(token: string): Promise<void> {
 
     const botUserId = await getBotUserId()
 
+    // Media posted before this is past the coach's retention window. It used to
+    // be inserted and downloaded anyway — up to 500 MB a file, on a channel
+    // added with full history — only for the retention sweep at the end of the
+    // same run to delete it again. Skipping it here reaches the same end state
+    // without the download. Null when retention is "Never".
+    const retentionDays = await getRetentionDays()
+    const expiredBefore = retentionDays > 0 ? Date.now() - retentionDays * 86_400_000 : null
+    const isExpired = (timestamp: string) =>
+      expiredBefore !== null && Date.parse(timestamp) < expiredBefore
+
     channelLoop: for (const channel of channels) {
       const progress: SyncChannelProgress = {
         channelId: channel.id,
@@ -240,6 +250,10 @@ async function runSync(token: string): Promise<void> {
               continue
             }
 
+            // After the caption bookkeeping above, so an expired video's text
+            // still behaves as text; the video itself is never stored.
+            if (isExpired(msg.timestamp)) continue
+
             await upsertDiscordUser(trx, msg.author)
 
             const link = await trx
@@ -322,12 +336,14 @@ async function runSync(token: string): Promise<void> {
       }
     }
 
-    // Download phase — includes 'pending' leftovers from earlier crashed runs.
     if (resultCode === 'ok') {
-      await downloadPendingMedia(client)
-      // Retention sweeps — delete videos and messages past the coach's cutoffs.
-      await applyRetention(await getRetentionDays()).catch(() => {})
+      // Retention sweeps BEFORE downloading, so a 'pending' leftover from an
+      // earlier crashed run that has since expired is removed rather than
+      // fetched and then removed.
+      await applyRetention(retentionDays).catch(() => {})
       await applyMessageRetention(await getMessageRetentionDays()).catch(() => {})
+      // Download phase — includes 'pending' leftovers from earlier crashed runs.
+      await downloadPendingMedia(client)
       // Thumbnails whose owning row is already gone. Needed because deleting a
       // file can legitimately fail on Windows while it is open in the player,
       // which would otherwise strand the thumbnail on disk forever.
