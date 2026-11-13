@@ -48,3 +48,49 @@ describe('Discord ids', () => {
     expect(res.status).toBe(201)
   })
 })
+
+describe('checking a bot token', () => {
+  it('validates without saving, so cancelling the wizard keeps the old connection', async () => {
+    const { vi } = await import('vitest')
+    const fs = await import('fs')
+    const os = await import('os')
+    const path = await import('path')
+    const { configureSecureStore } = await import('../services/secureStore.js')
+    const { getToken } = await import('../services/discordSettingsService.js')
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-token-'))
+    configureSecureStore({
+      userDataDir: dir,
+      safeStorage: {
+        isEncryptionAvailable: () => true,
+        encryptString: (s) => Buffer.from(s),
+        decryptString: (b) => b.toString(),
+      },
+    })
+
+    const realFetch = globalThis.fetch
+    vi.stubGlobal('fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u.endsWith('/users/@me')) return new Response(JSON.stringify({ id: 'bot', username: 'coachbot' }))
+      if (u.endsWith('/applications/@me')) return new Response(JSON.stringify({ id: 'app', name: 'x', flags: 1 << 18 }))
+      return realFetch(url, init)
+    })
+    try {
+      const token = 'a-pasted-token-that-is-long-enough'
+      const put = (body: unknown) =>
+        fetch(`${base}/settings/token`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        })
+
+      const checked = await put({ token, checkOnly: true })
+      expect(checked.status).toBe(200)
+      expect(await checked.json()).toMatchObject({ botUsername: 'coachbot', messageContentIntent: true })
+      expect(await getToken()).toBeNull()
+
+      expect((await put({ token })).status).toBe(200)
+      expect(await getToken()).toBe(token)
+    } finally {
+      vi.unstubAllGlobals()
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

@@ -230,29 +230,36 @@ function TokenStep({
   const [state, setState] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle')
   const [error, setError] = useState('')
   const [botName, setBotName] = useState('')
-  const [saved, setSaved] = useState<PublicDiscordSettings | null>(null)
+  /** What Discord said about the pasted token. Nothing is saved until Continue. */
+  const [checked, setChecked] = useState<PublicDiscordSettings | null>(null)
+  const [saving, setSaving] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Only the latest check may land — two quick pastes could finish out of order. */
+  const checkSeq = useRef(0)
 
   const validate = useCallback(async (value: string) => {
+    const seq = ++checkSeq.current
     setState('checking')
     setError('')
     try {
       const res = await fetch('/api/discord/settings/token', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: value }),
+        body: JSON.stringify({ token: value, checkOnly: true }),
       })
       const data = await res.json().catch(() => ({}))
+      if (seq !== checkSeq.current) return
       if (!res.ok) {
         setState('error')
         setError(data.error ?? 'The token could not be validated')
         return
       }
       const s = data as PublicDiscordSettings
-      setSaved(s)
+      setChecked(s)
       setBotName(s.botUsername ?? 'your bot')
       setState('ok')
     } catch {
+      if (seq !== checkSeq.current) return
       setState('error')
       setError("You're offline — connect to the internet and try again.")
     }
@@ -262,9 +269,34 @@ function TokenStep({
   const onChange = (value: string) => {
     setToken(value)
     setState('idle')
+    setChecked(null)
     if (timer.current) clearTimeout(timer.current)
     if (value.trim().length >= 20) {
       timer.current = setTimeout(() => void validate(value.trim()), 500)
+    }
+  }
+
+  /** Saves the token — only now, so cancelling the wizard leaves any existing connection intact. */
+  const save = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch('/api/discord/settings/token', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token.trim() }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setState('error')
+        setError(data.error ?? 'The token could not be saved')
+        return
+      }
+      onValidated(data as PublicDiscordSettings)
+    } catch {
+      setState('error')
+      setError("You're offline — connect to the internet and try again.")
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -275,10 +307,10 @@ function TokenStep({
         <>
           <Button variant="outline" onClick={onBack}>Back</Button>
           <Button
-            disabled={state !== 'ok' || !saved || saved.messageContentIntent === false}
-            onClick={() => saved && onValidated(saved)}
+            disabled={state !== 'ok' || !checked || checked.messageContentIntent === false || saving}
+            onClick={save}
           >
-            Continue
+            {saving ? 'Saving…' : 'Continue'}
           </Button>
         </>
       }
@@ -308,7 +340,7 @@ function TokenStep({
           <CheckCircle2 className="h-4 w-4" /> Connected as <strong>{botName}</strong>
         </p>
       )}
-      {state === 'ok' && saved?.messageContentIntent === false && (
+      {state === 'ok' && checked?.messageContentIntent === false && (
         <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
@@ -320,14 +352,31 @@ function TokenStep({
             </a>{' '}
             → your app → <strong>Bot</strong> → under <strong>Privileged Gateway Intents</strong>{' '}
             turn on <strong>Message Content Intent</strong> → <strong>Save Changes</strong>. Then
-            re-paste your token above (or paste it again) to re-check.
+            check again.
+            {/* Re-pasting the same token does not change the field, so no
+                check ran and Continue stayed disabled — the instruction this
+                replaced could not be followed. */}
+            <span className="mt-2 block">
+              <Button size="sm" variant="outline" onClick={() => void validate(token.trim())}>
+                Check again
+              </Button>
+            </span>
           </span>
         </div>
       )}
       {state === 'error' && (
         <div className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-          <span>{error}</span>
+          <span>
+            {error}
+            {token.trim().length >= 20 && (
+              <span className="mt-2 block">
+                <Button size="sm" variant="outline" onClick={() => void validate(token.trim())}>
+                  Check again
+                </Button>
+              </span>
+            )}
+          </span>
         </div>
       )}
     </StepShell>
@@ -347,6 +396,8 @@ function InviteStep({
 }) {
   const [copied, setCopied] = useState(false)
   const [waiting, setWaiting] = useState(true)
+  /** Discord refused the request outright — waiting longer will not help. */
+  const [problem, setProblem] = useState<string | null>(null)
 
   // Poll until the bot lands in a server, then advance by itself.
   useEffect(() => {
@@ -354,7 +405,17 @@ function InviteStep({
     const check = async () => {
       try {
         const res = await fetch('/api/discord/guilds')
-        if (!res.ok) return
+        if (!res.ok) {
+          // A 400 is a rejected or missing token, which used to leave this
+          // step "waiting for the bot to join" forever. Offline blips (503)
+          // keep polling.
+          if (res.status === 400 && !cancelled) {
+            const data = await res.json().catch(() => ({}))
+            setProblem(data.error ?? 'Discord did not accept the bot token.')
+          }
+          return
+        }
+        if (!cancelled) setProblem(null)
         const guilds = (await res.json()) as DiscordGuildDto[]
         if (!cancelled && guilds.length > 0) {
           setWaiting(false)
@@ -410,6 +471,12 @@ function InviteStep({
         Need a different account? The link works for anyone with “Manage Server” permission — you
         can also paste it to your server admin.
       </p>
+      {problem && (
+        <div className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <span>{problem} Go back and paste the token again.</span>
+        </div>
+      )}
     </StepShell>
   )
 }
@@ -432,17 +499,21 @@ function ChannelStep({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  /** The channel list could not be fetched — shown in place of the spinner, which used to spin forever. */
+  const [loadFailed, setLoadFailed] = useState(false)
+
   useEffect(() => {
     if (!guildId) return
     let cancelled = false
     setChannels(null)
+    setLoadFailed(false)
     fetch(`/api/discord/guilds/${guildId}/channels`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((cs: DiscordChannelOptionDto[]) => {
         if (!cancelled) setChannels(cs)
       })
       .catch(() => {
-        if (!cancelled) setError('Could not load channels — check that the bot is still in the server.')
+        if (!cancelled) setLoadFailed(true)
       })
     return () => {
       cancelled = true
@@ -458,7 +529,18 @@ function ChannelStep({
     })
   }
 
+  /**
+   * Channels already syncing from an earlier setup. Reconnecting walks the whole
+   * wizard, and these cannot be selected again — so with nothing new picked the
+   * button stayed disabled and a reconnect could not be finished.
+   */
+  const alreadySyncing = channels?.filter((c) => c.alreadyConfigured).length ?? 0
+
   const save = async () => {
+    if (selected.size === 0) {
+      onDone()
+      return
+    }
     setSaving(true)
     setError('')
     try {
@@ -483,6 +565,8 @@ function ChannelStep({
         }
       }
       onDone()
+    } catch {
+      setError('CoachBoard could not reach its own server, so the channels were not saved.')
     } finally {
       setSaving(false)
     }
@@ -494,8 +578,12 @@ function ChannelStep({
       footer={
         <>
           <Button variant="outline" onClick={onBack}>Back</Button>
-          <Button onClick={save} disabled={selected.size === 0 || saving}>
-            {saving ? 'Saving…' : `Sync ${selected.size || ''} channel${selected.size === 1 ? '' : 's'}`}
+          <Button onClick={save} disabled={(selected.size === 0 && alreadySyncing === 0) || saving}>
+            {saving
+              ? 'Saving…'
+              : selected.size === 0 && alreadySyncing > 0
+                ? 'Keep current channels'
+                : `Sync ${selected.size || ''} channel${selected.size === 1 ? '' : 's'}`}
           </Button>
         </>
       }
@@ -515,7 +603,11 @@ function ChannelStep({
       )}
 
       <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2">
-        {channels === null ? (
+        {loadFailed ? (
+          <p className="p-2 text-sm text-destructive">
+            Could not load channels — check that the bot is still in the server.
+          </p>
+        ) : channels === null ? (
           <p className="flex items-center gap-2 p-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading channels…
           </p>
@@ -591,13 +683,39 @@ function FirstSyncStep({ onFinish }: { onFinish: () => void }) {
   const [status, setStatus] = useState<SyncStatusDto | null>(null)
   const [preview, setPreview] = useState<DiscordMediaItem[]>([])
   const startedRef = useRef(false)
+  /**
+   * When THIS step asked for its sync. The status endpoint remembers the
+   * previous sync's result, and before the new one had begun that old result
+   * read as "Done — Discord is connected!" (on a reconnect, possibly with an
+   * old error). Only a result that finished after this counts.
+   */
+  const kickedOffAt = useRef(new Date().toISOString())
+  /** The server would not start a sync at all; there is nothing to wait for. */
+  const [refused, setRefused] = useState<string | null>(null)
+  const isOurs = (s: SyncStatusDto | null) =>
+    !!s?.lastResult && s.lastResult.finishedAt >= kickedOffAt.current
 
   useEffect(() => {
     let cancelled = false
     const start = async () => {
       if (!startedRef.current) {
         startedRef.current = true
-        await fetch('/api/discord/sync', { method: 'POST' }).catch(() => {})
+        kickedOffAt.current = new Date().toISOString()
+        try {
+          const res = await fetch('/api/discord/sync', { method: 'POST' })
+          const data = (await res.json().catch(() => ({}))) as { started?: boolean; reason?: string }
+          // "already_running" will still produce a result after kickoff; the
+          // other refusals never will, and the step would spin forever.
+          if (!cancelled && data.started === false && data.reason !== 'already_running') {
+            setRefused(
+              data.reason === 'token_invalid'
+                ? 'Discord rejected the bot token — go back and paste it again.'
+                : 'Discord is not set up yet — go back and paste the bot token.',
+            )
+          }
+        } catch {
+          if (!cancelled) setRefused('CoachBoard could not reach its own server to start the sync.')
+        }
       }
     }
     void start()
@@ -609,7 +727,7 @@ function FirstSyncStep({ onFinish }: { onFinish: () => void }) {
         const s = (await res.json()) as SyncStatusDto
         if (cancelled) return
         setStatus(s)
-        if (s.state === 'idle' && s.lastResult) {
+        if (s.state === 'idle' && isOurs(s)) {
           const mediaRes = await fetch('/api/discord/media?filter=all&limit=5')
           if (mediaRes.ok && !cancelled) {
             const data = (await mediaRes.json()) as { items: DiscordMediaItem[] }
@@ -628,15 +746,17 @@ function FirstSyncStep({ onFinish }: { onFinish: () => void }) {
     }
   }, [])
 
-  const running = !status || status.state === 'running'
-  const result = status?.lastResult
+  const running = !refused && (!status || status.state === 'running' || !isOurs(status))
+  const result = isOurs(status) ? status!.lastResult : null
   const intentChannels =
     status?.warnings.filter((w) => w.startsWith('intent_missing:')).map((w) => w.split(':')[1]) ?? []
   const intentProblem = intentChannels.length > 0 || (status?.warnings.includes('intent_disabled') ?? false)
 
   return (
     <StepShell
-      title={running ? 'Syncing your channels…' : 'Done — Discord is connected!'}
+      title={
+        refused ? 'The sync could not start' : running ? 'Syncing your channels…' : 'Done — Discord is connected!'
+      }
       footer={
         <>
           <span />
@@ -670,6 +790,8 @@ function FirstSyncStep({ onFinish }: { onFinish: () => void }) {
           </p>
         )}
       </div>
+
+      {refused && <p className="text-sm text-destructive">{refused}</p>}
 
       {intentProblem && (
         <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">

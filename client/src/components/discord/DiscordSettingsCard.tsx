@@ -93,9 +93,37 @@ export default function DiscordSettingsCard() {
     }
   }, [settings?.configured, status?.state, load, toast])
 
+  /**
+   * One settings write: says so when it does not land, instead of leaving a
+   * control showing a value that was never saved. Resolves the parsed reply,
+   * or null on failure. These handlers used to ignore refusals entirely, and
+   * a network failure in one replaced the whole app with the error screen.
+   */
+  const write = async <T,>(url: string, init: RequestInit, what: string): Promise<T | null> => {
+    try {
+      const res = await fetch(url, init)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(`Could not ${what} — ${(data as { error?: string }).error ?? `the server said ${res.status}`}.`)
+        return null
+      }
+      return data as T
+    } catch {
+      toast.error(`Could not ${what} — CoachBoard could not reach its own server.`)
+      return null
+    }
+  }
+  const json = (method: string, body: unknown): RequestInit => ({
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
   const syncNow = async () => {
-    const res = await fetch('/api/discord/sync', { method: 'POST' })
-    const data = await res.json().catch(() => ({}))
+    const data = await write<{ started?: boolean; reason?: string }>(
+      '/api/discord/sync', { method: 'POST' }, 'start a sync',
+    )
+    if (!data) return
     if (data.started) {
       wasRunning.current = true
       toast.info('Sync started…')
@@ -107,29 +135,38 @@ export default function DiscordSettingsCard() {
   }
 
   const toggleChannel = async (channel: ConfiguredChannelDto, enabled: boolean) => {
-    const res = await fetch(`/api/discord/channels/${channel.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
-    })
-    if (res.ok) {
-      const updated = (await res.json()) as ConfiguredChannelDto
-      setChannels((list) => list.map((c) => (c.id === updated.id ? updated : c)))
-    }
+    const updated = await write<ConfiguredChannelDto>(
+      `/api/discord/channels/${channel.id}`, json('PATCH', { enabled }), `update ${channel.name}`,
+    )
+    if (updated) setChannels((list) => list.map((c) => (c.id === updated.id ? updated : c)))
   }
 
   const removeChannel = async (channel: ConfiguredChannelDto) => {
-    await fetch(`/api/discord/channels/${channel.id}`, { method: 'DELETE' })
-    setChannels((list) => list.filter((c) => c.id !== channel.id))
+    // Removed from the list only once the server has removed it. It used to
+    // vanish regardless, and come back on the next visit.
+    const ok = await write(`/api/discord/channels/${channel.id}`, { method: 'DELETE' }, `remove ${channel.name}`)
+    if (ok) setChannels((list) => list.filter((c) => c.id !== channel.id))
   }
 
   const saveAutoSync = async (enabled: boolean, minutes: number) => {
-    const res = await fetch('/api/discord/settings/auto-sync', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled, minutes }),
-    })
-    if (res.ok) setSettings(await res.json())
+    const saved = await write<PublicDiscordSettings>(
+      '/api/discord/settings/auto-sync', json('PUT', { enabled, minutes }), 'save auto-sync',
+    )
+    if (saved) setSettings(saved)
+  }
+
+  /** Typed but not yet saved; null shows the stored value. */
+  const [minutesText, setMinutesText] = useState<string | null>(null)
+  /**
+   * Saved on blur, not per keystroke. Saving per keystroke clamped "4" to 5
+   * before the next digit could be typed, and restarted the sync timer on every
+   * key press.
+   */
+  const commitMinutes = () => {
+    if (minutesText === null || !settings) return
+    const minutes = Math.min(24 * 60, Math.max(5, Math.round(Number(minutesText)) || settings.autoSyncMinutes))
+    setMinutesText(null)
+    if (minutes !== settings.autoSyncMinutes) void saveAutoSync(true, minutes)
   }
 
   /**
@@ -167,22 +204,18 @@ export default function DiscordSettingsCard() {
 
   const saveRetention = async (days: number) => {
     if (!(await confirmRetention(days, 'videos'))) return
-    const res = await fetch('/api/discord/settings/retention', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ days }),
-    })
-    if (res.ok) setSettings(await res.json())
+    const saved = await write<PublicDiscordSettings>(
+      '/api/discord/settings/retention', json('PUT', { days }), 'save video retention',
+    )
+    if (saved) setSettings(saved)
   }
 
   const saveMessageRetention = async (days: number) => {
     if (!(await confirmRetention(days, 'messages'))) return
-    const res = await fetch('/api/discord/settings/message-retention', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ days }),
-    })
-    if (res.ok) setSettings(await res.json())
+    const saved = await write<PublicDiscordSettings>(
+      '/api/discord/settings/message-retention', json('PUT', { days }), 'save message retention',
+    )
+    if (saved) setSettings(saved)
   }
 
   const clearCache = async () => {
@@ -336,10 +369,12 @@ export default function DiscordSettingsCard() {
                     type="number"
                     min={5}
                     className="h-7 w-16"
-                    value={settings.autoSyncMinutes}
-                    onChange={(e) =>
-                      saveAutoSync(true, Math.max(5, Number(e.target.value) || 30))
-                    }
+                    value={minutesText ?? String(settings.autoSyncMinutes)}
+                    onChange={(e) => setMinutesText(e.target.value)}
+                    onBlur={commitMinutes}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    }}
                   />
                   min
                 </span>

@@ -92,7 +92,13 @@ router.get('/settings', async (_req, res) => {
   res.json(await getPublicSettings())
 })
 
-const tokenSchema = z.object({ token: z.string().trim().min(20, 'Paste the full bot token') })
+const tokenSchema = z.object({
+  token: z.string().trim().min(20, 'Paste the full bot token'),
+  // Check with Discord without keeping it. The wizard validates on paste and
+  // saves only on Continue: saving on paste replaced a WORKING connection the
+  // moment a coach pasted a token, even if they then cancelled the wizard.
+  checkOnly: z.boolean().optional(),
+})
 
 router.put('/settings/token', async (req, res) => {
   const parsed = tokenSchema.safeParse(req.body)
@@ -103,6 +109,16 @@ router.put('/settings/token', async (req, res) => {
   try {
     const client = createDiscordClient(parsed.data.token)
     const [me, app] = [await client.getCurrentUser(), await client.getCurrentApplication()]
+    if (parsed.data.checkOnly) {
+      res.json({
+        ...(await getPublicSettings()),
+        botUsername: me.username,
+        applicationId: app.id,
+        messageContentIntent: hasMessageContentIntent(app.flags),
+        checked: true,
+      })
+      return
+    }
     const saved = await saveToken(parsed.data.token, {
       applicationId: app.id,
       botUserId: me.id,
