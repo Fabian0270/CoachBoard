@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2, Check, AlertTriangle } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { errorMessage, getList } from '../lib/api'
 
 interface BuiltinTemplate {
   id: string
@@ -71,16 +72,30 @@ function TemplatePreview({ id }: { id: string }) {
  */
 export default function TemplatePicker({ value, onChange, inheritOption }: Props) {
   const [templates, setTemplates] = useState<BuiltinTemplate[]>([])
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/export-templates')
-      .then((r) => r.json())
-      .then((data) => setTemplates(Array.isArray(data) ? data : []))
-      .catch(() => setTemplates([]))
+    // A failure used to leave the picker blank with nothing to choose and no
+    // reason given.
+    let cancelled = false
+    getList<BuiltinTemplate>('/api/export-templates')
+      .then((data) => { if (!cancelled) setTemplates(data) })
+      .catch((err) => {
+        if (cancelled) return
+        setTemplates([])
+        setLoadError(`Could not load the templates. ${errorMessage(err)}`)
+      })
+    return () => { cancelled = true }
   }, [])
 
   return (
     <div className="space-y-3">
+      {loadError && (
+        <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          {loadError}
+        </div>
+      )}
       {inheritOption && (
         <div
           role="radio"

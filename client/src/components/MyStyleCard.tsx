@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Sparkles } from 'lucide-react'
 import type { CoachStyleProfile } from 'coachboard-shared'
+import { getJson } from '../lib/api'
 
 const VOLUME_PHRASE: Record<string, string> = {
   rising: 'Volume usually ramps up across the block',
@@ -19,9 +20,11 @@ export default function MyStyleCard() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/style-profile')
-      .then((r) => r.json())
-      .then((data) => setProfile(data as CoachStyleProfile))
+    // A 500 used to arrive here as an error object and render as a profile.
+    // The card is a summary of data shown elsewhere, so on failure it simply
+    // stays out of the way.
+    getJson<CoachStyleProfile>('/api/style-profile')
+      .then(setProfile)
       .catch(() => setProfile(null))
       .finally(() => setLoading(false))
   }, [])

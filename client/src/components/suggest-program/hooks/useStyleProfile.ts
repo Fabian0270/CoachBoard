@@ -2,6 +2,7 @@ import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import { knowledgeDefaultsForGoal } from 'coachboard-shared/knowledge'
 import type { CoachStyleProfile, DetectedPattern, SuggestionGoal } from 'coachboard-shared'
 import { clampDays } from '../helpers'
+import { getJson } from '../../../lib/api'
 
 // Once the coach picks a goal, pull their style profile scoped to that focus.
 // When it's usable, default the day-count to their usual cadence. A selected
@@ -20,9 +21,11 @@ export function useStyleProfile(params: {
     if (!open || !goal) return
     let cancelled = false
     setStyleProfile(null)
-    fetch(`/api/style-profile?focus=${goal}`)
-      .then((r) => r.json())
-      .then((data: CoachStyleProfile) => {
+    // A 500 used to be read as a profile with usable undefined, switching the
+    // style toggle off without saying why. Now a failure takes the same path
+    // as having no learned style: the knowledge-base defaults.
+    getJson<CoachStyleProfile>(`/api/style-profile?focus=${encodeURIComponent(goal)}`)
+      .then((data) => {
         if (cancelled) return
         setStyleProfile(data)
         if (selectedPattern) return
@@ -36,7 +39,13 @@ export function useStyleProfile(params: {
           setTrainingDays(clampDays(knowledgeDefaultsForGoal(goal).daysPerWeek))
         }
       })
-      .catch(() => { if (!cancelled) setStyleProfile(null) })
+      .catch(() => {
+        if (cancelled) return
+        setStyleProfile(null)
+        if (selectedPattern) return
+        setUseStyle(false)
+        setTrainingDays(clampDays(knowledgeDefaultsForGoal(goal).daysPerWeek))
+      })
     return () => { cancelled = true }
   }, [open, goal, selectedPattern]) // eslint-disable-line react-hooks/exhaustive-deps
 

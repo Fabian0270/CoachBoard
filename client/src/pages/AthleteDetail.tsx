@@ -25,6 +25,8 @@ import type { DiscordUserItem } from 'coachboard-shared/discord'
 import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
+import LoadError from '../components/LoadError'
+import { ApiError, errorMessage, getJson, getList } from '../lib/api'
 
 interface Athlete {
   id: string
@@ -66,18 +68,39 @@ export default function AthleteDetail() {
   const [importOpen, setImportOpen] = useState(false)
   const newMenuRef = useRef<HTMLDivElement>(null)
 
+  // Any failure used to read as "Athlete not found — they may have been
+  // deleted" (or a page stuck on Loading), and a failed program list as "No
+  // programs yet". Only a 404 means the athlete is gone.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [programsError, setProgramsError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+
+  const loadPrograms = async (athleteId: string, isCurrent: () => boolean = () => true) => {
+    try {
+      const rows = await getList<Program>(`/api/programs?athlete_id=${encodeURIComponent(athleteId)}`)
+      if (!isCurrent()) return
+      setPrograms(rows)
+      setProgramsError(null)
+    } catch (err) {
+      if (isCurrent()) setProgramsError(errorMessage(err))
+    }
+  }
+
   useEffect(() => {
     if (!id) return
+    let cancelled = false
     setNotFound(false)
-    Promise.all([
-      fetch(`/api/athletes/${id}`).then(async (r) => (r.ok ? r.json() : null)),
-      fetch(`/api/programs?athlete_id=${id}`).then((r) => (r.ok ? r.json() : [])),
-    ]).then(([athlete, programs]) => {
-      if (athlete) setAthlete(athlete)
-      else setNotFound(true)
-      setPrograms(Array.isArray(programs) ? programs : [])
-    }).catch(() => {})
-  }, [id])
+    setLoadError(null)
+    getJson<Athlete>(`/api/athletes/${encodeURIComponent(id)}`)
+      .then((a) => { if (!cancelled) setAthlete(a) })
+      .catch((err) => {
+        if (cancelled) return
+        if (err instanceof ApiError && err.status === 404) setNotFound(true)
+        else setLoadError(errorMessage(err))
+      })
+    void loadPrograms(id, () => !cancelled)
+    return () => { cancelled = true }
+  }, [id, attempt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!newMenuOpen) return
@@ -93,14 +116,15 @@ export default function AthleteDetail() {
       return
     }
     let cancelled = false
-    fetch('/api/discord/users')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((users: DiscordUserItem[]) => {
+    // A read-only nicety on the Info tab; on failure it is left out rather
+    // than claiming the athlete has no linked account.
+    getList<DiscordUserItem>('/api/discord/users')
+      .then((users) => {
         if (!cancelled) {
           setDiscordUsernames(users.filter((u) => u.athleteId === id).map((u) => u.username))
         }
       })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) setDiscordUsernames([]) })
     return () => {
       cancelled = true
     }
@@ -167,6 +191,9 @@ export default function AthleteDetail() {
         <Link to="/athletes" className="text-primary underline">Back to athletes</Link>
       </div>
     )
+  }
+  if (!athlete && loadError) {
+    return <LoadError what="this athlete" message={loadError} onRetry={() => setAttempt((n) => n + 1)} />
   }
   if (!athlete) return <div className="text-muted-foreground">Loading...</div>
 
@@ -309,7 +336,9 @@ export default function AthleteDetail() {
                 </div>
               )}
             </div>
-            {programs.length === 0 ? (
+            {programsError ? (
+              <LoadError what="this athlete's programs" message={programsError} onRetry={() => { if (id) void loadPrograms(id) }} />
+            ) : programs.length === 0 ? (
               <Card><CardContent className="py-8 text-center text-muted-foreground">No programs yet.</CardContent></Card>
             ) : programs.map((program) => (
               <div key={program.id} className="group relative">
@@ -384,12 +413,7 @@ export default function AthleteDetail() {
           onOpenChange={setImportOpen}
           defaultAthleteId={id}
           onCreated={(programId) => navigate(`/programs/${programId}`)}
-          onImported={() => {
-            fetch(`/api/programs?athlete_id=${id}`)
-              .then((r) => (r.ok ? r.json() : []))
-              .then((data) => setPrograms(Array.isArray(data) ? data : []))
-              .catch(() => {})
-          }}
+          onImported={() => { if (id) void loadPrograms(id) }}
         />
       )}
       <DeleteAthleteDialog

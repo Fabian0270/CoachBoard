@@ -27,14 +27,17 @@ import {
   DAY_LABELS,
   weeksBetween,
   dayName,
+  type Program,
 } from '../lib/programUtils'
+import { errorMessage, getJson } from '../lib/api'
+import LoadError from '../components/LoadError'
 
 export default function ProgramDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const toast = useToast()
   const confirm = useConfirm()
-  const { program, setProgram, notFound } = useProgramData(id)
+  const { program, setProgram, notFound, loadError, reload } = useProgramData(id)
   const [setupForm, setSetupForm] = useState({ start_date: '', weeks: '4' })
   const [savingDuration, setSavingDuration] = useState(false)
   const [openDate, setOpenDate] = useState<string | null>(null)
@@ -142,10 +145,15 @@ export default function ProgramDetail() {
       .map((row) => ({ date: row.days[colIndex].date, weekIndex: row.weekIndex }))
   }, [grid, openDate])
 
+  // A failed reload used to put a 500's error object in place of the program.
+  // Now the page keeps what it had and says the view may be out of date.
   const reloadProgram = async () => {
     if (!id) return
-    const data = await fetch(`/api/programs/${id}`).then((r) => r.json()).catch(() => null)
-    if (data) setProgram(data)
+    try {
+      setProgram(await getJson<Program>(`/api/programs/${encodeURIComponent(id)}`))
+    } catch (err) {
+      toast.error(`The change was saved, but the program could not be refreshed. ${errorMessage(err)}`)
+    }
   }
 
   const handleDayDrop = async (targetDate: string) => {
@@ -234,6 +242,7 @@ export default function ProgramDetail() {
       </div>
     )
   }
+  if (!program && loadError) return <LoadError what="this program" message={loadError} onRetry={reload} />
   if (!program) return <div className="text-muted-foreground">Loading...</div>
 
   const openWorkout = openDate ? workoutByDate.get(openDate) ?? null : null
@@ -609,12 +618,7 @@ export default function ProgramDetail() {
           open={importOpen}
           onOpenChange={setImportOpen}
           programId={program.id}
-          onImported={() => {
-            fetch(`/api/programs/${program.id}`)
-              .then((r) => r.json())
-              .then((data) => setProgram(data))
-              .catch(() => {})
-          }}
+          onImported={() => { void reloadProgram() }}
         />
       )}
 

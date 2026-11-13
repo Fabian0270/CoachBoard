@@ -17,6 +17,8 @@ import type { ProgramReport } from 'coachboard-shared'
 import type { Program } from '../lib/programUtils'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import { useToast } from '../components/ui/toast'
+import LoadError from '../components/LoadError'
+import { ApiError, errorMessage, getJson } from '../lib/api'
 
 const LIFT_COLORS: Record<string, string> = {
   squat: '#6366f1',
@@ -47,20 +49,35 @@ export default function ProgramReport() {
   const [updatedMax, setUpdatedMax] = useState<Set<string>>(new Set())
   const [suggestOpen, setSuggestOpen] = useState(false)
 
+  const [attempt, setAttempt] = useState(0)
+  const [notFound, setNotFound] = useState(false)
+
+  // A 500 used to be stored as the report and crash the page on the first
+  // field it read; a 404 did the same.
   useEffect(() => {
     if (!id) return
+    let cancelled = false
     setLoading(true)
+    setError(null)
+    setNotFound(false)
+    const pid = encodeURIComponent(id)
     Promise.all([
-      fetch(`/api/programs/${id}/report`).then((r) => r.json()),
-      fetch(`/api/programs/${id}`).then((r) => r.json()),
+      getJson<ProgramReport>(`/api/programs/${pid}/report`),
+      getJson<Program>(`/api/programs/${pid}`),
     ])
       .then(([rep, prog]) => {
+        if (cancelled) return
         setReport(rep)
         setProgram(prog)
       })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false))
-  }, [id])
+      .catch((e) => {
+        if (cancelled) return
+        if (e instanceof ApiError && e.status === 404) setNotFound(true)
+        else setError(errorMessage(e))
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [id, attempt])
 
   const handleUpdateMax = async (liftKey: string, displayName: string, e1rm: number) => {
     if (!report?.athleteId) return
@@ -93,8 +110,8 @@ export default function ProgramReport() {
   }
 
   if (loading) return <div className="text-muted-foreground">Loading report...</div>
-  if (error) return <div className="text-destructive">Failed to load report: {error}</div>
-  if (!report || !program) return <div className="text-muted-foreground">Report not found.</div>
+  if (error) return <LoadError what="the report" message={error} onRetry={() => setAttempt((n) => n + 1)} />
+  if (notFound || !report || !program) return <div className="text-muted-foreground">Report not found.</div>
 
   const hasData = report.exercisesCompleted > 0
   const completionPct = Math.round(report.completionRate * 100)

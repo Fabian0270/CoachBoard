@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { PaymentAlert } from 'coachboard-shared'
-import { getList, errorMessage } from '../lib/api'
+import { getJson, getList, errorMessage } from '../lib/api'
 import LoadError from '../components/LoadError'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -53,10 +53,13 @@ export default function Dashboard() {
       setStorage(null)
       return
     }
-    fetch('/api/discord/media/storage')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((s) => setStorage(s))
-      .catch(() => {})
+    // The storage tile is extra detail. On failure it is hidden; showing 0 B
+    // would claim the media folder is empty.
+    let cancelled = false
+    getJson<{ bytes: number; files: number }>('/api/discord/media/storage')
+      .then((s) => { if (!cancelled) setStorage(s) })
+      .catch(() => { if (!cancelled) setStorage(null) })
+    return () => { cancelled = true }
   }, [discordConfigured])
 
   return (

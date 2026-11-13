@@ -8,6 +8,7 @@ import { Textarea } from './ui/textarea'
 import { useToast } from './ui/toast'
 import { Send, AlertTriangle, Eye, EyeOff } from 'lucide-react'
 import ExcelPreview from './ExcelPreview'
+import { errorMessage, getJson } from '../lib/api'
 
 interface Props {
   programId: string
@@ -27,6 +28,7 @@ export default function SendProgramDialog({ programId, programName, athleteId, o
   const [body, setBody] = useState('')
   const [sending, setSending] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -39,19 +41,24 @@ export default function SendProgramDialog({ programId, programName, athleteId, o
         `Fill in the Load Used and Last Set RPE columns as you train, then send it back to me.\n\nThanks!`,
     )
 
-    const settingsP = fetch('/api/settings/email')
-      .then((r) => r.json())
+    setLoadError(null)
+    // A failed settings read used to say "Email isn't set up yet", sending a
+    // coach whose email works off to Settings to redo it.
+    const settingsP = getJson<{ configured?: boolean }>('/api/settings/email')
       .then((s) => setConfigured(!!s?.configured))
-      .catch(() => setConfigured(false))
+      .catch((err) => {
+        setConfigured(false)
+        setLoadError(`Could not check your email settings. ${errorMessage(err)}`)
+      })
 
     const athleteP = athleteId
-      ? fetch(`/api/athletes/${athleteId}`)
-          .then((r) => (r.ok ? r.json() : null))
+      ? getJson<{ email?: string | null }>(`/api/athletes/${athleteId}`)
           .then((a) => {
             const email = a?.email?.trim() ?? ''
             setTo(email)
             setAthleteMissingEmail(!email)
           })
+          // The address can still be typed in, so this is not worth blocking on.
           .catch(() => { setTo(''); setAthleteMissingEmail(true) })
       : Promise.resolve(setAthleteMissingEmail(true))
 
@@ -96,6 +103,8 @@ export default function SendProgramDialog({ programId, programName, athleteId, o
 
         {loadingMeta ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : loadError ? (
+          <p className="text-sm text-destructive">{loadError}</p>
         ) : !configured ? (
           <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />

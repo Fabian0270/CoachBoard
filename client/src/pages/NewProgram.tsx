@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { useToast } from '../components/ui/toast'
 import { ArrowLeft } from 'lucide-react'
 import TemplatePicker from '../components/TemplatePicker'
+import { errorMessage, getList } from '../lib/api'
 
 interface Athlete { id: string; name: string }
 interface ExportStyle { id: string; name: string }
@@ -35,15 +36,15 @@ export default function NewProgram() {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    fetch('/api/athletes')
-      .then((r) => r.json())
-      .then((data) => setAthletes(Array.isArray(data) ? data : []))
-      .catch(() => {})
-    fetch('/api/export-styles')
-      .then((r) => r.json())
-      .then((data) => setStyles(Array.isArray(data) ? data : []))
-      .catch(() => {})
-  }, [])
+    // Both used to fail silently: an empty athlete picker with no reason, and
+    // the saved-styles option simply missing.
+    getList<Athlete>('/api/athletes')
+      .then(setAthletes)
+      .catch((err) => toast.error(`Could not load your athletes. ${errorMessage(err)}`))
+    getList<ExportStyle>('/api/export-styles')
+      .then(setStyles)
+      .catch((err) => toast.error(`Could not load your saved Excel styles. ${errorMessage(err)}`))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

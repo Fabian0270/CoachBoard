@@ -3,6 +3,7 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { blockedReason, deliveryFitness } from './recorder.core'
+import { errorMessage, getList } from '../../lib/api'
 
 // ---------------------------------------------------------------------------
 // Sending a finished recording to an athlete, by DM or by email.
@@ -39,10 +40,14 @@ export default function SendPanel({ recordingId, bytes, channel, onSent, onCance
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/athletes')
-      .then((res) => res.json())
+    // A 500 used to be stored as the athlete list (an object), and an
+    // unreachable server looked like having no athletes.
+    getList<Athlete>('/api/athletes')
       .then(setAthletes)
-      .catch(() => setAthletes([]))
+      .catch((err) => {
+        setAthletes([])
+        setError(`Could not load your athletes. ${errorMessage(err)}`)
+      })
   }, [])
 
   // Picking an athlete fills the address in, the way SendProgramDialog does.

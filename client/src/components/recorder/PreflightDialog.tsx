@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, CameraOff, Mic, MicOff, Monitor, Volume2, VolumeX } from 'lucide-react'
 import { Button } from '../ui/button'
 import type { RecorderOptions } from './useRecorderEngine'
+import { errorMessage, getList } from '../../lib/api'
 
 // ---------------------------------------------------------------------------
 // The "check yourself before you go live" step, in the shape people already
@@ -27,6 +28,7 @@ interface Props {
 
 export default function PreflightDialog({ onStart, onCancel }: Props) {
   const [sources, setSources] = useState<CaptureSource[] | null>(null)
+  const [sourcesError, setSourcesError] = useState<string | null>(null)
   const [sourceId, setSourceId] = useState<string | null>(null)
   const [camera, setCamera] = useState(true)
   const [microphone, setMicrophone] = useState(true)
@@ -41,14 +43,18 @@ export default function PreflightDialog({ onStart, onCancel }: Props) {
   const rafRef = useRef<number | null>(null)
 
   useEffect(() => {
-    fetch('/api/recorder/sources')
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Could not list sources'))))
-      .then((list: CaptureSource[]) => {
+    getList<CaptureSource>('/api/recorder/sources')
+      .then((list) => {
         setSources(list)
         // CoachBoard is first and is the common case, so it is preselected.
         setSourceId(list[0]?.id ?? null)
       })
-      .catch(() => setSources([]))
+      // A failure used to read as "only available in the desktop app", inside
+      // the desktop app.
+      .catch((err) => {
+        setSources([])
+        setSourcesError(`Could not list the windows to record. ${errorMessage(err)}`)
+      })
   }, [])
 
   const stopPreview = useCallback(() => {
@@ -159,7 +165,7 @@ export default function PreflightDialog({ onStart, onCancel }: Props) {
           <p className="mt-2 text-sm text-muted-foreground">Looking for windows…</p>
         ) : sources.length === 0 ? (
           <p className="mt-2 text-sm text-destructive">
-            Screen recording is only available in the desktop app.
+            {sourcesError ?? 'Screen recording is only available in the desktop app.'}
           </p>
         ) : (
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">

@@ -5,6 +5,8 @@ import { Input } from '../components/ui/input'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
 import { Palette, Pencil, Trash2, Check, X } from 'lucide-react'
+import { errorMessage, getList } from '../lib/api'
+import LoadError from '../components/LoadError'
 
 interface ExportStyle {
   id: string
@@ -21,12 +23,16 @@ export default function ExportStyles() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
 
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  // A failure used to show "No saved styles yet", which reads as the styles
+  // being gone.
   const load = () => {
     setLoading(true)
-    fetch('/api/export-styles')
-      .then((r) => r.json())
-      .then((data) => setStyles(Array.isArray(data) ? data : []))
-      .catch(() => setStyles([]))
+    setLoadError(null)
+    getList<ExportStyle>('/api/export-styles')
+      .then(setStyles)
+      .catch((err) => setLoadError(errorMessage(err)))
       .finally(() => setLoading(false))
   }
   useEffect(load, [])
@@ -71,6 +77,8 @@ export default function ExportStyles() {
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : loadError ? (
+        <LoadError what="your saved styles" message={loadError} onRetry={load} />
       ) : styles.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground">

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { SelectableAthlete, SelectableProgram, Step } from '../types'
+import { errorMessage, getList } from '../../../lib/api'
 
 // Owns the athlete + program lists used by the target-athlete step and the
 // "base on a source program" step (including the cross-athlete source picker),
@@ -24,10 +25,11 @@ export function useSourceSelection(params: {
     if (!open || (step !== 'athlete' && !pickingSourceAthlete) || sourceAthletes !== null) return
     setSourcesLoading(true)
     setSourcesError(null)
-    fetch('/api/athletes')
-      .then((r) => r.json())
-      .then((data) => setSourceAthletes(Array.isArray(data) ? data : []))
-      .catch(() => setSourcesError('Failed to load athletes'))
+    // A 500 used to come back as an error object, become an empty list, and
+    // show "no athletes" with no error.
+    getList<SelectableAthlete>('/api/athletes')
+      .then(setSourceAthletes)
+      .catch((err) => setSourcesError(`Failed to load athletes. ${errorMessage(err)}`))
       .finally(() => setSourcesLoading(false))
   }, [open, step, pickingSourceAthlete, sourceAthletes])
 
@@ -37,13 +39,11 @@ export function useSourceSelection(params: {
     if (!open || step !== 'source' || pickingSourceAthlete || sourcePrograms !== null || !eid) return
     setSourcesLoading(true)
     setSourcesError(null)
-    fetch(`/api/programs?athlete_id=${eid}`)
-      .then((r) => r.json())
-      .then((data) => {
-        const all = Array.isArray(data) ? (data as SelectableProgram[]) : []
+    getList<SelectableProgram>(`/api/programs?athlete_id=${encodeURIComponent(eid)}`)
+      .then((all) => {
         setSourcePrograms(all.filter((p) => p.status === 'completed' || p.status === 'archived'))
       })
-      .catch(() => setSourcesError('Failed to load programs'))
+      .catch((err) => setSourcesError(`Failed to load programs. ${errorMessage(err)}`))
       .finally(() => setSourcesLoading(false))
   }, [open, step, sourcePrograms, athleteId, pickedAthleteId, sourceAthleteId, pickingSourceAthlete])
 

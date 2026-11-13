@@ -7,6 +7,7 @@ import {
 import { useToast } from '../ui/toast'
 import type { Athlete } from 'coachboard-shared'
 import type { DiscordUserItem } from 'coachboard-shared/discord'
+import { errorMessage, getList } from '../../lib/api'
 
 /**
  * Link a Discord user to an athlete. Linking retro-files ALL of the user's
@@ -30,16 +31,19 @@ export default function LinkUserDialog({
     if (!user) return
     setAthleteId(user.athleteId ?? '')
     let cancelled = false
-    fetch('/api/athletes')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((rows: Athlete[]) => {
+    // A failure used to leave the picker empty, with no athlete to choose and
+    // no explanation.
+    getList<Athlete>('/api/athletes')
+      .then((rows) => {
         if (!cancelled) setAthletes(rows.filter((a) => !a.archived))
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (!cancelled) toast.error(`Could not load your athletes. ${errorMessage(err)}`)
+      })
     return () => {
       cancelled = true
     }
-  }, [user])
+  }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const link = async () => {
     if (!user || !athleteId) return
