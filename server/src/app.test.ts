@@ -377,3 +377,28 @@ describe('static fallthrough', () => {
     expect(await res.text()).toContain('app shell')
   })
 })
+
+describe('program responses', () => {
+  it('never carry the stored original workbook, only whether there is one', async () => {
+    const { getDb } = await import('./db.js')
+    const { body: athlete } = await post('/api/athletes', { name: 'Blob Owner' })
+    const { body: program } = await post('/api/programs', { athlete_id: athlete.id, name: 'Imported Style' })
+    await getDb()
+      .updateTable('programs')
+      .set({ export_template_xlsx: 'A'.repeat(100_000) })
+      .where('id', '=', program.id)
+      .execute()
+
+    const list = await json('/api/programs')
+    const listed = list.body.find((p: { id: string }) => p.id === program.id)
+    expect(listed).not.toHaveProperty('export_template_xlsx')
+    expect(listed.has_export_template).toBe(true)
+
+    const one = await json(`/api/programs/${program.id}`)
+    expect(one.body).not.toHaveProperty('export_template_xlsx')
+    expect(one.body.has_export_template).toBe(true)
+
+    const updated = await put(`/api/programs/${program.id}`, { name: 'Renamed' })
+    expect(updated.body).not.toHaveProperty('export_template_xlsx')
+  })
+})

@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid'
+import { sql } from 'kysely'
 import { getDb } from '../db.js'
 import { serializeEnabledColumns, withParsedColumns } from './program/columns.js'
 
@@ -34,11 +35,38 @@ function mondayOf(date: Date): Date {
 // Programs
 // ---------------------------------------------------------------------------
 
+/**
+ * Every program, WITHOUT the stored original Excel file.
+ *
+ * export_template_xlsx is the coach's whole imported workbook as base64, and
+ * it is copied into every program and draft derived from that import — the
+ * list used to read and send all of them, megabytes each, to a client that
+ * never looks at it. A flag says whether one exists.
+ */
 export async function findAllPrograms(athleteId?: string) {
-  let query = getDb().selectFrom('programs').selectAll()
+  let query = getDb()
+    .selectFrom('programs')
+    .select([
+      'id', 'athlete_id', 'name', 'description', 'start_date', 'end_date', 'status',
+      'created_at', 'updated_at', 'enabled_columns', 'focus', 'export_layout',
+      'builtin_template', 'bookmarked',
+    ])
+    .select(sql<number>`export_template_xlsx IS NOT NULL`.as('has_export_template'))
   if (athleteId) query = query.where('athlete_id', '=', athleteId)
   const rows = await query.orderBy('created_at', 'desc').execute()
-  return rows.map(withParsedColumns)
+  return rows.map((r) => ({ ...withParsedColumns(r), has_export_template: r.has_export_template === 1 }))
+}
+
+/**
+ * A program as it goes over HTTP: the stored workbook replaced by a flag. The
+ * services keep the blob — the export and draft generation need it — but no
+ * response has a use for it.
+ */
+export function withoutTemplateBlob<T extends { export_template_xlsx?: string | null }>(
+  program: T,
+): Omit<T, 'export_template_xlsx'> & { has_export_template: boolean } {
+  const { export_template_xlsx, ...rest } = program
+  return { ...rest, has_export_template: !!export_template_xlsx }
 }
 
 export async function findProgramById(id: string) {

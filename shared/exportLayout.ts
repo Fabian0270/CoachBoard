@@ -222,12 +222,40 @@ export function dayLabelFor(
 export function parseExportLayout(raw: string | null | undefined): ExportLayoutTemplate | null {
   if (!raw) return null
   try {
-    const parsed = JSON.parse(raw) as ExportLayoutTemplate
-    if (parsed && parsed.version === 1 && parsed.orientation && Array.isArray(parsed.columns)) {
-      return parsed
-    }
+    const parsed = JSON.parse(raw) as unknown
+    return isExportLayout(parsed) ? parsed : null
   } catch { /* fall through */ }
   return null
+}
+
+const ORIENTATIONS = new Set(['horizontal', 'vertical', 'block-grid', 'week-grid'])
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * Every field the renderer reads, checked before it reads it.
+ *
+ * Only version, orientation and `columns` being an array used to be checked,
+ * so a stored layout missing `colors`, `fonts` or `dayLabels` — or with a
+ * column whose key the renderer does not know — passed, and then threw inside
+ * the export ("Cannot read properties of undefined"). One damaged row made that
+ * program impossible to export at all. An invalid layout now reads as no
+ * layout, which falls back to the built-in look.
+ */
+function isExportLayout(v: unknown): v is ExportLayoutTemplate {
+  if (!isObject(v) || v.version !== 1) return false
+  if (typeof v.orientation !== 'string' || !ORIENTATIONS.has(v.orientation)) return false
+  if (!Array.isArray(v.columns)) return false
+  for (const c of v.columns) {
+    if (!isObject(c) || typeof c.key !== 'string' || !(c.key in COLUMN_LABELS)) return false
+    if (typeof c.label !== 'string') return false
+  }
+  if (!isObject(v.dayLabels)) return false
+  if (!['weekday', 'dayN', 'split'].includes(v.dayLabels.style as string)) return false
+  if (v.dayLabels.language !== 'en' && v.dayLabels.language !== 'sv') return false
+  if (v.dayLabels.custom !== undefined && !Array.isArray(v.dayLabels.custom)) return false
+  if (v.rpeNotation !== 'plain' && v.rpeNotation !== 'at') return false
+  if (!isObject(v.colors) || !isObject(v.fonts)) return false
+  return true
 }
 
 // ---------------------------------------------------------------------------
