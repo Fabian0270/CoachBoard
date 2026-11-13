@@ -6,6 +6,7 @@ import { openSqlite } from './sqlite.js'
 import { applyPendingRestore, rollBackFailedRestore } from './services/pendingRestore.js'
 import { clearPendingSettings } from './services/pendingSettingsRestore.js'
 import { migrateTemplateBlobs, pruneOrphanTemplates } from './templateBlobMigration.js'
+import { log } from './lib/logger.js'
 
 export interface AthleteTable {
   id: string
@@ -363,7 +364,7 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   // file — SQLite holds it open for the whole session, so this is the only safe
   // moment to replace it.
   const restored = applyPendingRestore(dbPath)
-  if (restored) console.log('Applied a staged database restore')
+  if (restored) log('Applied a staged database restore')
 
   try {
     await openAndMigrate(dbPath, restored)
@@ -375,7 +376,7 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
     await closeQuietly()
     const failure = rollBackFailedRestore(dbPath, err)
     clearPendingSettings(dbPath)
-    console.log(
+    log(
       `Restored database could not be used (${failure.message}); ` +
         (failure.previousKept ? 'the previous database was put back' : 'starting with an empty one'),
     )
@@ -535,7 +536,7 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   `.execute(_db)
   const templates = migrateTemplateBlobs(_sqlite!)
   if (templates.dropped) {
-    console.log(`Moved ${templates.moved} stored Excel template(s) into shared storage`)
+    log(`Moved ${templates.moved} stored Excel template(s) into shared storage`)
   }
 
   // Databases created before the "keep programs on athlete delete" feature made
@@ -892,7 +893,7 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
     try {
       _sqlite!.exec('VACUUM')
     } catch (err) {
-      console.log(`Could not compact the database after moving templates: ${String(err)}`)
+      log(`Could not compact the database after moving templates: ${String(err)}`)
     }
   }
 }

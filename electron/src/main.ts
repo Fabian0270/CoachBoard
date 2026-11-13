@@ -51,6 +51,8 @@ let serverPort = SERVER_PORT
 interface ServerBundle {
   initializeDatabase(dbPath: string): Promise<void>
   createApp(staticDir: string, logPath: string): RequestListener
+  /** Points the server's logger at the log file. Must run before initializeDatabase. */
+  configureLogger?(path: string): void
   configureSecureStore(opts: { safeStorage: unknown; userDataDir: string }): void
   configureSystem?(opts: { shell: unknown }): void
   configureCapture?(opts: { desktopCapturer: unknown; ownSourceIds?: () => string[] }): void
@@ -159,6 +161,10 @@ async function startServer(): Promise<void> {
 
   const bundle = (await import(bundlePath as string)) as ServerBundle
   serverBundle = bundle
+  // Before the database opens: migrations and restores log during
+  // initializeDatabase, and until now that went to a console a packaged app
+  // does not have — the log file only got connected later, in createApp.
+  bundle.configureLogger?.(logPath)
   log('Bundle loaded, initializing database...')
 
   await bundle.initializeDatabase(dbPath)

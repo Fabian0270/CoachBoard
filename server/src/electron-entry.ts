@@ -1,5 +1,6 @@
 export { initializeDatabase, getDb } from './db.js'
 export { createApp } from './app.js'
+export { configureLogger } from './lib/logger.js'
 export { configureSecureStore } from './services/secureStore.js'
 export { configureSystem } from './services/systemService.js'
 export { configureCapture, resolvePendingSource } from './services/captureService.js'
