@@ -4,7 +4,12 @@ import path from 'path'
 import JSZip from 'jszip'
 import { openSqlite } from '../sqlite.js'
 import { getDatabasePath, getSqlite } from '../db.js'
-import { pendingRestorePath } from './pendingRestore.js'
+import {
+  clearRestoreFailure,
+  pendingRestorePath,
+  readRestoreFailure,
+  type RestoreFailure,
+} from './pendingRestore.js'
 import {
   SETTINGS_FILES,
   clearPendingSettings,
@@ -165,6 +170,10 @@ export interface BackupInfo {
   backupCount: number
   latestBackup: string | null
   restorePending: boolean
+  /** The last restore replaced a database that can still be brought back. */
+  canUndoRestore: boolean
+  /** Set when a restored database could not be used and was rolled back. */
+  restoreFailure: RestoreFailure | null
 }
 
 export function backupInfo(): BackupInfo {
@@ -185,6 +194,8 @@ export function backupInfo(): BackupInfo {
     restorePending:
       backupsPossible() &&
       (fs.existsSync(pendingRestorePath(dbPath)) || hasPendingSettings(dbPath)),
+    canUndoRestore: backupsPossible() && fs.existsSync(`${dbPath}.replaced`),
+    restoreFailure: backupsPossible() ? readRestoreFailure(dbPath) : null,
   }
 }
 
@@ -212,6 +223,14 @@ export function validateDatabaseBuffer(buf: Buffer): string | null {
         if (!names.has(required)) {
           return `That database is missing the "${required}" table, so it is not a CoachBoard backup.`
         }
+      }
+      // The header and table list only prove the file STARTS like a CoachBoard
+      // database. Damage in its data pages passed both — measured in the audit,
+      // a file with its back 40% overwritten was accepted — and the app then
+      // opened fine and failed every list. quick_check reads every page.
+      const check = probe.prepare('PRAGMA quick_check').all() as { quick_check: string }[]
+      if (check[0]?.quick_check !== 'ok') {
+        return 'That backup is damaged — parts of it cannot be read — so it was not used. Try an older backup.'
       }
     } finally {
       probe.close()
@@ -306,11 +325,54 @@ export async function stageRestore(buf: Buffer): Promise<StagedRestore> {
   }
 
   fs.writeFileSync(pendingRestorePath(dbPath), database)
+  // A new restore supersedes the note about an earlier one that failed.
+  clearRestoreFailure(dbPath)
   log(
     `Restore staged; will be applied on next launch` +
       (staged.length ? ` (with ${staged.join(', ')})` : ' (database only)'),
   )
   return { settings: staged }
+}
+
+/**
+ * Stage the database the last restore replaced, to come back at next launch.
+ *
+ * Every restore keeps the outgoing database as `<db>.replaced` and the outgoing
+ * settings files as `<name>.replaced`, but there was no way back to them short
+ * of renaming files by hand. Undo stages them through the same two-step path a
+ * restore uses, so undoing an undo works too.
+ *
+ * A settings file the coach did not have before the restore stays as restored:
+ * there is nothing to put back for it.
+ */
+export function stageUndoRestore(): StagedRestore {
+  if (!backupsPossible()) throw new RestoreError('Restore is not available in this environment.')
+  const dbPath = getDatabasePath()
+  const previous = `${dbPath}.replaced`
+  if (!fs.existsSync(previous)) {
+    throw new RestoreError('There is no earlier database to go back to.')
+  }
+  const buf = fs.readFileSync(previous)
+  const reason = validateDatabaseBuffer(buf)
+  if (reason) throw new RestoreError(`The earlier database cannot be used: ${reason}`)
+
+  clearPendingSettings(dbPath)
+  const staged: string[] = []
+  for (const { name } of SETTINGS_FILES) {
+    const kept = path.join(userDataDir(), `${name}.replaced`)
+    if (!fs.existsSync(kept)) continue
+    stageSettingsFile(dbPath, name, fs.readFileSync(kept))
+    staged.push(name)
+  }
+  fs.writeFileSync(pendingRestorePath(dbPath), buf)
+  clearRestoreFailure(dbPath)
+  log(`Undo of the last restore staged; will be applied on next launch`)
+  return { settings: staged }
+}
+
+/** Dismiss the Settings notice about a restore that was rolled back. */
+export function dismissRestoreFailure(): void {
+  if (backupsPossible()) clearRestoreFailure(getDatabasePath())
 }
 
 /** Let the coach change their mind before restarting. */

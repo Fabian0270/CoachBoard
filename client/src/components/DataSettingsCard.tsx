@@ -4,7 +4,7 @@ import { Button } from './ui/button'
 import { useToast } from './ui/toast'
 import { useConfirm } from './ui/confirm-dialog'
 import { humanBytes } from '../lib/formatBytes'
-import { AlertTriangle, Download, FolderOpen, RotateCcw, Save } from 'lucide-react'
+import { AlertTriangle, Download, FolderOpen, RotateCcw, Save, Undo2 } from 'lucide-react'
 
 interface BackupInfo {
   databasePath: string
@@ -13,6 +13,10 @@ interface BackupInfo {
   backupCount: number
   latestBackup: string | null
   restorePending: boolean
+  /** The last restore replaced a database that can still be brought back. */
+  canUndoRestore?: boolean
+  /** Set when a restored database could not be used and was rolled back. */
+  restoreFailure?: { at: string; message: string; previousKept: boolean } | null
 }
 
 interface SystemPaths {
@@ -31,7 +35,7 @@ export default function DataSettingsCard() {
 
   const [info, setInfo] = useState<BackupInfo | null>(null)
   const [paths, setPaths] = useState<SystemPaths | null>(null)
-  const [busy, setBusy] = useState<'backup' | 'export' | 'restore' | null>(null)
+  const [busy, setBusy] = useState<'backup' | 'export' | 'restore' | 'undo' | null>(null)
 
   const load = async () => {
     try {
@@ -122,6 +126,41 @@ export default function DataSettingsCard() {
     }
   }
 
+  /** Back to the database the last restore replaced — applied on restart, like a restore. */
+  const undoRestore = async () => {
+    const ok = await confirm({
+      title: 'Undo the last restore?',
+      description:
+        'This brings back your athletes, programs, payments and settings as they were just ' +
+        'before you last restored a backup. Anything you changed since that restore is replaced. ' +
+        'Nothing changes until you restart the app.',
+      confirmLabel: 'Undo restore',
+      destructive: true,
+    })
+    if (!ok) return
+    setBusy('undo')
+    try {
+      const res = await fetch('/api/backup/restore/undo', { method: 'POST' })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error ?? 'Could not undo the restore.')
+      toast.success('Undo ready. Close and reopen CoachBoard to apply it.')
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not undo the restore.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const dismissRestoreFailure = async () => {
+    try {
+      await fetch('/api/backup/restore-failed', { method: 'DELETE' })
+      await load()
+    } catch {
+      toast.error('Could not dismiss that notice.')
+    }
+  }
+
   const cancelRestore = async () => {
     try {
       await fetch('/api/backup/restore', { method: 'DELETE' })
@@ -156,6 +195,28 @@ export default function DataSettingsCard() {
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {/* A restored database that could not be opened is rolled back at
+            launch. Said here, because otherwise the coach restores a backup,
+            restarts, and finds their data unchanged with no idea why. */}
+        {info?.restoreFailure && (
+          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+            <div className="space-y-2">
+              <p>
+                Your last restore could not be used ({info.restoreFailure.message}).{' '}
+                {info.restoreFailure.previousKept
+                  ? 'Your previous data was put back, so nothing was lost.'
+                  : 'CoachBoard started with an empty database instead.'}{' '}
+                The file that failed is kept in your data folder as{' '}
+                <span className="font-mono text-xs">coachboard.sqlite.failed-restore</span>.
+              </p>
+              <Button size="sm" variant="outline" onClick={dismissRestoreFailure}>
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        )}
+
         {info?.restorePending && (
           <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -219,6 +280,12 @@ export default function DataSettingsCard() {
             <RotateCcw className="h-4 w-4" />
             {busy === 'restore' ? 'Checking…' : 'Restore from a file'}
           </Button>
+          {info?.canUndoRestore && !info.restorePending && (
+            <Button variant="outline" onClick={undoRestore} disabled={busy !== null}>
+              <Undo2 className="h-4 w-4" />
+              {busy === 'undo' ? 'Checking…' : 'Undo last restore'}
+            </Button>
+          )}
           {paths?.canReveal && (
             <Button variant="outline" onClick={openFolder}>
               <FolderOpen className="h-4 w-4" />

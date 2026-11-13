@@ -3,7 +3,8 @@ import { Kysely, SqliteDialect, sql, type Generated } from 'kysely'
 import { mkdirSync } from 'fs'
 import { dirname } from 'path'
 import { openSqlite } from './sqlite.js'
-import { applyPendingRestore } from './services/pendingRestore.js'
+import { applyPendingRestore, rollBackFailedRestore } from './services/pendingRestore.js'
+import { clearPendingSettings } from './services/pendingSettingsRestore.js'
 
 export interface AthleteTable {
   id: string
@@ -351,11 +352,54 @@ export async function initializeDatabase(dbPath: string): Promise<void> {
   // A restore staged by the coach is swapped in here, before anything opens the
   // file — SQLite holds it open for the whole session, so this is the only safe
   // moment to replace it.
-  if (applyPendingRestore(dbPath)) {
-    console.log('Applied a staged database restore')
-  }
+  const restored = applyPendingRestore(dbPath)
+  if (restored) console.log('Applied a staged database restore')
 
+  try {
+    await openAndMigrate(dbPath, restored)
+  } catch (err) {
+    if (!restored) throw err
+    // The incoming file is unusable. Put the previous database back and start
+    // on that — see rollBackFailedRestore. The settings half of the restore is
+    // dropped with it: half a restore is not what the coach asked for.
+    await closeQuietly()
+    const failure = rollBackFailedRestore(dbPath, err)
+    clearPendingSettings(dbPath)
+    console.log(
+      `Restored database could not be used (${failure.message}); ` +
+        (failure.previousKept ? 'the previous database was put back' : 'starting with an empty one'),
+    )
+    await openAndMigrate(dbPath, false)
+  }
+}
+
+async function closeQuietly(): Promise<void> {
+  try {
+    await _db?.destroy()
+  } catch {
+    /* already closed */
+  }
+  try {
+    if (_sqlite?.open) _sqlite.close()
+  } catch {
+    /* already closed */
+  }
+  _db = null
+  _sqlite = null
+}
+
+async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   _sqlite = openSqlite(dbPath)
+
+  // A freshly restored file is checked before anything is built on it. A file
+  // damaged in its data pages OPENS fine and fails only when a page is read —
+  // which, unchecked, was an app that started and then failed every list.
+  if (verify) {
+    const rows = _sqlite.prepare('PRAGMA quick_check').all() as { quick_check: string }[]
+    if (rows[0]?.quick_check !== 'ok') {
+      throw new Error(`the restored database is damaged (${rows[0]?.quick_check ?? 'no result'})`)
+    }
+  }
   _dbPath = dbPath
 
   const dialect = new SqliteDialect({

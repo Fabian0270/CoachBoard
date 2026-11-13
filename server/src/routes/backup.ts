@@ -4,9 +4,11 @@ import {
   RestoreError,
   backupInfo,
   cancelPendingRestore,
+  dismissRestoreFailure,
   exportToBuffer,
   runStartupBackup,
   stageRestore,
+  stageUndoRestore,
 } from '../services/backupService.js'
 
 const router = Router()
@@ -77,6 +79,31 @@ router.post(
     }
   },
 )
+
+// POST /api/backup/restore/undo — go back to the database the last restore
+// replaced. Applied at next launch, exactly like a restore.
+router.post('/restore/undo', (_req: Request, res: Response): void => {
+  try {
+    const staged = stageUndoRestore()
+    res.json({ restartRequired: true, settings: staged.settings })
+  } catch (err) {
+    if (err instanceof RestoreError) {
+      res.status(400).json({ error: err.message })
+      return
+    }
+    fail(res, 'Failed to stage the undo', err)
+  }
+})
+
+// DELETE /api/backup/restore-failed — dismiss the notice about a rolled-back restore.
+router.delete('/restore-failed', (_req: Request, res: Response): void => {
+  try {
+    dismissRestoreFailure()
+    res.status(204).end()
+  } catch (err) {
+    fail(res, 'Failed to dismiss the notice', err)
+  }
+})
 
 // DELETE /api/backup/restore — change your mind before restarting.
 router.delete('/restore', (_req: Request, res: Response): void => {

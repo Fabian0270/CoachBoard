@@ -99,7 +99,11 @@ export function applyPendingSettingsRestore(dbPath: string): SettingsRestoreResu
       const parsed = JSON.parse(fs.readFileSync(staged, 'utf8')) as Record<string, unknown>
       if (resolveSecret(parsed, secretKey)) result.secretsDropped.push(name)
       fs.mkdirSync(userDataDir(), { recursive: true })
-      fs.writeFileSync(path.join(userDataDir(), name), JSON.stringify(parsed, null, 2), 'utf8')
+      const live = path.join(userDataDir(), name)
+      // Kept, the same way the database keeps `.replaced`, so "Undo last
+      // restore" can bring back the settings too — not only the athletes.
+      if (fs.existsSync(live)) fs.copyFileSync(live, `${live}.replaced`)
+      fs.writeFileSync(live, JSON.stringify(parsed, null, 2), 'utf8')
       result.restored.push(name)
     } catch (err) {
       // A corrupt settings file must never stop the app from starting; the coach
