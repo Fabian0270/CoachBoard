@@ -162,3 +162,28 @@ describe('POST /api/backup/restore', () => {
     expect(res.status).toBe(400)
   })
 })
+
+describe('GET /api/system/storage', () => {
+  it('breaks the data folder down by what takes the space', async () => {
+    const { storeTemplate } = await import('../services/templateBlobStore.js')
+    const { runStartupBackup } = await import('../services/backupService.js')
+    const { sql } = await import('kysely')
+
+    await storeTemplate(Buffer.alloc(5_000, 1).toString('base64'))
+    await sql`INSERT INTO video_analyses (id, track, video_path, video_bytes) VALUES ('va1', '[]', 'va1.mp4', 1234567)`.execute(getDb())
+    await sql`INSERT INTO video_analyses (id, track, video_path, video_bytes) VALUES ('va2', '[]', NULL, NULL)`.execute(getDb())
+    await runStartupBackup()
+
+    const { status, body } = await json('/api/system/storage')
+    expect(status).toBe(200)
+    expect(body.database.bytes).toBeGreaterThan(0)
+    // Imported workbooks are counted, and they are part of the database file.
+    expect(body.excelTemplates).toEqual({ bytes: 5_000, files: 1 })
+    // Only analyses that kept their clip.
+    expect(body.analysisVideos).toEqual({ bytes: 1234567, files: 1 })
+    expect(body.backups.files).toBe(1)
+    expect(body.backups.bytes).toBeGreaterThan(0)
+    expect(body.discordMedia).toEqual({ bytes: 0, files: 0 })
+    expect(body.totalBytes).toBe(body.database.bytes + body.backups.bytes + body.analysisVideos.bytes)
+  })
+})

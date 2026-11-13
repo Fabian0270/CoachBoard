@@ -4,6 +4,7 @@ import { validate } from '../validation.js'
 import { fail } from '../lib/httpError.js'
 import { canReveal, dataDir, databasePath, logFilePath, reveal } from '../services/systemService.js'
 import { getUpdateState, installUpdate } from '../services/updateService.js'
+import { getStorageBreakdown } from '../services/storageService.js'
 
 const router = Router()
 
@@ -20,6 +21,15 @@ router.get('/paths', (_req: Request, res: Response): void => {
     })
   } catch (err) {
     fail(res, 'Failed to read system paths', err)
+  }
+})
+
+// GET /api/system/storage — how much space each kind of data takes.
+router.get('/storage', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    res.json(await getStorageBreakdown())
+  } catch (err) {
+    fail(res, 'Failed to read storage use', err)
   }
 })
 

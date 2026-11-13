@@ -4,6 +4,7 @@ import { Button } from './ui/button'
 import { useToast } from './ui/toast'
 import { useConfirm } from './ui/confirm-dialog'
 import { humanBytes } from '../lib/formatBytes'
+import { getJson } from '../lib/api'
 import { AlertTriangle, Download, FolderOpen, RotateCcw, Save, Undo2 } from 'lucide-react'
 
 interface BackupInfo {
@@ -24,6 +25,54 @@ interface SystemPaths {
   canReveal: boolean
 }
 
+interface StorageItem { bytes: number; files: number }
+interface StorageBreakdown {
+  database: StorageItem
+  excelTemplates: StorageItem
+  backups: StorageItem
+  discordMedia: StorageItem
+  analysisVideos: StorageItem
+  totalBytes: number
+}
+
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+/**
+ * Where the disk space goes. The only figure the app used to show was Discord
+ * media, and only on the Dashboard once Discord was set up — so a data folder
+ * that had grown to gigabytes gave no clue why.
+ */
+function StorageBreakdownList({ storage }: { storage: StorageBreakdown }) {
+  const rows: Array<[string, string]> = [
+    [
+      'Database',
+      humanBytes(storage.database.bytes) +
+        (storage.excelTemplates.files > 0
+          ? ` — including ${count(storage.excelTemplates.files, 'imported Excel file', 'imported Excel files')} (${humanBytes(storage.excelTemplates.bytes)})`
+          : ''),
+    ],
+    ['Backups', `${humanBytes(storage.backups.bytes)} — ${count(storage.backups.files, 'copy', 'copies')}`],
+    ['Discord videos', `${humanBytes(storage.discordMedia.bytes)} — ${count(storage.discordMedia.files, 'file', 'files')}`],
+    ['Bar-path clips', `${humanBytes(storage.analysisVideos.bytes)} — ${count(storage.analysisVideos.files, 'clip', 'clips')}`],
+  ]
+  return (
+    <table className="mt-1 text-xs">
+      <tbody>
+        {rows.map(([label, value]) => (
+          <tr key={label}>
+            <td className="pr-4 text-muted-foreground">{label}</td>
+            <td>{value}</td>
+          </tr>
+        ))}
+        <tr className="font-medium">
+          <td className="pr-4 pt-1">Total</td>
+          <td className="pt-1">{humanBytes(storage.totalBytes)}</td>
+        </tr>
+      </tbody>
+    </table>
+  )
+}
+
 /**
  * "Where is my data and how do I back it up?" — the question every coach asks of
  * a local-first app, which until now had no answer inside the app at all.
@@ -35,6 +84,7 @@ export default function DataSettingsCard() {
 
   const [info, setInfo] = useState<BackupInfo | null>(null)
   const [paths, setPaths] = useState<SystemPaths | null>(null)
+  const [storage, setStorage] = useState<StorageBreakdown | null>(null)
   const [busy, setBusy] = useState<'backup' | 'export' | 'restore' | 'undo' | null>(null)
 
   const load = async () => {
@@ -48,6 +98,7 @@ export default function DataSettingsCard() {
     } catch {
       toast.error('Could not read your data settings.')
     }
+    getJson<StorageBreakdown>('/api/system/storage').then(setStorage, () => setStorage(null))
   }
 
   useEffect(() => {
@@ -238,8 +289,16 @@ export default function DataSettingsCard() {
             <dd className="break-all font-mono text-xs">{paths?.dataDir ?? '—'}</dd>
           </div>
           <div>
-            <dt className="text-muted-foreground">Database size</dt>
-            <dd>{info ? humanBytes(info.databaseBytes) : '—'}</dd>
+            <dt className="text-muted-foreground">Space used</dt>
+            <dd>
+              {storage ? (
+                <StorageBreakdownList storage={storage} />
+              ) : (
+                // The breakdown is extra detail; if it cannot be read, the
+                // database size from the backup status still answers the basics.
+                info ? humanBytes(info.databaseBytes) : '—'
+              )}
+            </dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Automatic backups</dt>

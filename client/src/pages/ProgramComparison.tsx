@@ -8,7 +8,9 @@ import { Badge } from '../components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus, Star } from 'lucide-react'
+import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus, Star, Search } from 'lucide-react'
+import { Input } from '../components/ui/input'
+import { matchesSearch } from '../lib/search'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
@@ -16,7 +18,7 @@ import BookmarkStar from '../components/BookmarkStar'
 import { cn } from '../lib/utils'
 
 interface Athlete { id: string; name: string }
-interface Program { id: string; name: string; status: string; athlete_id: string | null; start_date: string | null; bookmarked?: number }
+interface Program { id: string; name: string; status: string; athlete_id: string | null; start_date: string | null; focus?: string | null; bookmarked?: number }
 
 const STATUSES = ['active', 'completed', 'archived'] as const
 // Sentinel for the athlete filter's "unassigned" option (Select values must be strings).
@@ -32,6 +34,7 @@ export default function ProgramComparison() {
   const [selectedAthlete, setSelectedAthlete] = useState<string>('all')
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
   const [bookmarkedOnly, setBookmarkedOnly] = useState(false)
+  const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -188,6 +191,10 @@ export default function ProgramComparison() {
     }
   }
 
+  const athleteMap = Object.fromEntries(athletes.map((athlete) => [athlete.id, athlete.name]))
+  // Resolve a program's owner label: its athlete, "Unassigned" when detached, or
+  // "Unknown" if the id no longer resolves (shouldn't happen in normal use).
+  const ownerLabel = (p: Program) => (p.athlete_id === null ? 'Unassigned' : athleteMap[p.athlete_id] ?? 'Unknown')
   const filtered = programs
     .filter((p) =>
       selectedAthlete === 'all'
@@ -198,11 +205,11 @@ export default function ProgramComparison() {
     )
     .filter((p) => selectedStatus === 'all' || p.status === selectedStatus)
     .filter((p) => !bookmarkedOnly || p.bookmarked === 1)
-  const athleteMap = Object.fromEntries(athletes.map((athlete) => [athlete.id, athlete.name]))
+    .filter((p) => matchesSearch(query, [p.name, ownerLabel(p), p.focus]))
   const hasUnassigned = programs.some((p) => p.athlete_id === null)
-  // Resolve a program's owner label: its athlete, "Unassigned" when detached, or
-  // "Unknown" if the id no longer resolves (shouldn't happen in normal use).
-  const ownerLabel = (p: Program) => (p.athlete_id === null ? 'Unassigned' : athleteMap[p.athlete_id] ?? 'Unknown')
+  // Programs exist but the search or filters hide them all. Saying "No programs
+  // yet — create one" then would read as the programs being gone.
+  const filteredOut = programs.length > 0 && filtered.length === 0
 
   return (
     <div className="space-y-6">
@@ -236,6 +243,17 @@ export default function ProgramComparison() {
         </div>
       </div>
       <div className="flex gap-3 flex-wrap">
+        <div className="relative w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search programs or athletes"
+            aria-label="Search programs"
+            className="pl-8"
+          />
+        </div>
         {(athletes.length > 0 || hasUnassigned) && (
           <Select value={selectedAthlete} onValueChange={setSelectedAthlete}>
             <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
@@ -267,6 +285,10 @@ export default function ProgramComparison() {
       </div>
       {loadError ? (
         <LoadError what="your programs" message={loadError} onRetry={() => void loadData()} />
+      ) : filteredOut ? (
+        <p className="text-sm text-muted-foreground">
+          No programs match {query.trim() ? `“${query.trim()}” and ` : ''}the filters above.
+        </p>
       ) : filtered.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">

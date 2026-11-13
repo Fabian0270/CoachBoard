@@ -136,6 +136,21 @@ function listBackups(): string[] {
     .sort() // timestamped names sort chronologically
 }
 
+/** How many rolling backups there are and how much space they take. */
+export function backupStorage(): { files: number; bytes: number } {
+  if (!backupsPossible()) return { files: 0, bytes: 0 }
+  const files = listBackups()
+  let bytes = 0
+  for (const f of files) {
+    try {
+      bytes += fs.statSync(path.join(backupDir(), f)).size
+    } catch {
+      /* pruned between listing and stat */
+    }
+  }
+  return { files: files.length, bytes }
+}
+
 function pruneOldBackups(): void {
   const files = listBackups()
   const excess = files.length - KEEP_BACKUPS
