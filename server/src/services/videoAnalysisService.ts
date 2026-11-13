@@ -182,6 +182,37 @@ export async function setAnalysisAthlete(
 }
 
 /**
+ * Corrects what the set was. Only the fields given change; `null` clears one.
+ * The tracked path and metrics are never touched — see the route.
+ */
+export async function updateAnalysisContext(
+  id: string,
+  change: {
+    athleteId?: string | null
+    lift?: string | null
+    loadKg?: number | null
+    calledRpe?: number | null
+    metric?: string | null
+  },
+): Promise<VideoAnalysisDto | null> {
+  const res = await getDb()
+    .updateTable('video_analyses')
+    .set({
+      ...(change.athleteId !== undefined ? { athlete_id: change.athleteId } : {}),
+      ...(change.lift !== undefined ? { lift: change.lift } : {}),
+      ...(change.loadKg !== undefined ? { load_kg: change.loadKg } : {}),
+      ...(change.calledRpe !== undefined ? { called_rpe: change.calledRpe } : {}),
+      ...(change.metric !== undefined ? { metric: change.metric } : {}),
+      updated_at: new Date().toISOString(),
+    })
+    .where('id', '=', id)
+    .executeTakeFirst()
+  if (Number(res.numUpdatedRows ?? 0n) === 0) return null
+  const row = await baseQuery().where('video_analyses.id', '=', id).executeTakeFirst()
+  return row ? toDto(row as AnalysisRow) : null
+}
+
+/**
  * Deletes the analysis and the video it owns.
  *
  * The file is read BEFORE the row goes, or its path is gone with it and the

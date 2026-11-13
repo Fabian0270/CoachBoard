@@ -6,7 +6,7 @@ import {
   saveAnalysis,
   listAnalyses,
   getAnalysis,
-  setAnalysisAthlete,
+  updateAnalysisContext,
   deleteAnalysis,
   ownedVideoPath,
 } from '../services/videoAnalysisService.js'
@@ -319,18 +319,37 @@ router.delete('/:id/pose', async (req, res) => {
   res.status(204).end()
 })
 
-// Attaching an athlete after the fact. Deliberately the only mutable field: the
-// path and its metrics are a measurement, and editing those would make a saved
-// analysis something other than what was tracked.
-const attachSchema = z.object({ athleteId: z.string().nullable() })
+// What the set WAS — who lifted it, which lift, the load, the RPE called and
+// which velocity it is read by — can be corrected after saving. The path and its
+// per-rep metrics cannot: those are the measurement, and editing them would
+// make a saved analysis something other than what was tracked.
+//
+// The context used to be fixed at save time, while the page kept its fields
+// editable and said "Saved." — so a load typed after pressing Save was never
+// stored, and it is the load that builds the athlete's velocity profile.
+const contextSchema = z
+  .object({
+    athleteId: z.string().nullable().optional(),
+    lift: z.enum(VBT_LIFT_IDS).nullable().optional(),
+    loadKg: z.number().positive().max(1000).nullable().optional(),
+    calledRpe: z
+      .number()
+      .min(5)
+      .max(10)
+      .refine((v) => Number.isInteger(v * 2), 'RPE must be a half step')
+      .nullable()
+      .optional(),
+    metric: z.enum(['mean', 'peak', 'propulsive']).nullable().optional(),
+  })
+  .refine((d) => Object.values(d).some((v) => v !== undefined), 'Nothing to change')
 
 router.patch('/:id', async (req, res) => {
-  const parsed = attachSchema.safeParse(req.body)
+  const parsed = contextSchema.safeParse(req.body)
   if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid athlete' })
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid change' })
     return
   }
-  const updated = await setAnalysisAthlete(req.params.id, parsed.data.athleteId)
+  const updated = await updateAnalysisContext(req.params.id, parsed.data)
   if (!updated) {
     res.status(404).json({ error: 'Analysis not found' })
     return

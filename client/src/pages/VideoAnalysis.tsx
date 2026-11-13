@@ -81,6 +81,9 @@ type Phase = 'idle' | 'capturing' | 'tracking' | 'done'
  * gate is here to catch genuinely unusable captures, not normal ones.
  */
 const MIN_EFFECTIVE_FPS = 12
+
+/** The tracker's own floor (tracker.core DEFAULTS.minPoints): fewer and it gives up. */
+const MIN_SEED_POINTS = 6
 const MIN_SURVIVAL = 0.4
 
 /**
@@ -185,6 +188,9 @@ export default function VideoAnalysis() {
   /** Shown once a track finishes, so nothing is stored without being asked for. */
   const [offerSave, setOfferSave] = useState(false)
   const [savedId, setSavedId] = useState<string | null>(null)
+  /** contextNow() as of the last save or update — see contextNow. */
+  const [savedContext, setSavedContext] = useState<string | null>(null)
+  const [updatingSaved, setUpdatingSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   /**
    * Who this set belongs to.
@@ -317,6 +323,12 @@ export default function VideoAnalysis() {
   const placeSeed = (point: { x: number; y: number }) => {
     const video = videoRef.current
     if (!video) return
+    // The click starts a tracking run, and before the analyser has compiled
+    // that run plays the clip with nothing consuming its frames.
+    if (cvStatus !== 'ready') {
+      toast.info('The analyser is still loading — click the bar again in a moment.')
+      return
+    }
     const next: SeedPoint = {
       x: point.x,
       y: point.y,
@@ -408,6 +420,21 @@ export default function VideoAnalysis() {
     () => trackedReps.filter((r) => !excludedReps.has(r.index)),
     [trackedReps, excludedReps],
   )
+
+  /**
+   * What the set was, as it would be saved right now. Compared against what
+   * WAS saved, so a change after pressing Save is noticed rather than lost —
+   * the fields stay editable, and a load typed after saving used to go nowhere
+   * while the page still said "Saved."
+   */
+  const contextNow = () =>
+    JSON.stringify({
+      athleteId,
+      lift: reps.length > 0 ? setContext.lift : null,
+      loadKg,
+      calledRpe: setContext.calledRpe,
+      metric: reps.length > 0 ? metric : null,
+    })
 
   const toggleRep = (index: number) =>
     setExcludedReps((prev) => {
@@ -602,6 +629,18 @@ export default function VideoAnalysis() {
       if (stale()) return
 
       const q = result.quality
+      // Too few corners under the circle to follow. The track is lost on its
+      // first frame, so capture stops almost at once — and this used to be
+      // reported as "not enough frames, widen the range", which sends the coach
+      // to fix the wrong thing.
+      if (q.seededPoints < MIN_SEED_POINTS) {
+        toast.error(
+          'There is nothing to follow at that spot. Click the middle of a plate, where the edge and lettering give the tracker detail, or enlarge the circle with +.',
+        )
+        setSamples(null)
+        setPhase('idle')
+        return
+      }
       if (handle.framesRead < 5) {
         toast.error('Not enough frames in that range — widen it and try again.')
         setSamples(null)
@@ -683,6 +722,7 @@ export default function VideoAnalysis() {
       if (!res.ok) throw new Error('Save failed')
       const saved = (await res.json()) as { id: string }
       setSavedId(saved.id)
+      setSavedContext(contextNow())
       setOfferSave(false)
       setSavedCount((n) => n + 1)
       toast.success('Analysis saved')
@@ -755,6 +795,30 @@ export default function VideoAnalysis() {
       toast.success(`1RM velocity for ${liftLabel(setContext.lift)} is now ${measured.toFixed(2)} m/s`)
     } catch {
       toast.error('Could not save that 1RM velocity.')
+    }
+  }
+
+  /** Writes a post-save change to the lift, load, RPE or athlete onto the saved set. */
+  const updateSavedContext = async () => {
+    if (!savedId) return
+    setUpdatingSaved(true)
+    try {
+      const res = await fetch(`/api/analysis/${savedId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: contextNow(),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? `the server said ${res.status}`)
+      }
+      setSavedContext(contextNow())
+      setSavedCount((n) => n + 1)
+      toast.success('Saved set updated')
+    } catch (err) {
+      toast.error(`Could not update the saved set — ${err instanceof Error ? err.message : 'unknown error'}.`)
+    } finally {
+      setUpdatingSaved(false)
     }
   }
 
@@ -1372,11 +1436,20 @@ export default function VideoAnalysis() {
               </div>
             )}
 
-            {savedId && (
-              <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Check className="h-4 w-4 text-emerald-500" /> Saved.
-              </p>
-            )}
+            {savedId &&
+              (savedContext !== null && savedContext !== contextNow() ? (
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-2 text-sm">
+                  <span>The lift, load, RPE or athlete changed since you saved.</span>
+                  <Button size="sm" variant="outline" onClick={updateSavedContext} disabled={updatingSaved}>
+                    {updatingSaved ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Update saved set
+                  </Button>
+                </div>
+              ) : (
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Check className="h-4 w-4 text-emerald-500" /> Saved.
+                </p>
+              ))}
 
             {samples && trackedReps.length > 0 && (
               <div className="space-y-2">
