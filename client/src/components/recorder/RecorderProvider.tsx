@@ -5,6 +5,7 @@ import RecordingPill from './RecordingPill'
 import ReviewDialog from './ReviewDialog'
 import { isCapturing } from './recorder.core'
 import { useRecorderEngine, type RecorderOptions } from './useRecorderEngine'
+import { useUnsavedWork } from '../../lib/unsavedWork'
 
 // ---------------------------------------------------------------------------
 // Mounted ABOVE the router, on purpose.
@@ -72,6 +73,15 @@ export default function RecorderProvider({ children }: { children: React.ReactNo
     toast.success('Sent.')
     void engine.discard()
   }, [engine, toast])
+
+  // A recording is scratch space until it is saved or sent, so closing during
+  // one — or with an unsaved take waiting in review — loses it.
+  useUnsavedWork(
+    'recording',
+    isCapturing(engine.state) ||
+      engine.state === 'finalizing' ||
+      (engine.state === 'review' && !saved),
+  )
 
   const value = useMemo(
     () => ({ startRecording, isRecording: isCapturing(engine.state) }),

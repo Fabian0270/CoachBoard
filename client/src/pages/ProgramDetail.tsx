@@ -10,6 +10,7 @@ import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { useToast } from '../components/ui/toast'
+import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
 import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, Eye, Film } from 'lucide-react'
 import DayAttachments from '../components/discord/DayAttachments'
@@ -107,6 +108,8 @@ export default function ProgramDetail() {
   )
 
   const unsavedCount = Object.keys(failedEdits).length
+  // Edits that did not save live only in this page; closing the window loses them.
+  useUnsavedWork('program-edits', unsavedCount > 0)
   const [retrying, setRetrying] = useState(false)
 
   const retryUnsaved = async () => {

@@ -69,6 +69,7 @@ import { useConfirm } from '../components/ui/confirm-dialog'
 import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import { num } from '../lib/num'
 import { uploadVideo } from '../lib/uploadAnalysisVideo'
+import { useUnsavedWork } from '../lib/unsavedWork'
 
 type Phase = 'idle' | 'capturing' | 'tracking' | 'done'
 
@@ -192,6 +193,8 @@ export default function VideoAnalysis() {
   const [savedContext, setSavedContext] = useState<string | null>(null)
   const [updatingSaved, setUpdatingSaved] = useState(false)
   const [saving, setSaving] = useState(false)
+  // Saving a local clip uploads it in chunks; closing midway loses the save.
+  useUnsavedWork('analysis-save', saving)
   /**
    * Who this set belongs to.
    *

@@ -28,7 +28,17 @@ import { autoUpdater } from 'electron-updater'
  * docs/ROADMAP.md for why that is the only trustworthy check anyway.
  */
 const isDev = !app.isPackaged
+/** Preferred port. The dev renderer's Vite proxy points here. */
 const SERVER_PORT = 3001
+/**
+ * Where to look when the preferred port is taken. A fixed, ordered list rather
+ * than "any free port", so a coach whose machine always has 3001 busy lands on
+ * the same port every launch — browser storage (theme, onboarding progress) is
+ * kept per origin, and a random port would start it empty every time.
+ */
+const FALLBACK_PORTS = [3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010]
+/** The port the embedded server actually bound. */
+let serverPort = SERVER_PORT
 
 /**
  * The embedded server bundle, loaded at runtime from extraResources. Typed here
@@ -204,17 +214,32 @@ async function startServer(): Promise<void> {
 
   const expressApp = bundle.createApp(staticDir, logPath)
 
-  await new Promise<void>((resolve, reject) => {
-    const server = createServer(expressApp)
-    server.listen(SERVER_PORT, '127.0.0.1', () => {
-      log(`Server listening on port ${SERVER_PORT}`)
-      resolve()
-    })
-    server.on('error', (err) => {
-      log(`Server error: ${err}`)
-      reject(err)
-    })
-  })
+  // A fixed port used to mean "CoachBoard failed to start" whenever anything
+  // else on the machine held 3001 — another dev server, another app. The
+  // single-instance lock already rules out a second CoachBoard, so a busy port
+  // is always someone else's, and the next one in the list will do. Dev keeps
+  // 3001 only: the Vite proxy is wired to it.
+  const candidates = isDev ? [SERVER_PORT] : [SERVER_PORT, ...FALLBACK_PORTS]
+  for (const [i, port] of candidates.entries()) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const server = createServer(expressApp)
+        server.once('error', reject)
+        server.listen(port, '127.0.0.1', () => {
+          server.off('error', reject)
+          server.on('error', (err) => log(`Server error: ${err}`))
+          resolve()
+        })
+      })
+      serverPort = port
+      log(`Server listening on port ${port}`)
+      break
+    } catch (err) {
+      const busy = (err as NodeJS.ErrnoException).code === 'EADDRINUSE'
+      log(`Port ${port} unavailable: ${describeError(err)}`)
+      if (!busy || i === candidates.length - 1) throw err
+    }
+  }
 
   // Discord sync-on-launch (delayed so startup isn't blocked; no-op when the
   // integration isn't configured). Optional-chained so a stale bundle without
@@ -382,8 +407,11 @@ function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): voi
   )
 }
 
-/** Dev serves the renderer from :3000, production from the embedded server. */
-const APP_ORIGIN = isDev ? 'http://localhost:3000' : `http://localhost:${SERVER_PORT}`
+/**
+ * Dev serves the renderer from :3000, production from the embedded server —
+ * on whichever port it actually bound, so this is read after startServer.
+ */
+const appOrigin = (): string => (isDev ? 'http://localhost:3000' : `http://localhost:${serverPort}`)
 
 /**
  * Whether a URL is the app's own page.
@@ -394,7 +422,7 @@ const APP_ORIGIN = isDev ? 'http://localhost:3000' : `http://localhost:${SERVER_
  */
 function isOwnOrigin(url: string): boolean {
   try {
-    return new URL(url).origin === APP_ORIGIN
+    return new URL(url).origin === appOrigin()
   } catch {
     return false
   }
@@ -480,7 +508,25 @@ async function createWindow(): Promise<void> {
   // The app never uses <webview>, and one would be a second, unguarded window.
   win.webContents.on('will-attach-webview', (event) => event.preventDefault())
 
-  await win.loadURL(APP_ORIGIN)
+  // The close guard. A page with work in flight — a recording, a video upload,
+  // program edits that have not saved — asks the browser not to unload, and
+  // Electron then cancels the close SILENTLY: the window just would not shut.
+  // This is the documented hook for asking instead.
+  win.webContents.on('will-prevent-unload', (event) => {
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      buttons: ['Close anyway', 'Keep working'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'CoachBoard',
+      message: 'CoachBoard is still working on something.',
+      detail:
+        'A recording, a video upload, or program changes that have not saved yet would be lost if you close now.',
+    })
+    if (choice === 0) event.preventDefault() // preventDefault here means "unload anyway"
+  })
+
+  await win.loadURL(appOrigin())
   if (isDev) win.webContents.openDevTools()
 }
 
