@@ -336,11 +336,16 @@ describe('frameAngles', () => {
 })
 
 describe('smooth', () => {
+  // Frames 1/30 s apart, as a real track is. smooth() only lets neighbours
+  // within SMOOTH_MAX_GAP_S vote, so spacing them a second apart would test
+  // a sparse preview instead — which has its own case at the end.
+  const dense = (i: number, put: Record<number, Landmark>) => frame(i / 30, put)
+
   it('removes a single-frame snap without moving the good frames', () => {
     // Four frames at x=100 and one that jumped to 900 — the failure mode pose
     // actually has. A mean would drag the whole window; a median ignores it.
     const frames = [100, 100, 900, 100, 100].map((x, i) =>
-      frame(i, { [LM.LEFT_KNEE]: at(x, 300) }),
+      dense(i, { [LM.LEFT_KNEE]: at(x, 300) }),
     )
     const out = smooth(frames, 5)
     expect(out[2].landmarks[LM.LEFT_KNEE].x).toBeCloseTo(100, 6)
@@ -350,34 +355,34 @@ describe('smooth', () => {
     // The invisible frames sit at 900. They must not get a vote, or a joint the
     // model was guessing at drags the frames where it was sure.
     const frames = [
-      frame(0, { [LM.LEFT_KNEE]: at(900, 0, 0.1) }),
-      frame(1, { [LM.LEFT_KNEE]: at(100, 0, 0.9) }),
-      frame(2, { [LM.LEFT_KNEE]: at(900, 0, 0.1) }),
+      dense(0, { [LM.LEFT_KNEE]: at(900, 0, 0.1) }),
+      dense(1, { [LM.LEFT_KNEE]: at(100, 0, 0.9) }),
+      dense(2, { [LM.LEFT_KNEE]: at(900, 0, 0.1) }),
     ]
     expect(smooth(frames, 3)[1].landmarks[LM.LEFT_KNEE].x).toBeCloseTo(100, 6)
   })
 
   it('never invents confidence the model did not report', () => {
-    const frames = [0, 1, 2].map((i) => frame(i, { [LM.LEFT_KNEE]: at(100, 0, 0.42) }))
+    const frames = [0, 1, 2].map((i) => dense(i, { [LM.LEFT_KNEE]: at(100, 0, 0.42) }))
     expect(smooth(frames, 3)[1].landmarks[LM.LEFT_KNEE].visibility).toBeCloseTo(0.42, 6)
   })
 
   it('leaves a landmark alone when nothing in the window was visible', () => {
-    const frames = [0, 1, 2].map((i) => frame(i, { [LM.LEFT_KNEE]: at(55, 66, 0.1) }))
+    const frames = [0, 1, 2].map((i) => dense(i, { [LM.LEFT_KNEE]: at(55, 66, 0.1) }))
     const l = smooth(frames, 3)[1].landmarks[LM.LEFT_KNEE]
     expect(l.x).toBeCloseTo(55, 6)
     expect(l.y).toBeCloseTo(66, 6)
   })
 
   it('is a no-op for a window of one', () => {
-    const frames = [frame(0, { [LM.LEFT_KNEE]: at(1, 2) })]
+    const frames = [dense(0, { [LM.LEFT_KNEE]: at(1, 2) })]
     expect(smooth(frames, 1)).toBe(frames)
   })
 
   it('widens an even window so there is a true middle', () => {
     // Window 4 becomes 5, so the single 900 is outvoted 4-1 rather than 2-2.
     const frames = [100, 100, 900, 100, 100].map((x, i) =>
-      frame(i, { [LM.LEFT_KNEE]: at(x, 0) }),
+      dense(i, { [LM.LEFT_KNEE]: at(x, 0) }),
     )
     expect(smooth(frames, 4)[2].landmarks[LM.LEFT_KNEE].x).toBeCloseTo(100, 6)
   })
@@ -394,7 +399,7 @@ describe('smooth', () => {
    * safely call this until now.
    */
   const withWorld = (i: number, imgX: number, worldX: number, visibility = 1) => {
-    const f = frame(i, { [LM.LEFT_KNEE]: at(imgX, 300, visibility) })
+    const f = dense(i, { [LM.LEFT_KNEE]: at(imgX, 300, visibility) })
     const world = Array.from({ length: LANDMARK_COUNT }, () => ({ x: 0, y: 0, z: 0, visibility: 1 }))
     world[LM.LEFT_KNEE] = { x: worldX, y: -0.4, z: 0.1, visibility: 1 }
     return { ...f, world }
@@ -433,8 +438,23 @@ describe('smooth', () => {
   it('leaves a frame without a world set without one', () => {
     // A partial world set is worse than none — packPose refuses to store one —
     // so the filter must not conjure a world set for a frame that had none.
-    const frames = [0, 1, 2].map((i) => frame(i, { [LM.LEFT_KNEE]: at(100, 300) }))
+    const frames = [0, 1, 2].map((i) => dense(i, { [LM.LEFT_KNEE]: at(100, 300) }))
     expect(smooth(frames, 3)[1].world).toBeUndefined()
+  })
+
+  it('does not vote across a sparse preview, where neighbours are other moments', () => {
+    // Five frames a coach scrubbed to across one squat. Reproduced in the audit:
+    // the window spanned the whole rep and every frame was drawn at 1150, so the
+    // bottom of the lift showed 250 px too high.
+    const hips = [900, 1150, 1400, 1150, 900]
+    const times = [0.5, 1.6, 2.4, 3.5, 4.8]
+    const frames = hips.map((y, i) => frame(times[i], { [LM.LEFT_HIP]: at(500, y) }))
+    expect(smooth(frames).map((f) => f.landmarks[LM.LEFT_HIP].y)).toEqual(hips)
+  })
+
+  it('still smooths a track thinned to 10 fps, as tracking under load produces', () => {
+    const frames = [100, 100, 900, 100, 100].map((x, i) => frame(i / 10, { [LM.LEFT_KNEE]: at(x, 0) }))
+    expect(smooth(frames, 5)[2].landmarks[LM.LEFT_KNEE].x).toBeCloseTo(100, 6)
   })
 })
 

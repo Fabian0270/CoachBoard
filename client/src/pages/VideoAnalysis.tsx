@@ -119,6 +119,20 @@ export default function VideoAnalysis() {
   const confirm = useConfirm()
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  /**
+   * Which tracking run is current. Bumped whenever the clip is left or cleared.
+   *
+   * Aborting a run deliberately KEEPS what it tracked ("stop and keep"), so an
+   * abort alone cannot tell "I have seen enough" from "I left this clip". A run
+   * cancelled by choosing another video used to finish anyway and draw its path,
+   * and offer to save it, over the NEXT video. Each awaited step checks this.
+   */
+  const runGenRef = useRef(0)
+  /** Ends the current run and makes anything it still produces be discarded. */
+  const abandonRun = () => {
+    runGenRef.current++
+    abortRef.current?.abort()
+  }
   /** The path as it is being tracked — see the note where it is filled. */
   const livePathRef = useRef<Sample[]>([])
   /**
@@ -200,6 +214,7 @@ export default function VideoAnalysis() {
    * drawn over it, with its calibration and rep numbers still on screen.
    */
   useEffect(() => {
+    abandonRun()
     // A different clip shares nothing with the last one's skeleton, corrections
     // included — those are statements about a body in a particular video.
     poseMeasuredRef.current = []
@@ -460,7 +475,9 @@ export default function VideoAnalysis() {
     const video = videoRef.current
     if (!video) return
 
-    abortRef.current?.abort()
+    abandonRun()
+    const gen = runGenRef.current
+    const stale = () => gen !== runGenRef.current
     const controller = new AbortController()
     abortRef.current = controller
 
@@ -505,8 +522,13 @@ export default function VideoAnalysis() {
           mode: 'VIDEO',
         })
       } catch {
-        toast.error('Could not start pose estimation — tracking the bar path only.')
+        if (!stale()) toast.error('Could not start pose estimation — tracking the bar path only.')
       }
+    }
+    // Loading the model can take long enough for the coach to have moved on.
+    if (stale()) {
+      poseStream?.close()
+      return
     }
 
     try {
@@ -559,6 +581,12 @@ export default function VideoAnalysis() {
         },
       )
 
+      // The coach left this clip mid-run: nothing below belongs on screen now.
+      if (stale()) {
+        streamRef.current?.cancel()
+        return
+      }
+
       if (!streamRef.current) {
         toast.error('No frames could be read from that range.')
         setPhase('idle')
@@ -568,8 +596,10 @@ export default function VideoAnalysis() {
       // Note: an aborted run is NOT discarded. Capture stops early but the
       // frames already tracked are perfectly good, so stopping is "I have seen
       // enough reps" rather than "throw it away" — which matters on a long clip
-      // where the coach only cares about the first set.
+      // where the coach only cares about the first set. Leaving the clip is
+      // different, and is caught by `stale` above and below.
       const result = await streamRef.current.finish()
+      if (stale()) return
 
       const q = result.quality
       if (handle.framesRead < 5) {
@@ -598,10 +628,11 @@ export default function VideoAnalysis() {
       setOfferSave(true)
       video.currentTime = from
     } catch (err) {
+      streamRef.current?.cancel()
+      if (stale()) return
       if (!controller.signal.aborted) {
         toast.error(err instanceof Error ? err.message : 'Tracking failed')
       }
-      streamRef.current?.cancel()
       setSamples(null)
       setPhase('idle')
     } finally {
@@ -728,7 +759,7 @@ export default function VideoAnalysis() {
   }
 
   const reset = () => {
-    abortRef.current?.abort()
+    abandonRun()
     livePathRef.current = []
     // Clear is "start this clip over", so the corrections go too.
     poseMeasuredRef.current = []

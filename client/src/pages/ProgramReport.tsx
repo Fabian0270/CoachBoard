@@ -16,6 +16,7 @@ import { ArrowLeft, TrendingUp, CheckCircle2, Sparkles } from 'lucide-react'
 import type { ProgramReport } from 'coachboard-shared'
 import type { Program } from '../lib/programUtils'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
+import { useToast } from '../components/ui/toast'
 
 const LIFT_COLORS: Record<string, string> = {
   squat: '#6366f1',
@@ -41,6 +42,7 @@ export default function ProgramReport() {
   const [program, setProgram] = useState<Program | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const toast = useToast()
   const [updatingMax, setUpdatingMax] = useState<Set<string>>(new Set())
   const [updatedMax, setUpdatedMax] = useState<Set<string>>(new Set())
   const [suggestOpen, setSuggestOpen] = useState(false)
@@ -75,7 +77,12 @@ export default function ProgramReport() {
           notes: 'Estimated 1RM from program analysis',
         }),
       })
+      // A refusal used to do nothing at all: the button stopped spinning and the
+      // coach could not tell a saved max from a lost one.
       if (res.ok) setUpdatedMax((prev) => new Set([...prev, liftKey]))
+      else toast.error(`Could not save the new ${displayName} max (the server said ${res.status}).`)
+    } catch {
+      toast.error(`Could not save the new ${displayName} max — CoachBoard could not reach its own server.`)
     } finally {
       setUpdatingMax((prev) => {
         const s = new Set(prev)

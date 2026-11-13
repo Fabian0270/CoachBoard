@@ -132,6 +132,9 @@ export default function Settings() {
       setUnlocked(false)
       toast.success('Email settings saved')
       return true
+    } catch {
+      toast.error('CoachBoard could not reach its own server, so the settings were not saved.')
+      return false
     } finally {
       setSaving(false)
     }
@@ -146,6 +149,8 @@ export default function Settings() {
       const data = await res.json().catch(() => ({}))
       if (res.ok) toast.success(`Test email sent to ${user.trim()} — check your inbox`)
       else toast.error(data.error ?? 'Failed to send test email')
+    } catch {
+      toast.error('CoachBoard could not reach its own server, so no test email was sent.')
     } finally {
       setTesting(false)
     }

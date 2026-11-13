@@ -61,6 +61,10 @@ export default function LinkUserDialog({
       )
       onClose()
       onLinked()
+    } catch {
+      // The request itself failed. Without this the rejection went unhandled
+      // and replaced the whole app with the error screen.
+      toast.error('CoachBoard could not reach its own server, so nothing was linked.')
     } finally {
       setBusy(false)
     }

@@ -39,6 +39,10 @@ export default function DisconnectDiscordDialog({
       )
       onOpenChange(false)
       onDisconnected()
+    } catch {
+      // The request itself failed. Without this the rejection went unhandled
+      // and replaced the whole app with the error screen.
+      toast.error('CoachBoard could not reach its own server, so Discord is still connected.')
     } finally {
       setBusy(false)
     }

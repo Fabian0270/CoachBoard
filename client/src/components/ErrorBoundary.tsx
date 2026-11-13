@@ -4,6 +4,8 @@ import { Button } from './ui/button'
 interface Props { children: ReactNode }
 interface State {
   error: Error | null
+  /** A failure outside rendering — shown as a notice, the app stays up. */
+  background: Error | null
   logPath: string | null
   canReveal: boolean
   copied: boolean
@@ -14,18 +16,27 @@ interface State {
  * unhandled promise rejections too — a lot of this app's work happens in async
  * handlers that React's boundary would otherwise never see.
  *
+ * The two are treated differently. A render error means the screen cannot be
+ * drawn, so it is replaced. An unhandled rejection means one action failed —
+ * a button whose request did not complete — and replacing the whole app for it
+ * was far worse than the failure: it unmounted everything, an in-progress
+ * screen recording included, over one missing catch. So a rejection becomes a
+ * dismissible notice and the app stays exactly where it was.
+ *
  * The screen is deliberately written for a coach, not a developer: what happened,
  * that their data is safe, and two ways to get the detail to someone who can act
  * on it. The stack lives behind a disclosure rather than being the page.
  */
 export default class ErrorBoundary extends Component<Props, State> {
-  state: State = { error: null, logPath: null, canReveal: false, copied: false }
+  state: State = { error: null, background: null, logPath: null, canReveal: false, copied: false }
 
   private unhandledRejectionHandler = (event: PromiseRejectionEvent) => {
-    const error = event.reason instanceof Error
+    const background = event.reason instanceof Error
       ? event.reason
       : new Error(String(event.reason ?? 'Unhandled promise rejection'))
-    this.setState({ error })
+    // Still in the console for anyone debugging; the notice is for the coach.
+    console.error('Unhandled rejection:', event.reason)
+    this.setState({ background, copied: false })
     void this.loadPaths()
   }
 
@@ -58,7 +69,7 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   private diagnostics(): string {
-    const { error } = this.state
+    const error = this.state.error ?? this.state.background
     return [
       'CoachBoard error report',
       `When:    ${new Date().toISOString()}`,
@@ -91,8 +102,34 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   render() {
-    const { error, logPath, canReveal, copied } = this.state
-    if (!error) return this.props.children
+    const { error, background, logPath, canReveal, copied } = this.state
+    if (!error) {
+      return (
+        <>
+          {this.props.children}
+          {background && (
+            <div
+              role="alert"
+              className="fixed bottom-4 left-4 z-[60] max-w-md rounded-lg border border-destructive/40 bg-card p-4 text-sm text-foreground shadow-lg"
+            >
+              <p className="font-medium">Something did not finish</p>
+              <p className="mt-1 text-muted-foreground">
+                {background.message}. Your data is safe — try that again, and if it keeps happening,
+                copy the details below.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={this.copyDetails}>
+                  {copied ? 'Copied' : 'Copy details'}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => this.setState({ background: null, copied: false })}>
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
+      )
+    }
 
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">

@@ -24,7 +24,8 @@ interface ExerciseEditorProps {
   onDeleteExercise: (exerciseId: string) => void
   onDeleteWorkout: () => void
   onAddSet: (exerciseId: string) => void
-  onCopyDay: (targetDates: string[]) => Promise<void>
+  /** Resolves false when the copy did not happen; the dialog then stays open. */
+  onCopyDay: (targetDates: string[]) => Promise<boolean>
   onReorder: (exerciseIds: string[]) => void
 }
 
@@ -243,7 +244,8 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
     if (selectedDates.size === 0) return
     setCopying(true)
     try {
-      await onCopyDay([...selectedDates])
+      // Kept open on failure, with the selection intact, so a retry is one click.
+      if (!(await onCopyDay([...selectedDates]))) return
       setCopyOpen(false)
       setSelectedDates(new Set())
     } finally {

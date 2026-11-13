@@ -75,6 +75,10 @@ export default function SendProgramDialog({ programId, programName, athleteId, o
       } else {
         toast.error(data.error ?? 'Failed to send the program')
       }
+    } catch {
+      // The request itself failed. Without this the rejection went unhandled
+      // and replaced the whole app with the error screen.
+      toast.error('CoachBoard could not reach its own server, so the email was not sent.')
     } finally {
       setSending(false)
     }

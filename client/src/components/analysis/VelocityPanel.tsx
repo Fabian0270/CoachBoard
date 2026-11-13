@@ -6,6 +6,9 @@ import {
   VBT_LIFTS,
   LRV_TOLERANCE_MS,
   MVT_RANGE,
+  MIN_MVT,
+  MAX_MVT,
+  isPlausibleMvt,
   bestRepVelocity,
   buildLoadVelocityProfile,
   defaultVelocityMetric,
@@ -215,14 +218,30 @@ export default function VelocityPanel({
     seededMvt.current = next
   }, [storedMvt, lift])
 
+  /** Why the typed 1RM velocity was not kept, shown under the field. */
+  const [mvtError, setMvtError] = useState<string | null>(null)
+
   const rememberMvt = useCallback(
     async (text: string) => {
+      setMvtError(null)
       const parsed = text.trim() ? num(text) : null
-      const velocity = parsed != null && Number.isFinite(parsed) && parsed > 0 ? parsed : null
+      // Checked here against the same bounds the server enforces. Typing "25"
+      // for 0.25 used to reach the server, get refused, and — with nothing
+      // catching the refusal on blur — replace the whole app with the error
+      // screen, taking the unsaved track with it.
+      if (parsed != null && !isPlausibleMvt(parsed)) {
+        setMvtError(`A 1RM velocity is between ${MIN_MVT} and ${MAX_MVT} m/s — this was not saved.`)
+        return
+      }
+      const velocity = parsed
       // Unchanged text is not a save. Blur fires on every tab-through, and each
       // one would otherwise rewrite updated_at for a number nobody touched.
       if (velocity === (storedMvt ?? null)) return
-      await onSaveMvt?.(velocity)
+      try {
+        await onSaveMvt?.(velocity)
+      } catch {
+        setMvtError('Could not save that 1RM velocity. It is still used for this set.')
+      }
     },
     [onSaveMvt, storedMvt],
   )
@@ -233,7 +252,10 @@ export default function VelocityPanel({
     () => resolveMvt(lift, { stored: storedMvt, anchors: allAnchors }),
     [lift, storedMvt, allAnchors],
   )
-  const mvt = mvtText.trim() && Number.isFinite(num(mvtText)) ? num(mvtText) : suggestedMvt
+  // An implausible typed value is ignored rather than estimated from — "25"
+  // meant as 0.25 would otherwise put a nonsense 1RM on screen.
+  const typedMvt = mvtText.trim() ? num(mvtText) : null
+  const mvt = isPlausibleMvt(typedMvt) ? typedMvt : suggestedMvt
 
   const lvPoints = useMemo(() => {
     const points = [...savedPoints]
@@ -676,6 +698,8 @@ export default function VelocityPanel({
                 )}
               </label>
             </div>
+
+            {mvtError && <p className="text-xs text-destructive">{mvtError}</p>}
 
             {/* The field still works — it just has nowhere to be kept. Said out
                 loud because the value is per athlete AND per lift, so silently

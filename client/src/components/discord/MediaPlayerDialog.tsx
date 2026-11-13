@@ -91,6 +91,10 @@ export default function MediaPlayerDialog({
       } else {
         toast.error(dto.error ?? 'Discord rejected the message')
       }
+    } catch {
+      // The request itself failed. Without this the rejection went unhandled
+      // and replaced the whole app with the error screen.
+      toast.error('CoachBoard could not reach its own server, so the reply was not sent. Your text is kept.')
     } finally {
       setSending(false)
     }

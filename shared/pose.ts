@@ -374,7 +374,20 @@ export function frameAngles(frames: PoseFrame[], side: Side = cameraSide(frames)
  * reconstruction rather than a measurement — which is why the caller smooths for
  * DISPLAY and stores the raw track.
  */
-export function smooth(frames: PoseFrame[], window = 5): PoseFrame[] {
+/**
+ * How far in time a neighbour may be from the frame it votes on, in seconds.
+ *
+ * The window is counted in FRAMES, which is only a time window when frames are
+ * dense. The live preview reads whichever frames the coach scrubbed to, often
+ * seconds apart, and five of those span a whole rep: measured, a squat's hip
+ * at 900/1150/1400/1150/900 px was drawn at 1150 in every frame, so the bottom
+ * of the lift showed 250 px too high. A quarter second keeps every neighbour of
+ * any real track — ±2 frames is ±0.2 s even at 10 fps — and drops only the
+ * ones that belong to a different moment.
+ */
+export const SMOOTH_MAX_GAP_S = 0.25
+
+export function smooth(frames: PoseFrame[], window = 5, maxGapS = SMOOTH_MAX_GAP_S): PoseFrame[] {
   if (window <= 1 || frames.length === 0) return frames
   const span = window % 2 === 0 ? window + 1 : window
   const half = Math.floor(span / 2)
@@ -385,8 +398,11 @@ export function smooth(frames: PoseFrame[], window = 5): PoseFrame[] {
   }
 
   return frames.map((frame, i) => {
-    const from = Math.max(0, i - half)
-    const to = Math.min(frames.length - 1, i + half)
+    // The frame-count window, narrowed to neighbours close in TIME.
+    let from = Math.max(0, i - half)
+    let to = Math.min(frames.length - 1, i + half)
+    while (from < i && frame.t - frames[from].t > maxGapS) from++
+    while (to > i && frames[to].t - frame.t > maxGapS) to--
 
     const landmarks = frame.landmarks.map((centre, lm) => {
       const xs: number[] = []

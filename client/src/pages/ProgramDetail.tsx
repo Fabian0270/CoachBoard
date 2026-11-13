@@ -540,13 +540,25 @@ export default function ProgramDetail() {
                 if (openWorkout) reorderExercises(openDate, openWorkout.id, exerciseIds)
               }}
               onCopyDay={async (targetDates) => {
-                if (!id || !openDate) return
-                await fetch(`/api/programs/${id}/copy-day`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ sourceDate: openDate, targetDates }),
-                })
+                if (!id || !openDate) return false
+                // A refused copy used to close the dialog exactly as a successful
+                // one did, so the coach believed days had been filled that were not.
+                try {
+                  const res = await fetch(`/api/programs/${id}/copy-day`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sourceDate: openDate, targetDates }),
+                  })
+                  if (!res.ok) {
+                    toast.error(`Could not copy the day (the server said ${res.status}). Nothing was changed.`)
+                    return false
+                  }
+                } catch {
+                  toast.error('CoachBoard could not reach its own server, so the day was not copied.')
+                  return false
+                }
                 await reloadProgram()
+                return true
               }}
             />
           )}
