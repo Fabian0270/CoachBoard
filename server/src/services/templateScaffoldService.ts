@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs'
 import { parseExternalFile } from './externalImportService.js'
 import { weekdayOffset } from './external-import/valueNormalizers.js'
+import { MAX_SHEET_COLS, sheetBounds, valueAt } from '../lib/sheetBounds.js'
 import type { ExternalExerciseRow } from 'coachboard-shared'
 
 // ---------------------------------------------------------------------------
@@ -206,12 +207,14 @@ function deriveRowGeometry(tEx: ExternalExerciseRow[], ws: ExcelJS.Worksheet): R
   }
   if (weeks.length >= 2 && !(rowOf(weeks[1]) > rowOf(weeks[0]))) return null // must advance by row
 
-  const maxRow = ws.rowCount || 0
-  const maxCol = ws.columnCount || 1
+  // Content extent and non-creating reads — see lib/sheetBounds.ts.
+  const bounds = sheetBounds(ws)
+  const maxRow = bounds.rows
+  const maxCol = Math.max(bounds.cols, 1)
   const bannerRows: number[] = []
   for (let r = 1; r <= maxRow; r++) {
     for (let c = 1; c <= maxCol; c++) {
-      const v = ws.getCell(r, c).value
+      const v = valueAt(ws, r, c)
       if (typeof v === 'string' && WEEK_BANNER.test(v)) { bannerRows.push(r); break }
     }
   }
@@ -249,7 +252,10 @@ async function renderRowAxis(
   if (!geom) return null
   const { top, rowStride, templateWeeks } = geom
   const newWeeks = prog.weekCount
-  const maxCol = ws.columnCount || 1
+  // Styled-but-empty columns count here — this copies a week's formatting, not
+  // just its values — but capped, so a stray far-right cell cannot make every
+  // copied row thousands of cells wide.
+  const maxCol = Math.min(ws.columnCount || 1, MAX_SHEET_COLS)
 
   // Fit the week count by stacking/removing week row-blocks.
   if (newWeeks < templateWeeks) {
@@ -430,9 +436,10 @@ function injectEmptyTrainedSections(ws: ExcelJS.Worksheet, geom: ColumnGeometry,
   // denotes — a real weekday word (Monday/Tisdag) OR "DAY n" (→ weekday n-1, the
   // Monday..Sunday = DAY 1..7 convention).
   const labelRows: Array<{ row: number; weekday: number }> = []
-  for (let r = 1; r <= ws.rowCount; r++) {
+  const lastContentRow = sheetBounds(ws).rows
+  for (let r = 1; r <= lastContentRow; r++) {
     for (let c = 1; c <= geom.blockStart0; c++) {
-      const v = ws.getCell(r, c).value
+      const v = valueAt(ws, r, c)
       if (typeof v !== 'string') continue
       const t = v.trim()
       let wd: number | null = null

@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import { WEEKDAY_NAMES } from 'coachboard-shared/exportLayout'
+import { sheetBounds, valueAt } from '../lib/sheetBounds.js'
 
 // ---------------------------------------------------------------------------
 // Structural reader for a returned results sheet.
@@ -16,7 +17,8 @@ import { WEEKDAY_NAMES } from 'coachboard-shared/exportLayout'
 
 /** Cell → plain text, unwrapping the shapes ExcelJS uses for formulas and rich text. */
 export function cellText(ws: ExcelJS.Worksheet, row: number, col: number): string {
-  const v = ws.getCell(row, col).value
+  // findCell, not getCell: a read must never create cells. See lib/sheetBounds.ts.
+  const v = valueAt(ws, row, col)
   if (v === null || v === undefined) return ''
   if (v instanceof Date) return v.toISOString()
   if (typeof v === 'object') {
@@ -120,8 +122,7 @@ function scanHeaderRow(ws: ExcelJS.Worksheet, row: number, maxCol: number): Head
  * caller then falls back to replaying the export geometry.
  */
 export function findResultsBlocks(ws: ExcelJS.Worksheet): ResultsBlock[] {
-  const maxRow = ws.rowCount || 0
-  const maxCol = ws.columnCount || 0
+  const { rows: maxRow, cols: maxCol } = sheetBounds(ws)
   if (maxRow === 0 || maxCol === 0) return []
 
   const headers = new Map<number, HeaderScan>()

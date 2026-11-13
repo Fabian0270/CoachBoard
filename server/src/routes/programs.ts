@@ -29,6 +29,7 @@ import { getProgramReport } from '../services/analysisService.js'
 import { generateDraftProgram } from '../services/suggestionService.js'
 import type { ExternalParseOverrides } from 'coachboard-shared'
 import { fail } from '../lib/httpError.js'
+import { SheetTooLargeError } from '../lib/sheetBounds.js'
 
 const router = Router()
 
@@ -318,6 +319,10 @@ router.get('/:id/export/preview', async (req: Request, res: Response): Promise<v
     const html = await buildProgramPreviewHtml(String(req.params.id))
     res.json({ html })
   } catch (err) {
+    if (err instanceof SheetTooLargeError) {
+      res.status(err.status).json({ error: err.message })
+      return
+    }
     if (err instanceof ProgramExportError) {
       res.status(err.status).json({ error: err.message })
       return
@@ -405,6 +410,10 @@ router.post(
       const result = await commitImport(programId, preview.matched)
       res.json({ ...result, warnings: preview.warnings })
     } catch (err) {
+      if (err instanceof SheetTooLargeError) {
+        res.status(err.status).json({ error: err.message })
+        return
+      }
       const msg = err instanceof Error ? err.message : 'Import failed'
       res.status(500).json({ error: msg })
     }
@@ -468,6 +477,10 @@ router.post(
 
       res.status(201).json(result)
     } catch (err) {
+      if (err instanceof SheetTooLargeError) {
+        res.status(err.status).json({ error: err.message })
+        return
+      }
       const msg = err instanceof Error ? err.message : 'External import failed'
       res.status(msg.includes('not found') ? 400 : 500).json({ error: msg })
     }

@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import { buildProgramWorkbook } from './programExport.js'
+import { sheetBounds } from '../lib/sheetBounds.js'
 
 // ---------------------------------------------------------------------------
 // Workbook → HTML preview.
@@ -102,8 +103,12 @@ export async function renderWorkbookHtml(buffer: Buffer): Promise<string> {
   const ws = wb.worksheets[0]
   if (!ws) return '<table class="xlsx-preview"></table>'
 
-  const colCount = Math.max(ws.columnCount, ws.actualColumnCount, 1)
-  const rowCount = Math.max(ws.rowCount, ws.actualRowCount, 1)
+  // Content extent. rowCount/columnCount reach the furthest cell ever stored,
+  // and this loop builds a <td> for every position — one stray cell at row
+  // 100,000 produced 90 MB of HTML. See lib/sheetBounds.ts.
+  const bounds = sheetBounds(ws)
+  const colCount = Math.max(bounds.cols, 1)
+  const rowCount = Math.max(bounds.rows, 1)
   const { masters, covered } = parseMerges((ws.model.merges as string[]) ?? [])
 
   const colGroup: string[] = []
