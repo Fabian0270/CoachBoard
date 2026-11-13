@@ -75,11 +75,22 @@ export function verticalVelocity(samples: Sample[], windowMs = 150): VelocitySam
     return dt > 0 ? (b.y - a.y) / dt : 0
   }
 
+  // Samples are in time order, so each one's window is a contiguous slice that
+  // only ever moves forward. This used to scan the WHOLE track for every
+  // sample — measured at 2.4 s for a ten-minute track and 8.5 s at the frame
+  // cap, on the UI thread, re-run on every calibration click.
+  let lo = 0
+  let hi = 0
   return samples.map((s, i) => {
     let sw = 0, swx = 0, swx2 = 0, swx3 = 0, swx4 = 0, swy = 0, swxy = 0, swx2y = 0
     let count = 0
 
-    for (const p of samples) {
+    while (lo < samples.length && s.t - samples[lo].t > half) lo++
+    if (hi < lo) hi = lo
+    while (hi < samples.length && samples[hi].t - s.t <= half) hi++
+
+    for (let k = lo; k < hi; k++) {
+      const p = samples[k]
       const dt = p.t - s.t
       if (Math.abs(dt) > half) continue
       // Triangular weighting: neighbours count for less the further out they
@@ -124,7 +135,14 @@ function accelerationAt(velocities: VelocitySample[], index: number, halfWindowS
   let sw = 0, swx = 0, swx2 = 0, swy = 0, swxy = 0
   let count = 0
 
-  for (const p of velocities) {
+  // Walk outwards from the centre rather than over the whole track: velocities
+  // are in time order, so the window is the contiguous run around `index`.
+  let lo = index
+  let hi = index
+  while (lo > 0 && centre.t - velocities[lo - 1].t <= halfWindowS) lo--
+  while (hi < velocities.length - 1 && velocities[hi + 1].t - centre.t <= halfWindowS) hi++
+  for (let k = lo; k <= hi; k++) {
+    const p = velocities[k]
     const dt = p.t - centre.t
     if (Math.abs(dt) > halfWindowS) continue
     const w = Math.max(1 - Math.abs(dt) / halfWindowS, 0.01)
@@ -174,13 +192,35 @@ export interface SegmentOptions {
    * the rep's own peak rather than a fixed speed, and for the same reason.
    */
   minRomFraction?: number
+  /**
+   * Minimum travel as a fraction of the set's LARGEST rep.
+   *
+   * The median rule above fails exactly when phantoms outnumber real reps: a
+   * single squat with a walkout sway either side has a median that IS a sway,
+   * so the sways passed — and the last one, at 0.06 m/s, became the "last rep"
+   * every RPE reading and the 1RM-velocity offer are taken from. A quarter of
+   * the largest drops them while a genuine partial rep, or a failed one that
+   * got halfway, stays; a tracker glitch would have to be four times a real
+   * rep's travel before it could hide one.
+   */
+  minRomFractionOfLargest?: number
 }
 
 const SEGMENT_DEFAULTS: Required<SegmentOptions> = {
   minMovingSpeed: 15,
   minRomPx: 20,
   minRomFraction: 0.4,
+  minRomFractionOfLargest: 0.25,
 }
+
+/**
+ * The shortest bar travel that counts as a rep once the path is calibrated.
+ *
+ * Shorter than any barbell lift's real range — a board press still moves the
+ * bar about 10 cm — and longer than a walkout sway or a re-rack bounce, which
+ * is what a pixel floor alone cannot say, since pixels depend on the zoom.
+ */
+export const MIN_REP_ROM_M = 0.07
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
@@ -252,7 +292,11 @@ export function segmentReps(
   // shorter than the set's own reps. Median rather than mean so one phantom
   // cannot drag the reference down and save itself.
   if (reps.length < 2) return reps
-  const floor = median(reps.map((r) => r.romPx)) * opts.minRomFraction
+  const roms = reps.map((r) => r.romPx)
+  const floor = Math.max(
+    median(roms) * opts.minRomFraction,
+    Math.max(...roms) * opts.minRomFractionOfLargest,
+  )
   return reps.filter((r) => r.romPx >= floor).map((r, index) => ({ ...r, index }))
 }
 
@@ -361,9 +405,12 @@ export function repMetrics(
   while (from < to && Math.abs(velocities[from].vy) < movingThreshold) from++
 
   const speeds = velocities.slice(from, to + 1).map((v) => Math.abs(v.vy))
-  const meanVelocityPxS = speeds.length
-    ? speeds.reduce((sum, s) => sum + s, 0) / speeds.length
-    : 0
+  // Displacement over time, which is what "mean concentric velocity" means.
+  // This used to average the velocity SAMPLES, which weights each moment by
+  // how many frames happened to land in it — and frames are dropped unevenly
+  // under load. Measured: drops clustered in the fast middle of a squat read
+  // 0.322 m/s against a true 0.383.
+  const meanVelocityPxS = displacementRate(samples, from, to)
   const peakVelocityPxS = percentile(speeds, PEAK_PERCENTILE)
   // Range of motion is measured from the TRUE bottom, not the trimmed start:
   // how far the bar travelled and how fast it moved are different questions,
@@ -401,9 +448,8 @@ export function repMetrics(
     }
   }
   const propulsiveSpeeds = velocities.slice(from, propulsiveEnd + 1).map((v) => Math.abs(v.vy))
-  const meanPropulsivePxS = propulsiveSpeeds.length
-    ? propulsiveSpeeds.reduce((sum, s) => sum + s, 0) / propulsiveSpeeds.length
-    : 0
+  // Same definition as the mean above, over the propulsive span only.
+  const meanPropulsivePxS = displacementRate(samples, from, propulsiveEnd)
 
   return {
     index: rep.index,
@@ -422,6 +468,12 @@ export function repMetrics(
         ? propulsiveSpeeds.length / speeds.length
         : null,
   }
+}
+
+/** Vertical distance over elapsed time between two samples, px/s. 0 for no time. */
+function displacementRate(samples: Sample[], from: number, to: number): number {
+  const dt = samples[to].t - samples[from].t
+  return dt > 0 ? Math.abs(samples[from].y - samples[to].y) / dt : 0
 }
 
 /** The scale reference: a line drawn across a plate of known diameter. */
@@ -578,6 +630,12 @@ export function analysePath(
   options: SegmentOptions = {},
 ): { velocities: VelocitySample[]; reps: RepMetrics[] } {
   const velocities = verticalVelocity(samples)
-  const reps = segmentReps(samples, velocities, options)
+  // With a scale, the noise floor can be a real distance instead of pixels.
+  const calibratedFloor =
+    pixelsPerMetre && pixelsPerMetre > 0 ? MIN_REP_ROM_M * pixelsPerMetre : 0
+  const reps = segmentReps(samples, velocities, {
+    ...options,
+    minRomPx: Math.max(options.minRomPx ?? SEGMENT_DEFAULTS.minRomPx, calibratedFloor),
+  })
   return { velocities, reps: reps.map((r) => repMetrics(r, samples, velocities, pixelsPerMetre)) }
 }

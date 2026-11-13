@@ -738,7 +738,19 @@ export function resolveLvSlope(
   const p = opts.profile
   // A profile's slope is in m/s per kg; converting needs its own 1RM, which is
   // the load that makes 100% mean something.
-  if (p && p.oneRm != null && p.fit.slope < 0 && p.fit.n >= 2) {
+  //
+  // Only a profile the panel would itself vouch for: at least three sets, with
+  // loads spread out and a line that fits. Two points always fit a line
+  // perfectly, and one saved set plus today's used to outrank the athlete's
+  // RECORDED max — measured on a 250 kg squatter, normal day-to-day bar-speed
+  // noise swung the estimate from 206 to 365 kg, where calibrating to the
+  // recorded max stayed between 239 and 254.
+  const trustworthy =
+    p != null &&
+    p.fit.n >= MIN_PROFILE_POINTS &&
+    !p.warnings.includes('narrow-load-range') &&
+    !p.warnings.includes('poor-fit')
+  if (p && trustworthy && p.oneRm != null && p.fit.slope < 0) {
     return { slope: -(100 / p.oneRm) / p.fit.slope, source: 'profile' }
   }
   if (opts.calibration) {

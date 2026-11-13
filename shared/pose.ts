@@ -503,25 +503,71 @@ export function anglesAgainstBar(
 }
 
 /**
- * Where the bar was slowest during the concentric — the sticking point.
+ * A dip has to be at least this deep, as a fraction of the ascent's top speed,
+ * to be a sticking point rather than tracking noise.
+ */
+const STICKING_MIN_DIP = 0.1
+
+/**
+ * An upward run only counts as an ascent if its top speed reaches this fraction
+ * of the fastest ascent in the clip — standing still, the tracked point still
+ * jitters up and down by a pixel.
+ */
+const ASCENT_MIN_SPEED = 0.2
+
+/**
+ * The sticking point: where the bar slowed most in the MIDDLE of an ascent.
  *
  * Returned as an index into the joined series so a caller can read every angle
  * at that instant, which is the whole question: what was the knee doing when the
  * bar stopped moving.
  *
- * Concentric only, hence the negative-velocity filter — `vy` is image space, so
- * up is negative. The slowest moment of a descent is not a sticking point, it is
- * the turnaround, and reporting that as one would be worse than saying nothing.
+ * This used to be the slowest upward sample anywhere in the clip — and the
+ * slowest "upward" sample is always a moment of near-rest: the first pixel of
+ * movement off the bottom, the last into lockout, or jitter while standing.
+ * Measured on a squat with a clear mid-ascent slow-down at 3.23 s, it marked
+ * 0.37 s, before the lift had started.
+ *
+ * A sticking point is a dip between two faster moments: the bar accelerates off
+ * the bottom, slows, then speeds up again. So within each ascent (a run of
+ * upward motion — `vy` is image space, up is negative), this finds the sample
+ * whose speed is furthest below the fastest point on BOTH sides of it. An
+ * ascent that only speeds up and then slows down has no such dip, and gets no
+ * marker: nothing is the honest answer for a lift that never stuck. Across
+ * several reps, the deepest dip wins — the hardest moment of the set.
  */
 export function stickingPoint(series: AngleVsBar[]): number | null {
-  let best: number | null = null
-  for (let i = 0; i < series.length; i++) {
-    const v = series[i].barVelocity
-    // Strictly rising: a bar at rest is not in a sticking point either.
-    if (v == null || v >= 0) continue
-    if (best === null || v > series[best].barVelocity!) best = i
+  const up = series.map((s) => (s.barVelocity != null && s.barVelocity < 0 ? -s.barVelocity : 0))
+  const fastest = Math.max(0, ...up)
+  if (fastest === 0) return null
+
+  let best: { index: number; depth: number } | null = null
+  let i = 0
+  while (i < up.length) {
+    if (up[i] === 0) {
+      i++
+      continue
+    }
+    let end = i
+    while (end + 1 < up.length && up[end + 1] > 0) end++
+
+    const run = up.slice(i, end + 1)
+    const top = Math.max(...run)
+    if (top >= fastest * ASCENT_MIN_SPEED && run.length >= 3) {
+      const before: number[] = []
+      for (let k = 0, m = 0; k < run.length; k++) before.push((m = Math.max(m, run[k])))
+      const after: number[] = new Array(run.length)
+      for (let k = run.length - 1, m = 0; k >= 0; k--) after[k] = m = Math.max(m, run[k])
+      for (let k = 1; k < run.length - 1; k++) {
+        const depth = Math.min(before[k], after[k]) - run[k]
+        if (depth >= top * STICKING_MIN_DIP && (!best || depth > best.depth)) {
+          best = { index: i + k, depth }
+        }
+      }
+    }
+    i = end + 1
   }
-  return best
+  return best?.index ?? null
 }
 
 // ---------------------------------------------------------------------------
