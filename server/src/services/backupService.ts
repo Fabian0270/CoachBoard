@@ -18,6 +18,7 @@ import {
 } from './pendingSettingsRestore.js'
 import { userDataDir } from './secureStore.js'
 import { log } from '../lib/logger.js'
+import { writeZip, type ZipEntry } from '../lib/zipWriter.js'
 
 /**
  * Backup and restore of a coach's data.
@@ -90,40 +91,43 @@ export async function exportToBuffer(): Promise<Buffer> {
   const tmp = path.join(os.tmpdir(), `coachboard-export-${Date.now()}-${process.pid}.sqlite`)
   try {
     await writeBackupTo(tmp)
-    const zip = new JSZip()
-    zip.file(DB_ENTRY, fs.readFileSync(tmp))
+    // Read and compressed without holding the main thread: this server runs in
+    // Electron's main process, and JSZip used to compress here in JavaScript —
+    // a 315 MB database took 10.5 s with freezes of half a second. See zipWriter.
+    // The database copy is streamed from disk rather than read whole.
+    const entries: ZipEntry[] = [{ name: DB_ENTRY, path: tmp }]
 
     for (const { name } of SETTINGS_FILES) {
       const src = path.join(userDataDir(), name)
       // Absent is the ordinary case for a coach who never set up email or
       // Discord, so it is not worth a warning.
-      if (fs.existsSync(src)) zip.file(name, fs.readFileSync(src))
+      if (fs.existsSync(src)) entries.push({ name, data: await fs.promises.readFile(src) })
     }
 
-    zip.file(
-      'manifest.json',
-      JSON.stringify(
-        {
-          format: ARCHIVE_FORMAT,
-          createdAt: new Date().toISOString(),
-          // States what is NOT here, so anyone opening the zip later can tell
-          // an intentionally partial backup from a truncated one.
-          excludes: ['media (Discord videos, saved analysis clips, recordings)'],
-        },
-        null,
-        2,
+    entries.push({
+      name: 'manifest.json',
+      data: Buffer.from(
+        JSON.stringify(
+          {
+            format: ARCHIVE_FORMAT,
+            createdAt: new Date().toISOString(),
+            // States what is NOT here, so anyone opening the zip later can tell
+            // an intentionally partial backup from a truncated one.
+            excludes: ['media (Discord videos, saved analysis clips, recordings)'],
+          },
+          null,
+          2,
+        ),
       ),
-    )
-
-    return await zip.generateAsync({
-      type: 'nodebuffer',
-      compression: 'DEFLATE',
-      // A SQLite file is mostly compressible page padding; 6 is the usual
-      // size/time sweet spot and keeps a large database quick to write.
-      compressionOptions: { level: 6 },
     })
+
+    // A SQLite file is mostly compressible page padding; 6 is the usual
+    // size/time sweet spot and keeps a large database quick to write.
+    return await writeZip(entries, 6)
   } finally {
-    fs.rmSync(tmp, { force: true })
+    // Async: deleting a database-sized file synchronously was the single
+    // longest freeze left in the export (~0.3 s at 315 MB on Windows).
+    await fs.promises.rm(tmp, { force: true }).catch(() => {})
   }
 }
 

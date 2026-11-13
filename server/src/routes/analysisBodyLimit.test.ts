@@ -4,7 +4,7 @@ import type { AddressInfo } from 'net'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { LANDMARK_COUNT, FLOATS_PER_LANDMARK } from 'coachboard-shared/pose'
+import { LANDMARK_COUNT, FLOATS_PER_LANDMARK, POSE_WIRE_TYPE, decodePoseTrack, encodePoseTrack } from 'coachboard-shared/pose'
 import { createApp } from '../app.js'
 import { initializeDatabase, getDb } from '../db.js'
 import { configureSecureStore } from '../services/secureStore.js'
@@ -48,18 +48,26 @@ const send = async (p: string, method: string, body: unknown) => {
 const track = (n: number) =>
   Array.from({ length: n }, (_, i) => ({ t: i / 30, x: 100 + (i % 50), y: 500 - (i % 80) }))
 
-/** A pose payload of `frames` frames, shaped exactly as poseApi.savePose packs it. */
-const posePayload = (frames: number) => {
+/** A pose track of `frames` frames, packed exactly as poseApi.savePose sends it. */
+const posePayload = (frames: number): Uint8Array => {
   const floats = frames * LANDMARK_COUNT * FLOATS_PER_LANDMARK
-  return {
+  return encodePoseTrack({
     frameCount: frames,
     landmarkCount: LANDMARK_COUNT,
-    // Real coordinates, not zeros: a Float32 value stringifies to ~18 characters
-    // where 0 takes one, and that difference is most of the payload size.
-    keypoints: Array.from({ length: floats }, (_, i) => (i % 1080) + 0.123456789),
-    world: Array.from({ length: floats }, (_, i) => (i % 100) / 100 - 0.5),
-    times: Array.from({ length: frames }, (_, i) => i / 30),
-  }
+    keypoints: Float32Array.from({ length: floats }, (_, i) => (i % 1080) + 0.123456789),
+    world: Float32Array.from({ length: floats }, (_, i) => (i % 100) / 100 - 0.5),
+    times: Float64Array.from({ length: frames }, (_, i) => i / 30),
+  })
+}
+
+const putPose = async (body: Uint8Array) => {
+  const res = await fetch(`${baseUrl}/api/analysis/${analysisId}/pose`, {
+    method: 'PUT',
+    headers: { 'Content-Type': POSE_WIRE_TYPE },
+    body: body.buffer as ArrayBuffer,
+  })
+  const text = await res.text()
+  return { status: res.status, body: text ? JSON.parse(text) : null }
 }
 
 beforeAll(async () => {
@@ -100,40 +108,52 @@ afterAll(async () => {
 
 describe('pose track body size', () => {
   it('stores a one-second track — the size that used to 413', async () => {
-    // 30 frames serialises to ~112 KB, just past the old 100 kb default. This is
-    // the smallest payload that exposed the bug.
-    const { status } = await send(`/api/analysis/${analysisId}/pose`, 'PUT', posePayload(30))
+    const { status } = await putPose(posePayload(30))
     expect(status).toBe(204)
   })
 
   it('stores a full set at 60 fps', async () => {
-    // 900 frames — a 15-second lift off a phone. ~3 MB.
-    const { status } = await send(`/api/analysis/${analysisId}/pose`, 'PUT', posePayload(900))
+    // 900 frames — a 15-second lift off a phone.
+    const { status } = await putPose(posePayload(900))
     expect(status).toBe(204)
   })
 
-  it('reads back what it stored, at full length', async () => {
+  it('stores a track at the frame cap — ten minutes of 60 fps', async () => {
+    // ~29 MB packed. As JSON this was ~130 MB and took over a second to parse
+    // on the process that runs the whole app.
+    const { status } = await putPose(posePayload(36_000))
+    expect(status).toBe(204)
+  }, 60_000)
+
+  it('reads back what it stored, at full length and exactly', async () => {
     const frames = 900
-    await send(`/api/analysis/${analysisId}/pose`, 'PUT', posePayload(frames))
+    const sent = posePayload(frames)
+    await putPose(sent)
     const res = await fetch(`${baseUrl}/api/analysis/${analysisId}/pose`)
-    const body = await res.json()
     expect(res.status).toBe(200)
-    expect(body.frameCount).toBe(frames)
-    expect(body.keypoints).toHaveLength(frames * LANDMARK_COUNT * FLOATS_PER_LANDMARK)
+    expect(res.headers.get('content-type')).toContain(POSE_WIRE_TYPE)
+    const { packed, meta } = decodePoseTrack(new Uint8Array(await res.arrayBuffer()), { maxFrames: 36_000, maxLandmarks: 64 })
+    const original = decodePoseTrack(sent, { maxFrames: 36_000, maxLandmarks: 64 }).packed
+    expect(packed.frameCount).toBe(frames)
+    expect(packed.keypoints).toEqual(original.keypoints)
     // The world set is what joint angles are measured from; losing it in
     // transit would silently downgrade every angle to the image-space basis.
-    expect(body.world).toHaveLength(frames * LANDMARK_COUNT * FLOATS_PER_LANDMARK)
+    expect(packed.world).toEqual(original.world)
+    expect(packed.times).toEqual(original.times)
+    expect(meta).toMatchObject({ corrections: [] })
   })
 
-  it('refuses a track past the frame cap through the schema, not the parser', async () => {
-    const { status, body } = await send(`/api/analysis/${analysisId}/pose`, 'PUT', {
-      ...posePayload(2),
-      frameCount: 36_001,
-    })
-    // A 400 from Zod, never a 413 from the body parser: the two limits are one
-    // decision, and the schema is the one that should be doing the refusing.
+  it('refuses a track past the frame cap with a 400, not a 413', async () => {
+    const body = posePayload(2)
+    new DataView(body.buffer).setUint32(4, 36_001, true) // frameCount in the header
+    const { status, body: answer } = await putPose(body)
     expect(status).toBe(400)
-    expect(body.error).toBe('Invalid pose track')
+    expect(answer.error).toBe('Invalid pose track')
+  })
+
+  it('refuses a truncated track', async () => {
+    const { status } = await putPose(posePayload(30).slice(0, 1000))
+    expect(status).toBe(400)
   })
 })
 

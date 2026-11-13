@@ -1,5 +1,9 @@
 import {
+  LANDMARK_COUNT,
+  POSE_WIRE_TYPE,
   applyCorrections,
+  decodePoseTrack,
+  encodePoseTrack,
   packPose,
   smooth,
   unpackPose,
@@ -11,10 +15,10 @@ import {
 // Reading and writing a saved skeleton (Feature 11e-4).
 //
 // The packing lives in shared/pose.ts and is tested there; this is only the
-// transport. Coordinates travel as plain number arrays and are packed into
-// Float32 BLOBs at the server's storage boundary — JSON over localhost costs a
-// few hundred kilobytes on a save the coach explicitly asked for, and a binary
-// body would mean a second content type for one route.
+// transport. The track travels packed in both directions (encodePoseTrack): it
+// used to be JSON number arrays, and parsing those blocked the server — which
+// is Electron's main process, i.e. the whole app — for as long as a second on
+// a long clip.
 // ---------------------------------------------------------------------------
 
 export interface LoadedPose {
@@ -32,14 +36,9 @@ export async function savePose(analysisId: string, frames: PoseFrame[]): Promise
   const packed = packPose(frames)
   const res = await fetch(`/api/analysis/${encodeURIComponent(analysisId)}/pose`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      frameCount: packed.frameCount,
-      landmarkCount: packed.landmarkCount,
-      keypoints: Array.from(packed.keypoints),
-      world: packed.world ? Array.from(packed.world) : null,
-      times: Array.from(packed.times),
-    }),
+    headers: { 'Content-Type': POSE_WIRE_TYPE },
+    // The encoder allocates exactly the bytes it writes, so its buffer is the body.
+    body: encodePoseTrack(packed).buffer as ArrayBuffer,
   })
   if (!res.ok) throw new Error('Could not save the skeleton')
 }
@@ -52,15 +51,14 @@ export async function loadPose(analysisId: string): Promise<LoadedPose | null> {
   if (res.status === 404) return null
   if (!res.ok) throw new Error('Could not load the skeleton')
 
-  const body = await res.json()
-  const measured = unpackPose({
-    frameCount: body.frameCount,
-    landmarkCount: body.landmarkCount,
-    keypoints: Float32Array.from(body.keypoints),
-    world: body.world ? Float32Array.from(body.world) : null,
-    times: Float64Array.from(body.times),
+  const { packed, meta } = decodePoseTrack(new Uint8Array(await res.arrayBuffer()), {
+    // Generous: this only guards against reading a damaged body, the server's
+    // own caps decided what could be stored.
+    maxFrames: 1_000_000,
+    maxLandmarks: Math.max(64, LANDMARK_COUNT),
   })
-  const corrections: PoseCorrection[] = body.corrections ?? []
+  const measured = unpackPose(packed)
+  const corrections: PoseCorrection[] = (meta as { corrections?: PoseCorrection[] }).corrections ?? []
   // Smoothed for display, raw in `measured`. What was stored is the
   // measurement; the median filter is a reconstruction, so it is applied on the
   // way OUT rather than baked into the row — the same split the corrections use.

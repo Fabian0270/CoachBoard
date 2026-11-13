@@ -18,7 +18,7 @@ import {
   savePoseTrack,
   setPoseCorrection,
 } from '../services/poseTrackService.js'
-import { LANDMARK_COUNT, FLOATS_PER_LANDMARK } from 'coachboard-shared/pose'
+import { POSE_WIRE_TYPE, PoseWireError, decodePoseTrack, encodePoseTrack } from 'coachboard-shared/pose'
 import { fail } from '../lib/httpError.js'
 
 const router = Router()
@@ -33,25 +33,32 @@ const router = Router()
 // phone footage produces twice the frames per minute that 30 fps does. 36,000
 // is ten minutes either way: 10 min at 60 fps, 20 min at 30 fps.
 //
-// These caps and ANALYSIS_JSON_LIMIT are one decision, not two. The limit is
-// sized from the MEASURED worst case of exactly this many frames (a full pose
-// track with world landmarks serialises to ~130 MB) plus headroom. Before this,
-// the schema permitted ~150 MB while express.json()'s unset 100 kb default
-// rejected everything over about a second of pose — so no pose track was ever
-// stored, and the save reported "the skeleton could not be" every time.
+// The caps below and the body limits are one decision, not two. Before they
+// were tied together the schema permitted ~150 MB while express.json()'s unset
+// 100 kb default rejected everything over about a second of pose — so no pose
+// track was ever stored, and the save reported "the skeleton could not be"
+// every time.
 // ---------------------------------------------------------------------------
 const MAX_FRAMES = 36_000
 
-/** Floats in a full pose frame set — what the client actually packs and sends. */
-const MAX_POSE_FLOATS = MAX_FRAMES * LANDMARK_COUNT * FLOATS_PER_LANDMARK
+/** Most landmarks per frame a pose track may carry. */
+const MAX_LANDMARKS = 64
 
 /**
- * Body-size cap for this router, mounted in app.ts AHEAD of the global parser.
- *
- * Scoped rather than raising the global limit: /api/analysis is the only router
- * carrying large JSON, and every other route keeps the conservative default.
+ * Pose tracks travel packed (see encodePoseTrack in shared/pose.ts), not as
+ * JSON. The worst case at the frame cap — 36,000 frames of 33 landmarks with
+ * world coordinates — is ~29 MB packed; it was ~130 MB as JSON text, and
+ * parsing that took over a second on the process that runs the whole app.
  */
-export const ANALYSIS_JSON_LIMIT = '160mb'
+export const POSE_BODY_LIMIT = '32mb'
+
+/**
+ * JSON body cap for this router, mounted in app.ts AHEAD of the global parser.
+ * With pose tracks no longer JSON, the largest JSON here is a bar path at the
+ * frame cap (~2.5 MB). Scoped rather than raising the global limit: every
+ * other route keeps the conservative default.
+ */
+export const ANALYSIS_JSON_LIMIT = '8mb'
 
 const pointSchema = z.object({ x: z.number(), y: z.number() })
 
@@ -217,23 +224,11 @@ router.post('/', async (req, res) => {
 // ~238 KB and almost every read of an analysis does not want it — the same
 // reasoning as withTrack=0 on the list above.
 //
-// Coordinates travel as plain number arrays here and are packed into Float32
-// BLOBs at the storage boundary. JSON over localhost costs a few hundred
-// kilobytes on a typical save the coach explicitly asked for; a binary request
-// body would mean a second content type and a hand-rolled parser for one route.
-//
-// The cost is not free at the top of the range — a full-length track serialises
-// to ~130 MB and is buffered whole before parsing — which is what
-// ANALYSIS_JSON_LIMIT is sized against. If tracks this long ever become routine,
-// that is the point to revisit the content type rather than raise the number.
-
-const poseSchema = z.object({
-  frameCount: z.number().int().positive().max(MAX_FRAMES),
-  landmarkCount: z.number().int().positive().max(64),
-  keypoints: z.array(z.number()).max(MAX_POSE_FLOATS),
-  world: z.array(z.number()).max(MAX_POSE_FLOATS).nullable().optional(),
-  times: z.array(z.number()).max(MAX_FRAMES),
-})
+// Both directions travel packed (encodePoseTrack / decodePoseTrack in
+// shared/pose.ts) — the same Float32/Float64 arrays that are stored as BLOBs.
+// They used to be JSON number arrays, and this server runs inside Electron's
+// main process: measured, parsing one stalled the whole app ~35 ms for a 20 s
+// lift, ~240 ms for three minutes and over a second at the frame cap.
 
 router.get('/:id/pose', async (req, res) => {
   const track = await getPoseTrack(req.params.id)
@@ -241,22 +236,35 @@ router.get('/:id/pose', async (req, res) => {
     res.status(404).json({ error: 'No pose track for that analysis' })
     return
   }
-  res.json({
-    model: track.model,
-    frameCount: track.frameCount,
-    landmarkCount: track.landmarkCount,
-    keypoints: Array.from(track.keypoints),
-    world: track.world ? Array.from(track.world) : null,
-    times: Array.from(track.times),
-    corrections: track.corrections,
-  })
+  // Packed, like the upload: turning millions of floats into JSON text here
+  // blocked the main process for as long as parsing them did.
+  const body = encodePoseTrack(
+    {
+      frameCount: track.frameCount,
+      landmarkCount: track.landmarkCount,
+      keypoints: track.keypoints,
+      world: track.world,
+      times: track.times,
+    },
+    { model: track.model, corrections: track.corrections },
+  )
+  res.type(POSE_WIRE_TYPE).send(Buffer.from(body.buffer, body.byteOffset, body.byteLength))
 })
 
-router.put('/:id/pose', async (req, res) => {
-  const parsed = poseSchema.safeParse(req.body)
-  if (!parsed.success) {
+router.put('/:id/pose', express.raw({ type: POSE_WIRE_TYPE, limit: POSE_BODY_LIMIT }), async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
     res.status(400).json({ error: 'Invalid pose track' })
     return
+  }
+  let decoded: ReturnType<typeof decodePoseTrack>
+  try {
+    decoded = decodePoseTrack(req.body, { maxFrames: MAX_FRAMES, maxLandmarks: MAX_LANDMARKS })
+  } catch (err) {
+    if (err instanceof PoseWireError) {
+      res.status(400).json({ error: 'Invalid pose track' })
+      return
+    }
+    throw err
   }
   // The analysis must exist first. The foreign key would refuse anyway, but as
   // an opaque constraint error rather than something a client can act on.
@@ -265,15 +273,8 @@ router.put('/:id/pose', async (req, res) => {
     res.status(404).json({ error: 'Analysis not found' })
     return
   }
-  const { frameCount, landmarkCount, keypoints, world, times } = parsed.data
   try {
-    await savePoseTrack(req.params.id, {
-      frameCount,
-      landmarkCount,
-      keypoints: Float32Array.from(keypoints),
-      world: world ? Float32Array.from(world) : null,
-      times: Float64Array.from(times),
-    })
+    await savePoseTrack(req.params.id, decoded.packed)
   } catch (err) {
     // The service checks the arrays against the counts, and a mismatch is the
     // client's bug, not a server fault.

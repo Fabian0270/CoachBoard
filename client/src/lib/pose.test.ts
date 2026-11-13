@@ -19,6 +19,10 @@ import {
   stickingPoint,
   insertFrame,
   correctionsAtTimes,
+  FLOATS_PER_LANDMARK,
+  PoseWireError,
+  decodePoseTrack,
+  encodePoseTrack,
   type AngleVsBar,
   type Landmark,
   type PoseFrame,
@@ -769,5 +773,54 @@ describe('POSE_BONES', () => {
       ([a, b]) => a === LM.LEFT_FOOT_INDEX || b === LM.LEFT_FOOT_INDEX,
     )
     expect(hasFoot).toBe(true)
+  })
+})
+
+describe('pose track wire format', () => {
+  const track = (frames: number, withWorld: boolean) => {
+    const floats = frames * 33 * FLOATS_PER_LANDMARK
+    return {
+      frameCount: frames,
+      landmarkCount: 33,
+      keypoints: Float32Array.from({ length: floats }, (_, i) => i * 0.5),
+      world: withWorld ? Float32Array.from({ length: floats }, (_, i) => -i / 7) : null,
+      times: Float64Array.from({ length: frames }, (_, i) => i / 59.94),
+    }
+  }
+  const limits = { maxFrames: 36_000, maxLandmarks: 64 }
+
+  it('round-trips every array exactly, with and without world landmarks', () => {
+    for (const withWorld of [true, false]) {
+      const original = track(12, withWorld)
+      const { packed, meta } = decodePoseTrack(encodePoseTrack(original, { model: 'm1' }), limits)
+      expect(packed).toEqual(original)
+      expect(meta).toEqual({ model: 'm1' })
+    }
+  })
+
+  it('keeps timestamps at double precision', () => {
+    const original = track(3, false)
+    original.times[2] = 1 / 3
+    expect(decodePoseTrack(encodePoseTrack(original), limits).packed.times[2]).toBe(1 / 3)
+  })
+
+  it('reads bytes that sit at an odd offset inside a larger buffer', () => {
+    // A Node Buffer from a request body lives inside a shared pool at an
+    // arbitrary offset; reading through its .buffer misaligned every array.
+    // A Buffer specifically: its slice() is a view, not a copy.
+    const bytes = encodePoseTrack(track(5, true))
+    const host = Buffer.alloc(bytes.length + 3)
+    host.set(bytes, 3)
+    expect(decodePoseTrack(host.subarray(3), limits).packed).toEqual(track(5, true))
+  })
+
+  it('refuses anything that does not match its own header', () => {
+    const bytes = encodePoseTrack(track(5, true))
+    expect(() => decodePoseTrack(bytes.subarray(0, bytes.length - 1), limits)).toThrow(PoseWireError)
+    expect(() => decodePoseTrack(new Uint8Array(10), limits)).toThrow(PoseWireError)
+    const wrongMagic = bytes.slice()
+    wrongMagic[0] = 0
+    expect(() => decodePoseTrack(wrongMagic, limits)).toThrow(/Not pose data/)
+    expect(() => decodePoseTrack(bytes, { maxFrames: 4, maxLandmarks: 64 })).toThrow(/Frame count/)
   })
 })

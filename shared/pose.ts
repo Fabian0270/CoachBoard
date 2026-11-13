@@ -657,6 +657,110 @@ export function unpackPose(packed: PackedPose): PoseFrame[] {
   return frames
 }
 
+// ---------------------------------------------------------------------------
+// The pose track on the wire.
+//
+// It used to travel as JSON: millions of numbers turned into text in the
+// renderer, then parsed back in the server — which runs inside Electron's main
+// process, so the whole app stalled while it did. Measured: ~35 ms for a 20 s
+// lift, ~240 ms for 3 minutes, over a second at the ten-minute cap. The arrays
+// were packed into Float32/Float64 on arrival anyway, so they now travel packed:
+// no parse at all, and about a quarter of the bytes.
+//
+// Layout, little-endian:
+//   0  u32  magic "CBP1"
+//   4  u32  frameCount
+//   8  u32  landmarkCount
+//  12  u32  flags (bit 0: has world landmarks)
+//  16  u32  meta byte length
+//  20  u32  reserved (0)
+//  24  f64  times[frameCount]
+//      f32  keypoints[frameCount * landmarkCount * 3]
+//      f32  world[same]            (only when flagged)
+//      utf8 meta JSON              (model, corrections — small)
+// ---------------------------------------------------------------------------
+
+const POSE_WIRE_MAGIC = 0x31504243 // "CBP1" read as a little-endian u32
+const POSE_WIRE_HEADER = 24
+
+export const POSE_WIRE_TYPE = 'application/vnd.coachboard.pose'
+
+export function encodePoseTrack(packed: PackedPose, meta: object = {}): Uint8Array {
+  const metaBytes = new TextEncoder().encode(JSON.stringify(meta))
+  const floats = packed.keypoints.length
+  const size =
+    POSE_WIRE_HEADER + packed.times.length * 8 + floats * 4 + (packed.world ? floats * 4 : 0) + metaBytes.length
+  const out = new Uint8Array(size)
+  const view = new DataView(out.buffer)
+  view.setUint32(0, POSE_WIRE_MAGIC, true)
+  view.setUint32(4, packed.frameCount, true)
+  view.setUint32(8, packed.landmarkCount, true)
+  view.setUint32(12, packed.world ? 1 : 0, true)
+  view.setUint32(16, metaBytes.length, true)
+  view.setUint32(20, 0, true)
+  let at = POSE_WIRE_HEADER
+  const put = (arr: Float32Array | Float64Array) => {
+    // Byte-copied rather than written through a typed view: a little-endian
+    // platform (every machine this runs on) stores them exactly as the layout says.
+    out.set(new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength), at)
+    at += arr.byteLength
+  }
+  put(packed.times)
+  put(packed.keypoints)
+  if (packed.world) put(packed.world)
+  out.set(metaBytes, at)
+  return out
+}
+
+export class PoseWireError extends Error {}
+
+/**
+ * Reads a track written by encodePoseTrack. Every length is checked against the
+ * header before anything is read, so a truncated or hostile body is refused
+ * rather than read past its end.
+ */
+export function decodePoseTrack(
+  bytes: Uint8Array,
+  limits: { maxFrames: number; maxLandmarks: number },
+): { packed: PackedPose; meta: unknown } {
+  if (bytes.byteLength < POSE_WIRE_HEADER) throw new PoseWireError('Pose data is too short')
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  if (view.getUint32(0, true) !== POSE_WIRE_MAGIC) throw new PoseWireError('Not pose data')
+  const frameCount = view.getUint32(4, true)
+  const landmarkCount = view.getUint32(8, true)
+  const hasWorld = (view.getUint32(12, true) & 1) === 1
+  const metaLength = view.getUint32(16, true)
+  if (frameCount < 1 || frameCount > limits.maxFrames) throw new PoseWireError('Frame count out of range')
+  if (landmarkCount < 1 || landmarkCount > limits.maxLandmarks) throw new PoseWireError('Landmark count out of range')
+
+  const floats = frameCount * landmarkCount * FLOATS_PER_LANDMARK
+  const expected = POSE_WIRE_HEADER + frameCount * 8 + floats * 4 * (hasWorld ? 2 : 1) + metaLength
+  if (bytes.byteLength !== expected) throw new PoseWireError('Pose data does not match its own header')
+
+  let at = POSE_WIRE_HEADER
+  // Copied into a fresh buffer so each array starts aligned, whatever offset
+  // the incoming bytes sit at. NOT bytes.slice(): on a Node Buffer that returns
+  // a view into the shared allocation pool, whose .buffer is the whole pool.
+  const take = (length: number) => {
+    const chunk = new Uint8Array(length)
+    chunk.set(bytes.subarray(at, at + length))
+    at += length
+    return chunk.buffer
+  }
+  const times = new Float64Array(take(frameCount * 8))
+  const keypoints = new Float32Array(take(floats * 4))
+  const world = hasWorld ? new Float32Array(take(floats * 4)) : null
+  let meta: unknown = {}
+  if (metaLength > 0) {
+    try {
+      meta = JSON.parse(new TextDecoder().decode(bytes.subarray(at, at + metaLength)))
+    } catch {
+      throw new PoseWireError('Pose metadata is not readable')
+    }
+  }
+  return { packed: { frameCount, landmarkCount, keypoints, world, times }, meta }
+}
+
 /**
  * One landmark the coach has moved by hand.
  *

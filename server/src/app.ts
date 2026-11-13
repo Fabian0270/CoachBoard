@@ -39,11 +39,13 @@ export function createApp(staticDir?: string, logPath?: string) {
   // needs it instead of applying to all ~124 routes.
   //
   // This was a silent, total failure of the pose feature, not a tuning problem.
-  // express.json() with no options takes a 100 kb default; a pose track is ~238 KB
-  // for a couple of seconds and ~130 MB at the cap, so every PUT /:id/pose past
-  // about one second of footage 413'd. The client caught it and showed "the
-  // analysis was saved, but the skeleton could not be" — so the feature looked
-  // merely flaky rather than broken, and no skeleton was ever stored.
+  // express.json() with no options takes a 100 kb default; a pose track (then
+  // JSON) was ~238 KB for a couple of seconds, so every PUT /:id/pose past about
+  // one second of footage 413'd. The client caught it and showed "the analysis
+  // was saved, but the skeleton could not be" — so the feature looked merely
+  // flaky rather than broken, and no skeleton was ever stored. Pose tracks now
+  // travel packed with their own raw parser (see routes/analysis.ts); this
+  // limit covers the bar-path JSON.
   app.use('/api/analysis', express.json({ limit: ANALYSIS_JSON_LIMIT }), analysisRouter)
 
   // JSON only. A urlencoded parser used to be mounted too, which nothing in the
