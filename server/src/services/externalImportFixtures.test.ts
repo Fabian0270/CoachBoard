@@ -64,6 +64,9 @@ function golden(p: ExternalImportPreview) {
       name: e.name,
       sets: e.sets,
       reps: e.reps,
+      // The coach's prescription and the athlete's results, kept apart.
+      loadCap: e.loadCap ?? null,
+      intensity: e.intensity ?? null,
       load: e.load,
       rpe: e.rpe,
     })),

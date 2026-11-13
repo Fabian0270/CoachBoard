@@ -141,7 +141,10 @@ export function computeFingerprint(data: ExportData): ProgramFingerprint {
     }
 
     const lift = mainLiftKey(ex.name)
-    const load = num(ex.load_used)
+    // The coach's style is how they PRESCRIBE, so the Load Cap they wrote comes
+    // first; what the athlete lifted stands in only where nothing was
+    // prescribed (older imports, plain training logs).
+    const load = ex.weight ?? num(ex.load_used)
     if (lift && load !== null) {
       const byWeek = loadsByLiftWeek.get(lift) ?? new Map<number, number[]>()
       loadsByLiftWeek.set(lift, byWeek)

@@ -5,7 +5,7 @@ import type {
   ExternalParseOverrides,
 } from 'coachboard-shared'
 import { isNumericLike, classifySectionHeader } from '../cellParsing.js'
-import { resolveHeaderRow, type ResolvedHeader } from '../headerDetection.js'
+import { isResultHeader, resolveHeaderRow, type ResolvedHeader } from '../headerDetection.js'
 import {
   normalizeReps,
   normalizeLoad,
@@ -78,6 +78,12 @@ export function parseVertical(readRow: ReadRow, maxRow: number, overrides?: Exte
     warnings.push({ message: 'No RPE/RIR column found — no effort analysis will be available for this program.' })
   }
 
+  // Whose columns are these? A plain "Load"/"RPE" is the coach's prescription;
+  // only a header like "Load used" / "Last set RPE" is the athlete's.
+  const headerText = headerRow > 0 ? readRow(headerRow) : []
+  const loadIsResult = mapping.load !== null && isResultHeader(headerText[mapping.load - 1] ?? '')
+  const rpeIsResult = mapping.rpe !== null && isResultHeader(headerText[mapping.rpe - 1] ?? '')
+
   // 2 + 3. Walk rows, tracking week/day sections and collecting exercise rows.
   const exercises: ExternalExerciseRow[] = []
   let weekIdx = -1
@@ -132,8 +138,10 @@ export function parseVertical(readRow: ReadRow, maxRow: number, overrides?: Exte
         name,
         sets: setsText,
         reps: normalizeReps(repsText, r, warnings),
-        load: normalizeLoad(col(cells, mapping.load), r, warnings),
+        load: normalizeLoad(col(cells, mapping.load), r, warnings, !loadIsResult),
         rpe: normalizeRpe(col(cells, mapping.rpe), mapping.rpeFromRir, r, warnings),
+        loadIsResult,
+        rpeIsResult,
         sheetRow: r,
         refillCols: { name: mapping.exercise, sets: mapping.sets, reps: mapping.reps, load: mapping.load, rpe: mapping.rpe, erpe: null },
       })

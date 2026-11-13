@@ -96,10 +96,23 @@ function mondayIso(iso: string): string {
   date.setUTCDate(date.getUTCDate() + (dow === 0 ? -6 : 1 - dow))
   return date.toISOString().slice(0, 10)
 }
-function loadValue(ex: ExerciseRow): number | string | null {
+/**
+ * The value for a template's single load column: the coach's Load Cap, else
+ * the athlete's Load Used, else — when the template has no target column of
+ * its own to carry it — the load part of the target ("75%" out of "75% @8").
+ * An imported coach sheet's "Load" column is stored as the prescription, so
+ * without that last step a "75%" the coach wrote would export as a blank.
+ */
+function loadValue(ex: ExerciseRow, targetHasNoColumn: boolean): number | string | null {
   if (ex.weight !== null && ex.weight !== undefined) return ex.weight
-  return usedLoad(ex)
+  const used = usedLoad(ex)
+  if (used !== null || !targetHasNoColumn || !ex.intensity) return used
+  const text = ex.intensity.replace(EFFORT, '').trim()
+  if (!text) return null
+  return /^\d+(?:[.,]\d+)?$/.test(text) ? parseFloat(text.replace(',', '.')) : text
 }
+/** "@8", "@ 7-8", "RPE 8" inside a target. */
+const EFFORT = /(?:@|\brpe\b)\s*(\d+(?:[.,]\d+)?(?:\s*[-–]\s*\d+(?:[.,]\d+)?)?)/i
 /** The athlete's actual "Load Used" value (string load_used → number when numeric). */
 function usedLoad(ex: ExerciseRow): number | string | null {
   if (!ex.load_used) return null
@@ -120,11 +133,10 @@ function clearBold(cell: ExcelJS.Cell): void {
 }
 function rpeValue(ex: ExerciseRow): string | null {
   if (ex.rpe !== null && ex.rpe !== '') return String(ex.rpe)
-  if (ex.intensity && /rpe|^@/i.test(ex.intensity.trim())) {
-    const m = ex.intensity.match(/(\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?)/)
-    if (m) return m[1].replace(/\s+/g, '')
-  }
-  return null
+  // The target RPE, wherever it sits in the target: "@8", "RPE 7-8", or after
+  // a load in "75% @8" (how an imported coach sheet's RPE column is stored).
+  const m = ex.intensity?.match(EFFORT)
+  return m ? m[1].replace(/\s+/g, '').replace('–', '-') : null
 }
 
 /** A1 column letters → 1-based column number. */
@@ -363,7 +375,7 @@ async function renderRowAxis(
           set(slot.cols.loadCap, ex ? (ex.weight ?? null) : null)
           set(slot.cols.load, ex ? (usedLoad(ex) ?? null) : null)
         } else {
-          set(slot.cols.load, ex ? (loadValue(ex) ?? null) : null)
+          set(slot.cols.load, ex ? (loadValue(ex, slot.cols.intensity === null) ?? null) : null)
         }
         set(slot.cols.rpe, ex ? fmtRpe(rpeValue(ex)) : null)
         set(slot.cols.erpe, null)
@@ -807,7 +819,7 @@ export async function renderScaffold(
           set(slot.rel.loadCap, ex ? (ex.weight ?? null) : null)
           set(slot.rel.load, ex ? (usedLoad(ex) ?? null) : null)
         } else {
-          set(slot.rel.load, ex ? (loadValue(ex) ?? null) : null)
+          set(slot.rel.load, ex ? (loadValue(ex, slot.rel.intensity === null) ?? null) : null)
         }
         set(slot.rel.rpe, ex ? fmtRpe(rpeValue(ex)) : null)
         set(slot.rel.erpe, null) // executed RPE always blank in a fresh block

@@ -39,7 +39,13 @@ export function normalizeIntensity(text: string): string | null {
 }
 
 /** "Load Used" → number-ish string; bodyweight → null; strip kg/lbs; warn on junk. */
-export function normalizeLoad(text: string, sheetRow: number, warnings: ExternalImportWarning[]): string | null {
+export function normalizeLoad(
+  text: string,
+  sheetRow: number,
+  warnings: ExternalImportWarning[],
+  /** A coach's prescription keeps text it cannot reduce to a number ("75%", "140-145"); a result does not. */
+  keepText = false,
+): string | null {
   if (!text) return null
   if (BODYWEIGHT.test(text)) return null
   const m = text.replace(',', '.').match(/^(\d+(?:\.\d+)?)\s*(kg|lbs|lb)?$/i)
@@ -54,6 +60,7 @@ export function normalizeLoad(text: string, sheetRow: number, warnings: External
     }
     return m[1]
   }
+  if (keepText) return text.trim() || null
   warnings.push({ sheetRow, message: `Row ${sheetRow}: could not read load "${text}" — left blank.` })
   return null
 }

@@ -5,6 +5,8 @@ import { estimate1RM } from 'coachboard-shared/rpe'
 import { mainLiftKey } from 'coachboard-shared/vbt'
 import {
   DAY_NAMES,
+  MINIMAL_DESCRIPTOR,
+  parseExportLayout,
   resolveExportRenderPath,
   weekColumnStart,
 } from 'coachboard-shared/exportLayout'
@@ -13,8 +15,30 @@ import {
   cellText,
   findResultsBlocks,
   nameColForWeek,
+  resultLabelsFor,
   type ResultsBlock,
 } from './resultsSheetLayout.js'
+
+/**
+ * What this program's own export calls its result columns, when it exports
+ * through a column descriptor. Those columns are the athlete's by definition,
+ * whatever they are called — the Minimalistic look calls them just "Load" and
+ * "RPE". A coach's imported sheet does not count: its plain "Load" is the
+ * prescription (it is captured as load_cap, never load_used).
+ */
+function ownResultLabels(program: { export_layout: string | null; builtin_template?: string | null }): {
+  load: string[]
+  rpe: string[]
+} {
+  const template =
+    parseExportLayout(program.export_layout) ??
+    (!program.export_layout && program.builtin_template === 'minimal' ? MINIMAL_DESCRIPTOR : null)
+  const columns = template?.columns ?? []
+  return {
+    load: columns.filter((c) => c.key === 'load_used').map((c) => c.label),
+    rpe: columns.filter((c) => c.key === 'rpe').map((c) => c.label),
+  }
+}
 import { getDb } from '../db.js'
 
 // Accept both comma and period decimal separators (Swedish Excel uses commas).
@@ -257,7 +281,13 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
   // one exercise-name column across every week, start below a title block, or
   // word its headers differently — none of which the offset replay can follow.
   // The replay stays as the fallback for a sheet with no headers to read.
-  const blocks = findResultsBlocks(ws)
+  // An imported coach style is rebuilt from the coach's own workbook, whose
+  // plain "Load"/"RPE" columns are the prescription, so only the default
+  // athlete labels apply there.
+  const blocks = findResultsBlocks(
+    ws,
+    resultLabelsFor(renderPath.kind === 'grid' ? ownResultLabels(program) : undefined),
+  )
 
   if (blocks.length === 0 && !geometryReadable) {
     // Nothing in the program to import into — a configuration note, not a bad file.

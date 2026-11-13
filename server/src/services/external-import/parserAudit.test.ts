@@ -52,7 +52,7 @@ describe('stacked (vertical) sheets', () => {
       ['Push Press', 3, 5, 50, '8-9'],
       ['Row', 3, 8, 60, '@7,5'],
     ]))
-    expect(p.exercises.map((e) => e.rpe)).toEqual(['8', '8-9', '7.5'])
+    expect(p.exercises.map((e) => e.intensity)).toEqual(['@8', '@8-9', '@7.5'])
   })
 
   it('turns an RIR range into the matching RPE range', async () => {
@@ -60,7 +60,7 @@ describe('stacked (vertical) sheets', () => {
       ['Exercise', 'Sets', 'Reps', 'Load', 'RIR'],
       ['Squat', 3, 5, 100, '1-2'],
     ]))
-    expect(p.exercises[0].rpe).toBe('8-9')
+    expect(p.exercises[0].intensity).toBe('@8-9')
   })
 
   it('warns when a load is in pounds', async () => {
@@ -68,7 +68,7 @@ describe('stacked (vertical) sheets', () => {
       ['Exercise', 'Sets', 'Reps', 'Load', 'RPE'],
       ['Bench', 3, 5, '225 lbs', 8],
     ]))
-    expect(p.exercises[0].load).toBe('225')
+    expect(p.exercises[0].loadCap).toBe(225)
     expect(p.warnings.map((w) => w.message).join(' ')).toMatch(/pounds/)
   })
 })

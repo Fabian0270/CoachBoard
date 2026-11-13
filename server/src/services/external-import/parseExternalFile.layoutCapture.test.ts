@@ -20,12 +20,12 @@ describe('parseExternalFile — layout template capture', () => {
     expect(t.dayLabels.custom?.[1]).toBe('Tisdag')
     expect(t.dayLabels.custom?.[3]).toBe('Torsdag')
     // Column keys mapped from the external mapping, with the coach's own wording.
-    expect(t.columns.map((c) => c.key)).toEqual(['name', 'sets', 'reps', 'load_used', 'rpe'])
+    expect(t.columns.map((c) => c.key)).toEqual(['name', 'sets', 'reps', 'load_cap', 'intensity'])
     const byKey = Object.fromEntries(t.columns.map((c) => [c.key, c.label]))
     expect(byKey.sets).toBe('Set')
     expect(byKey.reps).toBe('Reps')
-    expect(byKey.load_used).toBe('Load')
-    expect(byKey.rpe).toBe('RPE')
+    expect(byKey.load_cap).toBe('Load')
+    expect(byKey.intensity).toBe('RPE')
   })
 
   it('captures fill colors and header fonts from a styled horizontal sheet', async () => {

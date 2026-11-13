@@ -7,6 +7,7 @@ import { tokenize, RANGE } from '../cellParsing.js'
 import { DAY_LABEL } from '../layoutDetection.js'
 import { normalizeReps, normalizeIntensity, normalizeLoad } from '../valueNormalizers.js'
 import { emptyMapping, type ParseResult, type ReadRow } from '../shared.js'
+import { isResultHeader } from '../headerDetection.js'
 
 // ---------------------------------------------------------------------------
 // Block-grid layout (Feature 4c). Like the horizontal
@@ -30,10 +31,16 @@ export interface GridFields {
   erpe: number | null   // executed RPE — ignored on import, but tracked so the
                         // re-fill engine can clear stale executed values
   rpeFromRir: boolean
+  /** Whether the load / RPE header says it is the athlete's ("Load used", "Last set RPE"). */
+  loadIsResult: boolean
+  rpeIsResult: boolean
 }
 
 export function resolveGridFields(headerCells: string[], blockStart: number, blockWidth: number): GridFields {
-  const f: GridFields = { name: null, sets: null, reps: null, load: null, rpe: null, erpe: null, rpeFromRir: false }
+  const f: GridFields = {
+    name: null, sets: null, reps: null, load: null, rpe: null, erpe: null, rpeFromRir: false,
+    loadIsResult: false, rpeIsResult: false,
+  }
   for (let off = 0; off < blockWidth; off++) {
     const toks = tokenize(headerCells[blockStart - 1 + off] ?? '')
     if (toks.length === 0) continue
@@ -49,6 +56,8 @@ export function resolveGridFields(headerCells: string[], blockStart: number, blo
     else if (f.sets === null && has('sets', 'set')) f.sets = off
     else if (f.load === null && has('load', 'weight', 'kg', 'lbs', 'lb', 'intensity')) f.load = off
   }
+  f.loadIsResult = f.load !== null && isResultHeader(headerCells[blockStart - 1 + f.load] ?? '')
+  f.rpeIsResult = f.rpe !== null && isResultHeader(headerCells[blockStart - 1 + f.rpe] ?? '')
   return f
 }
 
@@ -166,8 +175,10 @@ export function parseBlockGrid(
         name,
         sets: setsText || null,
         reps: normalizeReps(repsText, r, warnings),
-        load: normalizeLoad(loadText, r, warnings),
+        load: normalizeLoad(loadText, r, warnings, !fields.loadIsResult),
         rpe,
+        loadIsResult: fields.loadIsResult,
+        rpeIsResult: fields.rpeIsResult,
         sheetRow: r,
         intensity,
         refillCols: {

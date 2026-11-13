@@ -42,8 +42,15 @@ function normalizeLabel(text: string): string {
 // the exact COLUMN_LABELS strings. Kept deliberately tight: "load" must not also
 // match "load cap", which is a prescription column, not a result.
 const NAME_LABELS = new Set(['discipline', 'exercise', 'movement', 'lift', 'name', 'övning', 'ovning'])
-const LOAD_LABELS = new Set(['load used', 'load', 'weight used', 'vikt', 'belastning'])
-const RPE_LABELS = new Set(['last set rpe', 'rpe', 'effort', 'rir'])
+//
+// Only columns that are the ATHLETE'S. A plain "Load", "Vikt" or "RPE" on a
+// coach's sheet is the prescription, and reading it back took every untouched
+// prescribed weight for a logged set — a returned sheet marked the whole
+// program done. A program whose own export labels its result columns plainly
+// (the Minimalistic look's "Load" / "RPE") passes those labels in; see
+// findResultsBlocks.
+const LOAD_LABELS = new Set(['load used', 'weight used', 'used load', 'actual load', 'kg used', 'faktisk vikt', 'vikt använd'])
+const RPE_LABELS = new Set(['last set rpe', 'actual rpe', 'rpe done', 'faktisk rpe'])
 
 const DAY_LOOKUP: ReadonlyMap<string, number> = new Map(
   [...WEEKDAY_NAMES.en, ...WEEKDAY_NAMES.sv].map((name, i) => [
@@ -93,7 +100,26 @@ interface HeaderScan {
   firstLabelCol: number
 }
 
-function scanHeaderRow(ws: ExcelJS.Worksheet, row: number, maxCol: number): HeaderScan | null {
+/** Header labels that count as the athlete's result columns for one program. */
+export interface ResultLabels {
+  load: Set<string>
+  rpe: Set<string>
+}
+
+/**
+ * The default labels, plus whatever this program's own export calls its Load
+ * Used / Last Set RPE columns — so a look that labels them plainly ("Load",
+ * "RPE") still reads back, without making a plain "Load" an athlete column on
+ * every other sheet.
+ */
+export function resultLabelsFor(own: { load: string[]; rpe: string[] } = { load: [], rpe: [] }): ResultLabels {
+  return {
+    load: new Set([...LOAD_LABELS, ...own.load.map(normalizeLabel).filter(Boolean)]),
+    rpe: new Set([...RPE_LABELS, ...own.rpe.map(normalizeLabel).filter(Boolean)]),
+  }
+}
+
+function scanHeaderRow(ws: ExcelJS.Worksheet, row: number, maxCol: number, labels: ResultLabels): HeaderScan | null {
   const nameCols: number[] = []
   const loadCols: number[] = []
   const rpeCols: number[] = []
@@ -102,8 +128,8 @@ function scanHeaderRow(ws: ExcelJS.Worksheet, row: number, maxCol: number): Head
     const norm = normalizeLabel(cellText(ws, row, c))
     if (!norm) continue
     if (NAME_LABELS.has(norm)) nameCols.push(c)
-    else if (LOAD_LABELS.has(norm)) loadCols.push(c)
-    else if (RPE_LABELS.has(norm)) rpeCols.push(c)
+    else if (labels.load.has(norm)) loadCols.push(c)
+    else if (labels.rpe.has(norm)) rpeCols.push(c)
   }
 
   // A header row names the exercise column AND at least one result column;
@@ -121,13 +147,13 @@ function scanHeaderRow(ws: ExcelJS.Worksheet, row: number, maxCol: number): Head
  * Returns an empty array when the sheet carries no recognisable headers — the
  * caller then falls back to replaying the export geometry.
  */
-export function findResultsBlocks(ws: ExcelJS.Worksheet): ResultsBlock[] {
+export function findResultsBlocks(ws: ExcelJS.Worksheet, labels: ResultLabels = resultLabelsFor()): ResultsBlock[] {
   const { rows: maxRow, cols: maxCol } = sheetBounds(ws)
   if (maxRow === 0 || maxCol === 0) return []
 
   const headers = new Map<number, HeaderScan>()
   for (let r = 1; r <= maxRow; r++) {
-    const scan = scanHeaderRow(ws, r, maxCol)
+    const scan = scanHeaderRow(ws, r, maxCol, labels)
     if (scan) headers.set(r, scan)
   }
   if (headers.size === 0) return []

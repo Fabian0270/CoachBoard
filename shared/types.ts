@@ -247,8 +247,17 @@ export interface ExternalExerciseRow {
   name: string
   sets: string | null
   reps: string | null
-  load: string | null    // null for bodyweight / blank; = "Load Used" in horizontal layout
+  // In a preview these are the ATHLETE'S results only — "Load Used" and "Last
+  // Set RPE". A coach's prescribed weight or target RPE is routed to loadCap /
+  // intensity (see external-import/prescription.ts). Inside the parser, before
+  // routing, they hold whatever the sheet's load/RPE columns said, and the two
+  // flags below say whose column that was.
+  load: string | null    // null for bodyweight / blank
   rpe: string | null     // post-RIR-conversion
+  /** The load column's header says it is the athlete's ("Load used", "Actual"…). */
+  loadIsResult?: boolean
+  /** The RPE column's header says it is the athlete's ("Last set RPE", "Actual RPE"…). */
+  rpeIsResult?: boolean
   sheetRow: number       // source row for traceability in warnings
   // Extra columns captured from CoachBoard-style horizontal sheets (optional;
   // the vertical parser leaves these undefined).

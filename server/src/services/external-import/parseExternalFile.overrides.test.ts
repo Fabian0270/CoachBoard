@@ -30,7 +30,7 @@ describe('parseExternalFile — manual overrides', () => {
     })
     expect(res.errors).toEqual([])
     expect(res.exerciseCount).toBe(2)
-    expect(res.exercises[0]).toMatchObject({ name: 'Squat', sets: '3', reps: '5', load: '100', rpe: '8' })
+    expect(res.exercises[0]).toMatchObject({ name: 'Squat', sets: '3', reps: '5', loadCap: 100, intensity: '@8', load: null, rpe: null })
   })
 
   it('clears a wrongly-detected column when overridden to null', async () => {
@@ -63,6 +63,6 @@ describe('parseExternalFile — manual overrides', () => {
       ['Squat', 3, 5, 100, 2],
     ]), { rpeFromRir: true })
     expect(res.columnMapping.rpeFromRir).toBe(true)
-    expect(res.exercises[0].rpe).toBe('8') // RIR 2 → RPE 8
+    expect(res.exercises[0].intensity).toBe('@8') // RIR 2 → RPE 8
   })
 })

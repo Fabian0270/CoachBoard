@@ -13,9 +13,7 @@
   "exerciseCount": 3,
   "suggestedFocus": "hypertrophy",
   "errors": [],
-  "warnings": [
-    "Row 5: could not read load \"85%\" — left blank."
-  ],
+  "warnings": [],
   "exercises": [
     {
       "weekIndex": 0,
@@ -25,8 +23,10 @@
       "name": "Pull-up",
       "sets": "3",
       "reps": "8",
+      "loadCap": null,
+      "intensity": "@8",
       "load": null,
-      "rpe": "8"
+      "rpe": null
     },
     {
       "weekIndex": 0,
@@ -36,8 +36,10 @@
       "name": "Squat",
       "sets": "5",
       "reps": "3",
+      "loadCap": null,
+      "intensity": "85% @8",
       "load": null,
-      "rpe": "8"
+      "rpe": null
     },
     {
       "weekIndex": 0,
@@ -47,8 +49,10 @@
       "name": "Dip",
       "sets": "3",
       "reps": "10",
+      "loadCap": null,
+      "intensity": "@7",
       "load": null,
-      "rpe": "7"
+      "rpe": null
     }
   ]
 }

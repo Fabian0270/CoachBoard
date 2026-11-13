@@ -23,8 +23,10 @@
       "name": "Back Squat",
       "sets": "3",
       "reps": "5",
-      "load": "100",
-      "rpe": "8"
+      "loadCap": 100,
+      "intensity": "@8",
+      "load": null,
+      "rpe": null
     },
     {
       "weekIndex": 0,
@@ -34,8 +36,10 @@
       "name": "Bench Press",
       "sets": "3",
       "reps": "5",
-      "load": "82.5",
-      "rpe": "7.5"
+      "loadCap": 82.5,
+      "intensity": "@7.5",
+      "load": null,
+      "rpe": null
     },
     {
       "weekIndex": 0,
@@ -45,8 +49,10 @@
       "name": "Deadlift",
       "sets": "1",
       "reps": "5",
-      "load": "140",
-      "rpe": "9"
+      "loadCap": 140,
+      "intensity": "@9",
+      "load": null,
+      "rpe": null
     },
     {
       "weekIndex": 1,
@@ -56,8 +62,10 @@
       "name": "Back Squat",
       "sets": "3",
       "reps": "5",
-      "load": "105",
-      "rpe": "8"
+      "loadCap": 105,
+      "intensity": "@8",
+      "load": null,
+      "rpe": null
     }
   ]
 }

@@ -107,8 +107,10 @@ export function parseWeekGrid(
         name,
         sets: setsText || null,
         reps: normalizeReps(repsText, r, warnings),
-        load: normalizeLoad(loadText, r, warnings),
+        load: normalizeLoad(loadText, r, warnings, !fields.loadIsResult),
         rpe,
+        loadIsResult: fields.loadIsResult,
+        rpeIsResult: fields.rpeIsResult,
         sheetRow: r,
         intensity,
         refillCols: {

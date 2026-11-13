@@ -8,6 +8,7 @@ import { parseBlockGrid } from './parsers/blockGridParser.js'
 import { parseWeekGrid } from './parsers/weekGridParser.js'
 import { captureLayoutTemplate } from './layoutCapture.js'
 import { guessFocus } from './focus.js'
+import { routePrescription } from './prescription.js'
 import { sheetBounds } from '../../lib/sheetBounds.js'
 
 // ---------------------------------------------------------------------------
@@ -88,6 +89,10 @@ export async function parseExternalFile(
   void _omit
   return {
     ...preview,
+    // Focus and style capture above read the sheet as written; what is shown
+    // and stored has the coach's prescription moved out of the athlete's
+    // Load Used / Last Set RPE fields.
+    exercises: result.exercises.map(routePrescription),
     suggestedFocus: guessFocus(result.exercises),
     layoutTemplate,
     headerRowIndex,

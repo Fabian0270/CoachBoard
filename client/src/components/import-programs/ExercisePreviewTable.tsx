@@ -11,9 +11,12 @@ export default function ExercisePreviewTable({ preview }: { preview: ExternalImp
             <th className="px-3 py-2 text-left font-medium">Exercise</th>
             <th className="px-3 py-2 text-center font-medium">Sets</th>
             <th className="px-3 py-2 text-center font-medium">Reps</th>
-            <th className="px-3 py-2 text-center font-medium">Intensity</th>
-            <th className="px-3 py-2 text-center font-medium">Load</th>
-            <th className="px-3 py-2 text-center font-medium">RPE</th>
+            {/* The coach's prescription, then what the athlete actually did —
+                the importer keeps the two apart, and so does the preview. */}
+            <th className="px-3 py-2 text-center font-medium">Intensity/Weight</th>
+            <th className="px-3 py-2 text-center font-medium">Load Cap</th>
+            <th className="px-3 py-2 text-center font-medium">Load Used</th>
+            <th className="px-3 py-2 text-center font-medium">Last Set RPE</th>
           </tr>
         </thead>
         <tbody>
@@ -25,6 +28,7 @@ export default function ExercisePreviewTable({ preview }: { preview: ExternalImp
               <td className="px-3 py-1.5 text-center">{ex.sets ?? '—'}</td>
               <td className="px-3 py-1.5 text-center">{ex.reps ?? '—'}</td>
               <td className="px-3 py-1.5 text-center">{ex.intensity ?? '—'}</td>
+              <td className="px-3 py-1.5 text-center">{ex.loadCap ?? '—'}</td>
               <td className="px-3 py-1.5 text-center">{ex.load ?? '—'}</td>
               <td className="px-3 py-1.5 text-center">{ex.rpe ?? '—'}</td>
             </tr>

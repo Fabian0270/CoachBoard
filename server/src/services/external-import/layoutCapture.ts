@@ -62,10 +62,19 @@ export function captureLayoutTemplate(
 
   // --- columns + the coach's own header wording ---
   const columns: ExportLayoutColumn[] = []
+  // A plain "Load" / "RPE" column is the coach's prescription, so it replays
+  // as Load Cap / the target rather than as the athlete's Load Used / Last Set
+  // RPE — which would export empty, and be read back by "Import results" as a
+  // logged set.
+  const loadIsResult = exercises.some((e) => e.loadIsResult)
+  const rpeIsResult = exercises.some((e) => e.rpeIsResult)
   for (const extKey of ['exercise', 'sets', 'reps', 'load', 'rpe'] as ExternalColumnKey[]) {
     const colIdx = columnMapping[extKey]
     if (typeof colIdx !== 'number') continue
-    const expKey = EXTERNAL_TO_EXPORT_KEY[extKey]
+    const expKey =
+      extKey === 'load' && !loadIsResult ? 'load_cap'
+        : extKey === 'rpe' && !rpeIsResult ? 'intensity'
+          : EXTERNAL_TO_EXPORT_KEY[extKey]
     const headerText = headerRow ? cellToString(ws.getCell(headerRow, colIdx).value) : ''
     columns.push({ key: expKey, label: headerText || COLUMN_LABELS[expKey] })
   }
