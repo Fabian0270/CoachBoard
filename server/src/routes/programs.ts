@@ -316,8 +316,7 @@ router.get('/:id/export', async (req: Request, res: Response): Promise<void> => 
 // generated buffer (see services/programPreview.ts) — never re-derives layout.
 router.get('/:id/export/preview', async (req: Request, res: Response): Promise<void> => {
   try {
-    const html = await buildProgramPreviewHtml(String(req.params.id))
-    res.json({ html })
+    res.json(await buildProgramPreviewHtml(String(req.params.id)))
   } catch (err) {
     if (err instanceof SheetTooLargeError) {
       res.status(err.status).json({ error: err.message })

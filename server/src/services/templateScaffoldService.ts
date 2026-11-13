@@ -43,6 +43,45 @@ const WEEK_BANNER = /^week\s*\d+$/i
 const WEEKDAY = /^(mon|tue|wed|thu|fri|sat|sun|mån|man|tis|ons|tor|fre|lör|lor|sön|son)/i
 const DAY_N = /^day\s*\d+/i
 
+/**
+ * The program has content the imported template has no place for.
+ *
+ * The styled export used to drop it without a word. Measured against the six
+ * fixture templates: a training day the template has no section for vanished
+ * from 5 of them, and one exported only 3 of a program's 7 exercises. Thrown
+ * BEFORE anything is written, so the caller can use the built-in look instead
+ * and say why.
+ */
+export class ScaffoldDoesNotFitError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ScaffoldDoesNotFitError'
+  }
+}
+
+const WEEKDAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+/** Throws ScaffoldDoesNotFitError naming what would be left out, or returns quietly. */
+function assertEverythingPlaced(
+  prog: { byWeekday: Array<Map<number, ExerciseRow[]>> },
+  placed: Set<ExerciseRow>,
+): void {
+  const missingByDay = new Map<number, number>()
+  for (const week of prog.byWeekday) {
+    for (const [weekday, list] of week) {
+      const lost = list.filter((ex) => !placed.has(ex)).length
+      if (lost) missingByDay.set(weekday, (missingByDay.get(weekday) ?? 0) + lost)
+    }
+  }
+  if (missingByDay.size === 0) return
+  const total = [...missingByDay.values()].reduce((a, b) => a + b, 0)
+  const days = [...missingByDay.keys()].sort((a, b) => a - b).map((d) => WEEKDAY_LABELS[d])
+  throw new ScaffoldDoesNotFitError(
+    `Your imported Excel style has no room for ${total} exercise${total === 1 ? '' : 's'} on ` +
+      `${days.join(', ')}, so this export uses CoachBoard's own layout to keep everything in it.`,
+  )
+}
+
 function daysBetween(a: string, b: string): number {
   const [ay, am, ad] = a.split('-').map(Number)
   const [by, bm, bd] = b.split('-').map(Number)
@@ -276,6 +315,18 @@ async function renderRowAxis(
       }
     }
   }
+
+  // Stacked-week templates never grow a day, and take the program's days in
+  // order — so a day with more exercises than slots, or more training days than
+  // sections, would lose the overflow. Checked before anything is written.
+  const placed = new Set<ExerciseRow>()
+  for (let w = 0; w < newWeeks; w++) {
+    geom.days.forEach((day, dSeq) => {
+      const dayExs = prog.byWeekday[w]?.get(prog.seqWeekdays[dSeq]) ?? []
+      for (const ex of dayExs.slice(0, day.slots.length)) placed.add(ex)
+    })
+  }
+  assertEverythingPlaced(prog, placed)
 
   const rpeSlot = geom.days.flatMap((d) => d.slots).find((s) => s.cols.rpe !== null)
   const rpeAt = rpeSlot
@@ -562,6 +613,19 @@ export async function renderScaffold(
   // fill (e.g. a session moved onto the coach's blank Thursday row).
   if (weekdayMode) {
     injectEmptyTrainedSections(ws, geom, new Set(prog.byWeekday.flatMap((m) => [...m.keys()])))
+  }
+
+  // Every day grows to fit (row insertion below), so what can be lost here is a
+  // whole training day: a weekday the template has no section for, or — for a
+  // "Day n" template — more training days than it has sections.
+  {
+    const placed = new Set<ExerciseRow>()
+    for (let w = 0; w < newWeeks; w++) {
+      geom.days.forEach((day, dSeq) => {
+        for (const ex of dayExsFor(w, dSeq, day.dayIndex)) placed.add(ex)
+      })
+    }
+    assertEverythingPlaced(prog, placed)
   }
 
   const { blockStart0, stride, templateWeeks } = geom

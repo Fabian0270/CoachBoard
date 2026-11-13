@@ -280,10 +280,19 @@ export function isBuiltinTemplateId(value: unknown): value is BuiltinTemplateId 
 export const MINIMAL_DESCRIPTOR: ExportLayoutTemplate = {
   version: 1,
   orientation: 'horizontal',
+  // Target and Weight carry the PRESCRIPTION; Load and RPE are left for the
+  // athlete's results. The look used to have only the last two, so a program
+  // exported in it reached the athlete with no prescribed weight or target
+  // effort at all. The prescription gets its own columns rather than being
+  // pre-filled into Load: the results importer reads "Load" back, and would
+  // take an untouched prescription for a logged set. Neither "Target" nor
+  // "Weight" is a label the importer treats as a result.
   columns: [
     { key: 'name', label: 'Exercise' },
     { key: 'sets', label: 'Sets' },
     { key: 'reps', label: 'Reps' },
+    { key: 'intensity', label: 'Target' },
+    { key: 'load_cap', label: 'Weight' },
     { key: 'load_used', label: 'Load' },
     { key: 'rpe', label: 'RPE' },
   ],

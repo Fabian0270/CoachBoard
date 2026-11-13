@@ -153,7 +153,9 @@ export async function renderWorkbookHtml(buffer: Buffer): Promise<string> {
 }
 
 /** Build a program's workbook and return its HTML preview (shares the export path). */
-export async function buildProgramPreviewHtml(programId: string): Promise<string> {
-  const { buffer } = await buildProgramWorkbook(programId)
-  return renderWorkbookHtml(buffer)
+export async function buildProgramPreviewHtml(
+  programId: string,
+): Promise<{ html: string; notice: string | null }> {
+  const { buffer, notice } = await buildProgramWorkbook(programId)
+  return { html: await renderWorkbookHtml(buffer), notice }
 }
