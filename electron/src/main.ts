@@ -59,6 +59,7 @@ interface ServerBundle {
   } | null
   sweepRecordings?(): Promise<number>
   sweepAnalysisVideos?(): Promise<number>
+  sweepPartialMedia?(): Promise<number>
   initDiscordSync?(opts: { launchDelayMs: number }): void | Promise<void>
 }
 
@@ -195,6 +196,11 @@ async function startServer(): Promise<void> {
   // open on Windows, which would otherwise strand it forever.
   const orphans = await bundle.sweepAnalysisVideos?.().catch(() => 0)
   if (orphans) log(`Swept ${orphans} orphaned analysis video(s)`)
+
+  // Half-written uploads and downloads. Safe only here, before the server is
+  // listening: nothing can be in flight yet. See mediaStore.sweepPartialMedia.
+  const partials = await bundle.sweepPartialMedia?.().catch(() => 0)
+  if (partials) log(`Swept ${partials} abandoned partial file(s)`)
 
   const expressApp = bundle.createApp(staticDir, logPath)
 

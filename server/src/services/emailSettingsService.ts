@@ -6,6 +6,7 @@ import {
   decryptFromBase64,
   encryptionAvailable,
 } from './secureStore.js'
+import { createUpdateQueue, writeFileAtomic } from '../lib/atomicFile.js'
 
 // ---------------------------------------------------------------------------
 // Coach email (SMTP) settings — persisted to a JSON file in userData. The app
@@ -97,7 +98,14 @@ export async function getSettings(): Promise<PublicEmailSettings | null> {
   return s ? toPublic(s) : null
 }
 
-export async function saveSettings(input: EmailSettingsInput): Promise<PublicEmailSettings> {
+/** saveSettings is read-modify-write; see lib/atomicFile.ts for why it queues. */
+const queued = createUpdateQueue()
+
+export function saveSettings(input: EmailSettingsInput): Promise<PublicEmailSettings> {
+  return queued(() => saveSettingsNow(input))
+}
+
+async function saveSettingsNow(input: EmailSettingsInput): Promise<PublicEmailSettings> {
   const existing = await readStored()
   let passwordEnc = existing?.passwordEnc ?? null
 
@@ -121,7 +129,8 @@ export async function saveSettings(input: EmailSettingsInput): Promise<PublicEma
   }
 
   await fs.mkdir(userDataDir(), { recursive: true })
-  await fs.writeFile(settingsPath(), JSON.stringify(stored, null, 2), 'utf8')
+  // Atomic: a torn file reads back as "not configured" and loses the app password.
+  await writeFileAtomic(settingsPath(), JSON.stringify(stored, null, 2))
   return toPublic(stored)
 }
 

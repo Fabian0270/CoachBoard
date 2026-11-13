@@ -299,4 +299,23 @@ describe('commitImport', () => {
     const result = await commitImport(programId, [])
     expect(result.updatedCount).toBe(0)
   })
+
+  it('leaves a value alone when the returned sheet has that cell blank', async () => {
+    // A row is "matched" when either cell is filled, and both used to be
+    // written — so an athlete who sent back loads but no RPEs blanked every RPE
+    // the coach had already entered for those exercises.
+    await commitImport(programId, [{ exerciseId: squatId, load_used: '140', rpe: '8' }])
+    await commitImport(programId, [
+      { exerciseId: squatId, load_used: '145', rpe: null },
+      { exerciseId: benchId, load_used: null, rpe: '9' },
+    ])
+
+    const data = await findProgramForExport(programId)
+    const squat = data!.exercises.find((e) => e.id === squatId)
+    const bench = data!.exercises.find((e) => e.id === benchId)
+    expect(squat?.load_used).toBe('145')
+    expect(squat?.rpe).toBe('8')
+    expect(bench?.load_used).toBe('90')
+    expect(bench?.rpe).toBe('9')
+  })
 })

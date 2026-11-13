@@ -6,6 +6,7 @@ import {
   decryptFromBase64,
   encryptionAvailable,
 } from './secureStore.js'
+import { createUpdateQueue, writeFileAtomic } from '../lib/atomicFile.js'
 import type { PublicDiscordSettings } from 'coachboard-shared/discord'
 
 // ---------------------------------------------------------------------------
@@ -84,7 +85,20 @@ async function readStored(): Promise<StoredDiscordSettings> {
 
 async function writeStored(s: StoredDiscordSettings): Promise<void> {
   await fs.mkdir(userDataDir(), { recursive: true })
-  await fs.writeFile(settingsPath(), JSON.stringify(s, null, 2), 'utf8')
+  // Atomic: a torn file reads back as "not configured" and loses the token.
+  await writeFileAtomic(settingsPath(), JSON.stringify(s, null, 2))
+}
+
+/** Every setter below is read-modify-write; see lib/atomicFile.ts for why they queue. */
+const queued = createUpdateQueue()
+
+/** Read, change and write back the stored settings as one queued step. */
+function update(change: (s: StoredDiscordSettings) => StoredDiscordSettings): Promise<StoredDiscordSettings> {
+  return queued(async () => {
+    const next = change(await readStored())
+    await writeStored(next)
+    return next
+  })
 }
 
 function toPublic(s: StoredDiscordSettings): PublicDiscordSettings {
@@ -115,16 +129,15 @@ export async function saveToken(
       'Secure storage is unavailable on this system, so the bot token cannot be saved safely.',
     )
   }
-  const existing = await readStored()
-  const stored: StoredDiscordSettings = {
+  const tokenEnc = encryptToBase64(token)
+  const stored = await update((existing) => ({
     ...existing,
-    tokenEnc: encryptToBase64(token),
+    tokenEnc,
     applicationId: meta.applicationId,
     botUserId: meta.botUserId,
     botUsername: meta.botUsername,
     tokenInvalid: false,
-  }
-  await writeStored(stored)
+  }))
   return toPublic(stored)
 }
 
@@ -143,20 +156,16 @@ export async function setAutoSync(opts: {
   enabled: boolean
   minutes: number
 }): Promise<PublicDiscordSettings> {
-  const existing = await readStored()
-  const stored: StoredDiscordSettings = {
+  const stored = await update((existing) => ({
     ...existing,
     autoSyncEnabled: opts.enabled,
     autoSyncMinutes: opts.minutes,
-  }
-  await writeStored(stored)
+  }))
   return toPublic(stored)
 }
 
 export async function setRetentionDays(days: number): Promise<PublicDiscordSettings> {
-  const existing = await readStored()
-  const stored: StoredDiscordSettings = { ...existing, retentionDays: Math.max(0, Math.floor(days)) }
-  await writeStored(stored)
+  const stored = await update((existing) => ({ ...existing, retentionDays: Math.max(0, Math.floor(days)) }))
   return toPublic(stored)
 }
 
@@ -165,9 +174,10 @@ export async function getRetentionDays(): Promise<number> {
 }
 
 export async function setMessageRetentionDays(days: number): Promise<PublicDiscordSettings> {
-  const existing = await readStored()
-  const stored: StoredDiscordSettings = { ...existing, messageRetentionDays: Math.max(0, Math.floor(days)) }
-  await writeStored(stored)
+  const stored = await update((existing) => ({
+    ...existing,
+    messageRetentionDays: Math.max(0, Math.floor(days)),
+  }))
   return toPublic(stored)
 }
 
@@ -176,16 +186,21 @@ export async function getMessageRetentionDays(): Promise<number> {
 }
 
 export async function markTokenInvalid(invalid: boolean): Promise<void> {
-  const existing = await readStored()
-  if (existing.tokenInvalid === invalid) return
-  await writeStored({ ...existing, tokenInvalid: invalid })
+  await queued(async () => {
+    const existing = await readStored()
+    if (existing.tokenInvalid === invalid) return
+    await writeStored({ ...existing, tokenInvalid: invalid })
+  })
 }
 
 /** Disconnect: forget the token and all bot identity/prefs. */
 export async function clearSettings(): Promise<void> {
-  try {
-    await fs.unlink(settingsPath())
-  } catch {
-    /* already gone */
-  }
+  // Queued too, or a setter already in flight could write the file back.
+  await queued(async () => {
+    try {
+      await fs.unlink(settingsPath())
+    } catch {
+      /* already gone */
+    }
+  })
 }

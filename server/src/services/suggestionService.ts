@@ -348,108 +348,112 @@ export async function generateDraftProgram(
     slotsByLift.set(liftKey, template.generate(body.weeks, e1rm, rpeAdjustment, body.style))
   }
 
-  const db = getDb()
   const now = new Date().toISOString()
   const startIso = body.startDate
   const endIso = addDays(startIso, body.weeks * 7 - 1)
 
-  const draftProgram = await db
-    .insertInto('programs')
-    .values({
-      id: uuidv4(),
-      athlete_id: body.athleteId,
-      name: `[Draft] ${source.name}`,
-      description: null,
-      start_date: startIso,
-      end_date: endIso,
-      status: 'draft',
-      enabled_columns: source.enabled_columns ? JSON.stringify(source.enabled_columns) : null,
-      // Carry the source's captured Excel layout + original file so the draft
-      // exports in the coach's own style (Feature: export style templates).
-      export_layout: source.export_layout ? JSON.stringify(source.export_layout) : null,
-      export_template_xlsx: source.export_template_xlsx ?? null,
-      // Override > inherit the source's built-in look > CoachBoard default. (Moot
-      // when the draft inherits an imported coach style, which wins at export.)
-      builtin_template: body.builtin_template ?? source.builtin_template ?? 'coachboard',
-      focus: draftFocus,
-      created_at: now,
-      updated_at: now,
-    })
-    .returningAll()
-    .executeTakeFirstOrThrow()
+  // One transaction for the whole draft. It is a program row plus up to a few
+  // hundred workouts and exercises, and a failure partway used to leave a
+  // half-built "[Draft]" behind that looked like a real, if odd, program.
+  return getDb().transaction().execute(async (db) => {
+    const draftProgram = await db
+      .insertInto('programs')
+      .values({
+        id: uuidv4(),
+        athlete_id: body.athleteId,
+        name: `[Draft] ${source.name}`,
+        description: null,
+        start_date: startIso,
+        end_date: endIso,
+        status: 'draft',
+        enabled_columns: source.enabled_columns ? JSON.stringify(source.enabled_columns) : null,
+        // Carry the source's captured Excel layout + original file so the draft
+        // exports in the coach's own style (Feature: export style templates).
+        export_layout: source.export_layout ? JSON.stringify(source.export_layout) : null,
+        export_template_xlsx: source.export_template_xlsx ?? null,
+        // Override > inherit the source's built-in look > CoachBoard default. (Moot
+        // when the draft inherits an imported coach style, which wins at export.)
+        builtin_template: body.builtin_template ?? source.builtin_template ?? 'coachboard',
+        focus: draftFocus,
+        created_at: now,
+        updated_at: now,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow()
 
-  for (let week = 1; week <= body.weeks; week++) {
-    for (const day of layout) {
-      const workoutDate = addDays(startIso, (week - 1) * 7 + day.dayOffset)
+    for (let week = 1; week <= body.weeks; week++) {
+      for (const day of layout) {
+        const workoutDate = addDays(startIso, (week - 1) * 7 + day.dayOffset)
 
-      const workout = await db
-        .insertInto('workouts')
-        .values({
-          id: uuidv4(),
-          program_id: draftProgram.id,
-          name: workoutDate,
-          scheduled_date: workoutDate,
-          notes: null,
-          created_at: now,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow()
+        const workout = await db
+          .insertInto('workouts')
+          .values({
+            id: uuidv4(),
+            program_id: draftProgram.id,
+            name: workoutDate,
+            scheduled_date: workoutDate,
+            notes: null,
+            created_at: now,
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow()
 
-      let orderIndex = 0
+        let orderIndex = 0
 
-      for (const seg of day.lifts) {
-        const slot = slotsByLift.get(seg.liftKey)?.[week - 1] ?? null
+        for (const seg of day.lifts) {
+          const slot = slotsByLift.get(seg.liftKey)?.[week - 1] ?? null
 
-        if (slot) {
-          await db
-            .insertInto('exercises')
-            .values({
-              id: uuidv4(),
-              workout_id: workout.id,
-              name: LIFT_DISPLAY[seg.liftKey],
-              sets: String(slot.sets),
-              reps: String(slot.reps),
-              weight: blankWeightLifts.has(seg.liftKey) ? null : slot.weight,
-              duration: null,
-              distance: null,
-              notes: null,
-              order_index: orderIndex++,
-              rest_time: null,
-              intensity: `RPE ${slot.targetRpe}`,
-              load_used: null,
-              rpe: null,
-              group_id: null,
-              suggestion_note: slot.explanation + styleNote,
-            })
-            .execute()
-        }
+          if (slot) {
+            await db
+              .insertInto('exercises')
+              .values({
+                id: uuidv4(),
+                workout_id: workout.id,
+                name: LIFT_DISPLAY[seg.liftKey],
+                sets: String(slot.sets),
+                reps: String(slot.reps),
+                weight: blankWeightLifts.has(seg.liftKey) ? null : slot.weight,
+                duration: null,
+                distance: null,
+                notes: null,
+                order_index: orderIndex++,
+                rest_time: null,
+                intensity: `RPE ${slot.targetRpe}`,
+                load_used: null,
+                rpe: null,
+                group_id: null,
+                suggestion_note: slot.explanation + styleNote,
+              })
+              .execute()
+          }
 
-        for (const acc of seg.accessories) {
-          await db
-            .insertInto('exercises')
-            .values({
-              id: uuidv4(),
-              workout_id: workout.id,
-              name: acc.name,
-              sets: acc.sets,
-              reps: acc.reps,
-              weight: null,
-              duration: acc.duration,
-              distance: acc.distance,
-              notes: acc.notes,
-              order_index: orderIndex++,
-              rest_time: acc.rest_time,
-              intensity: null,
-              load_used: null,
-              rpe: null,
-              group_id: null,
-              suggestion_note: acc.suggestionNote ?? null,
-            })
-            .execute()
+          for (const acc of seg.accessories) {
+            await db
+              .insertInto('exercises')
+              .values({
+                id: uuidv4(),
+                workout_id: workout.id,
+                name: acc.name,
+                sets: acc.sets,
+                reps: acc.reps,
+                weight: null,
+                duration: acc.duration,
+                distance: acc.distance,
+                notes: acc.notes,
+                order_index: orderIndex++,
+                rest_time: acc.rest_time,
+                intensity: null,
+                load_used: null,
+                rpe: null,
+                group_id: null,
+                suggestion_note: acc.suggestionNote ?? null,
+              })
+              .execute()
+          }
         }
       }
     }
-  }
 
-  return { draftProgramId: draftProgram.id }
+    return { draftProgramId: draftProgram.id }
+  })
 }

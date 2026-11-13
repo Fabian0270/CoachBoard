@@ -43,6 +43,7 @@ import {
   listWorkoutCandidates,
   disconnect,
   clearCache,
+  countExpiring,
   getAthleteConversation,
   markConversationRead,
   listUnreadThreads,
@@ -161,6 +162,17 @@ router.put('/settings/message-retention', async (req, res) => {
     return
   }
   res.json(await setMessageRetentionDays(parsed.data.days))
+})
+
+// What a retention window would delete, so the setting can be confirmed with a
+// real number before it quietly deletes at the next sync.
+router.get('/settings/retention/preview', async (req, res) => {
+  const parsed = retentionSchema.safeParse({ days: req.query.days })
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid retention setting' })
+    return
+  }
+  res.json(await countExpiring(parsed.data.days))
 })
 
 // Manual "free up space" purge — deletes videos + messages older than N days.

@@ -132,7 +132,41 @@ export default function DiscordSettingsCard() {
     if (res.ok) setSettings(await res.json())
   }
 
+  /**
+   * Asks before a tighter retention window deletes anything.
+   *
+   * Picking "after 30 days" used to save instantly and delete at the next sync
+   * with no prompt, while the manual "Clear now" right below it confirmed. The
+   * count comes from the server, using the same rules as the deletion itself.
+   * Resolves true when it is fine to save.
+   */
+  const confirmRetention = async (days: number, kind: 'videos' | 'messages'): Promise<boolean> => {
+    if (days <= 0) return true
+    let count = 0
+    try {
+      const res = await fetch(`/api/discord/settings/retention/preview?days=${days}`)
+      if (res.ok) {
+        const preview = (await res.json()) as { videos: number; messages: number }
+        count = kind === 'videos' ? preview.videos : preview.messages
+      }
+    } catch {
+      /* offline from our own server: fall through and ask without a number */
+    }
+    if (count === 0) return true
+    return confirm({
+      title: `Delete ${count} ${kind === 'videos' ? (count === 1 ? 'video' : 'videos') : (count === 1 ? 'message' : 'messages')}?`,
+      description:
+        `With this setting, ${count} ${kind} older than ${days} days will be permanently deleted at ` +
+        `the next sync.` +
+        (kind === 'videos' ? ' Videos with a saved bar-path analysis are always kept.' : '') +
+        ' This cannot be undone.',
+      confirmLabel: 'Delete them',
+      destructive: true,
+    })
+  }
+
   const saveRetention = async (days: number) => {
+    if (!(await confirmRetention(days, 'videos'))) return
     const res = await fetch('/api/discord/settings/retention', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -142,6 +176,7 @@ export default function DiscordSettingsCard() {
   }
 
   const saveMessageRetention = async (days: number) => {
+    if (!(await confirmRetention(days, 'messages'))) return
     const res = await fetch('/api/discord/settings/message-retention', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

@@ -402,15 +402,23 @@ export async function commitImport(
   if (!data) throw new Error('Program not found')
 
   const validIds = new Set(data.exercises.map((e) => e.id))
-  const toWrite = matches.filter((m) => validIds.has(m.exerciseId))
+  const toWrite = matches.filter(
+    (m) => validIds.has(m.exerciseId) && (m.load_used !== null || m.rpe !== null),
+  )
   if (toWrite.length === 0) return { updatedCount: 0 }
 
   const db = getDb()
   await db.transaction().execute(async (trx) => {
     for (const m of toWrite) {
+      // Only the cells the sheet actually filled. A row is matched when EITHER
+      // is present, and both used to be written — so a sheet returned with
+      // loads but no RPEs blanked every RPE already recorded for those rows.
       await trx
         .updateTable('exercises')
-        .set({ load_used: m.load_used, rpe: m.rpe })
+        .set({
+          ...(m.load_used !== null ? { load_used: m.load_used } : {}),
+          ...(m.rpe !== null ? { rpe: m.rpe } : {}),
+        })
         .where('id', '=', m.exerciseId)
         .execute()
     }

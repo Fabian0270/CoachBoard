@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '../../db.js'
+import type { Transaction } from 'kysely'
+import { getDb, type DB } from '../../db.js'
 
 // ---------------------------------------------------------------------------
 // Exercises
@@ -116,8 +117,18 @@ export async function reorderExercises(workoutId: string, programId: string, exe
 // ---------------------------------------------------------------------------
 
 export async function addSetToExercise(exerciseId: string, workoutId: string, programId: string) {
-  const db = getDb()
+  // Three writes — group the source, shift everything below, insert the set —
+  // that only make sense together. Separately, a failure after the shift left a
+  // gap in order_index with no new set to fill it.
+  return getDb().transaction().execute((trx) => addSetInTransaction(trx, exerciseId, workoutId, programId))
+}
 
+async function addSetInTransaction(
+  db: Transaction<DB>,
+  exerciseId: string,
+  workoutId: string,
+  programId: string,
+) {
   // Validate ownership
   const workout = await db
     .selectFrom('workouts')
@@ -163,16 +174,12 @@ export async function addSetToExercise(exerciseId: string, workoutId: string, pr
 
   // Shift subsequent exercises up
   const toShift = allExercises.filter((ex) => ex.order_index > lastGroupIdx)
-  if (toShift.length > 0) {
-    await db.transaction().execute(async (trx) => {
-      for (const ex of toShift) {
-        await trx
-          .updateTable('exercises')
-          .set({ order_index: ex.order_index + 1 })
-          .where('id', '=', ex.id)
-          .execute()
-      }
-    })
+  for (const ex of toShift) {
+    await db
+      .updateTable('exercises')
+      .set({ order_index: ex.order_index + 1 })
+      .where('id', '=', ex.id)
+      .execute()
   }
 
   // Insert new set
