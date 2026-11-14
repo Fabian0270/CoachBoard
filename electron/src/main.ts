@@ -7,6 +7,7 @@ import {
   desktopCapturer,
   nativeTheme,
   safeStorage,
+  screen,
   shell,
 } from 'electron'
 import path from 'path'
@@ -80,6 +81,80 @@ let serverBundle: ServerBundle | null = null
 
 /** The app window, once created — the recorder leaves it out of the window list. */
 let ownWindow: BrowserWindow | null = null
+
+/** The floating recording controls, while open. See openRecorderControls. */
+let controlsWindow: BrowserWindow | null = null
+
+const CONTROLS_WIDTH = 300
+const CONTROLS_HEIGHT = 48
+
+/**
+ * The floating recording controls.
+ *
+ * Opened when the coach records another window or the whole screen. CoachBoard
+ * is then usually behind that window, and its in-app pill is out of reach — a
+ * coach who recorded a restored window had to dig CoachBoard out to stop.
+ * Always on top, starts at the top-centre of the screen the pointer is on,
+ * draggable, and excluded from screen capture (Windows' WDA_EXCLUDEFROMCAPTURE)
+ * so the athlete never sees it. It is a page of this app: it talks to the
+ * recorder in the main window over a BroadcastChannel and closes itself when
+ * the recording ends (client/src/components/recorder/FloatingControls.tsx).
+ */
+function openRecorderControls(): void {
+  if (controlsWindow && !controlsWindow.isDestroyed()) {
+    controlsWindow.showInactive()
+    return
+  }
+  const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const bar = new BrowserWindow({
+    width: CONTROLS_WIDTH,
+    height: CONTROLS_HEIGHT,
+    x: Math.round(workArea.x + (workArea.width - CONTROLS_WIDTH) / 2),
+    y: workArea.y + 16,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    title: 'CoachBoard recording',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      backgroundThrottling: false,
+    },
+  })
+  // Above full-screen apps too, and never in a recording.
+  bar.setAlwaysOnTop(true, 'screen-saver')
+  bar.setContentProtection(true)
+  // Keep its own title rather than the page's "CoachBoard", so it can be told
+  // apart from the main window (in Windows' own lists, and in the logs).
+  bar.on('page-title-updated', (event) => event.preventDefault())
+  bar.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  bar.webContents.on('will-navigate', (event) => event.preventDefault())
+  bar.webContents.on('will-attach-webview', (event) => event.preventDefault())
+  // Shown without focus: the coach is working in the window being recorded.
+  bar.once('ready-to-show', () => {
+    if (!bar.isDestroyed()) bar.showInactive()
+  })
+  bar.on('closed', () => {
+    controlsWindow = null
+    // The bar closes itself when the recording stops; the review dialog is in
+    // CoachBoard, so bring it forward. Not when the app itself is going away.
+    if (!quitting && ownWindow && !ownWindow.isDestroyed()) {
+      if (ownWindow.isMinimized()) ownWindow.restore()
+      ownWindow.show()
+      ownWindow.focus()
+    }
+  })
+  void bar.loadURL(`${appOrigin()}/#/recorder-controls`).catch((err: unknown) => {
+    log(`Recording controls failed to load: ${describeError(err)}`)
+  })
+  controlsWindow = bar
+}
 
 /** Set while the app is quitting, so the close guard can finish a quit it interrupted. */
 let quitting = false
@@ -210,7 +285,10 @@ async function startServer(): Promise<void> {
   // already offers as "CoachBoard" (captured by frame, see the display handler).
   bundle.configureCapture?.({
     desktopCapturer,
-    ownSourceIds: () => (ownWindow && !ownWindow.isDestroyed() ? [ownWindow.getMediaSourceId()] : []),
+    ownSourceIds: () =>
+      [ownWindow, controlsWindow]
+        .filter((w): w is BrowserWindow => !!w && !w.isDestroyed())
+        .map((w) => w.getMediaSourceId()),
     // Minimised windows, which Electron does not list (Windows only; null elsewhere).
     windowTools: createWindowTools(log),
   })
@@ -444,6 +522,9 @@ function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): voi
           }
           log(`Display capture: ${chosen.source.name}`)
           answer({ video: chosen.source as Electron.Video, audio: 'loopback' })
+          // CoachBoard is usually behind what is being recorded, so give the
+          // coach controls that stay on screen.
+          openRecorderControls()
         })
         .catch((err: unknown) => {
           log(`Display capture failed: ${describeError(err)}`)
@@ -505,10 +586,22 @@ async function createWindow(): Promise<void> {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      // The recorder draws the captured window (plus the webcam bubble) onto a
+      // canvas in THIS page and records the canvas, driven by
+      // requestAnimationFrame. Chromium stops animation frames in a window that
+      // is hidden or fully covered — measured: 332 frames in 2 s when visible,
+      // 0 when another window covered CoachBoard — and recording another window
+      // means that window is in front. So every such recording froze for as long
+      // as CoachBoard was covered.
+      backgroundThrottling: false,
     },
   })
 
   ownWindow = win
+  // The bar counts as a window: left open, the app would not quit on Windows.
+  win.on('closed', () => {
+    if (controlsWindow && !controlsWindow.isDestroyed()) controlsWindow.destroy()
+  })
 
   // Needs the window: recording CoachBoard itself captures its frame, not a
   // desktopCapturer source. Handlers only have to exist before the first

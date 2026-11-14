@@ -228,8 +228,12 @@ export async function resolvePendingSource(): Promise<ResolvedCapture | null> {
   if (!injectedCapturer) return null
   // Re-listed rather than cached: a window that closed between the picker and
   // the capture must resolve to nothing instead of a stale handle.
+  // No thumbnails: only the id is needed here, and drawing a preview of every
+  // open window on each check is what made starting a recording slow.
   const find = async () =>
-    (await injectedCapturer!.getSources({ types: ['screen', 'window'] })).find((s) => s.id === id) ?? null
+    (await injectedCapturer!.getSources({ types: ['screen', 'window'], thumbnailSize: NO_THUMBNAIL })).find(
+      (s) => s.id === id,
+    ) ?? null
   const source = await find()
   if (source) return { kind: 'source', source }
 
@@ -254,3 +258,5 @@ export async function resolvePendingSource(): Promise<ResolvedCapture | null> {
 /** How long to wait for a restored window to become capturable. Measured at well under a second. */
 const RESTORE_WAIT_MS = 2000
 const RESTORE_POLL_MS = 150
+/** Electron skips capturing previews entirely at this size. */
+const NO_THUMBNAIL = { width: 0, height: 0 }

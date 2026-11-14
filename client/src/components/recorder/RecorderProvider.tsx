@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { HEARTBEAT_MS, openControlsChannel, type ControlsMessage } from './controlsChannel'
 import { useToast } from '../ui/toast'
 import PreflightDialog from './PreflightDialog'
 import RecordingPill from './RecordingPill'
@@ -82,6 +83,46 @@ export default function RecorderProvider({ children }: { children: React.ReactNo
       engine.state === 'finalizing' ||
       (engine.state === 'review' && !saved),
   )
+
+  // The floating controls bar (see controlsChannel.ts). When the coach records
+  // another window or the whole screen, CoachBoard is usually behind it and the
+  // pill below is out of reach, so the main process opens a small always-on-top
+  // bar. It mirrors this recorder's state and sends commands back.
+  const engineRef = useRef(engine)
+  engineRef.current = engine
+  const channelRef = useRef<BroadcastChannel | null>(null)
+  const publish = useCallback(() => {
+    const { state, elapsedMs, bytes } = engineRef.current
+    channelRef.current?.postMessage({ type: 'state', state, elapsedMs, bytes } satisfies ControlsMessage)
+  }, [])
+  useEffect(() => {
+    const channel = openControlsChannel()
+    channelRef.current = channel
+    if (!channel) return
+    const onMessage = (event: MessageEvent<ControlsMessage>) => {
+      const message = event.data
+      if (message.type === 'hello') publish()
+      if (message.type !== 'command') return
+      const current = engineRef.current
+      if (message.action === 'pause' && current.state === 'recording') current.pause()
+      if (message.action === 'resume' && current.state === 'paused') current.resume()
+      if (message.action === 'stop' && isCapturing(current.state)) current.stop()
+    }
+    channel.addEventListener('message', onMessage)
+    return () => {
+      channel.removeEventListener('message', onMessage)
+      channel.close()
+      channelRef.current = null
+    }
+  }, [publish])
+  // On every change, plus a heartbeat while capturing so the bar can tell the
+  // recorder is still alive (and close itself if the main window goes away).
+  useEffect(publish, [engine.state, engine.elapsedMs, engine.bytes, publish])
+  useEffect(() => {
+    if (!isCapturing(engine.state)) return
+    const timer = window.setInterval(publish, HEARTBEAT_MS)
+    return () => window.clearInterval(timer)
+  }, [engine.state, publish])
 
   const value = useMemo(
     () => ({ startRecording, isRecording: isCapturing(engine.state) }),

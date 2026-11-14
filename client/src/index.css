@@ -136,3 +136,10 @@
 .stage-video::-webkit-media-controls-fullscreen-button {
   display: none;
 }
+
+/* The floating recording controls run in their own transparent window, so the
+   page behind the rounded bar must not paint a background. See main.tsx. */
+html.floating-controls,
+html.floating-controls body {
+  background: transparent;
+}
