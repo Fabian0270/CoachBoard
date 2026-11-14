@@ -13,6 +13,7 @@ import path from 'path'
 import fs from 'fs'
 import { createServer, type RequestListener } from 'http'
 import { autoUpdater } from 'electron-updater'
+import { createWindowTools, type WindowTools } from './minimizedWindows'
 
 /**
  * Dev means "running from source", which is exactly what app.isPackaged says.
@@ -55,7 +56,7 @@ interface ServerBundle {
   configureLogger?(path: string): void
   configureSecureStore(opts: { safeStorage: unknown; userDataDir: string }): void
   configureSystem?(opts: { shell: unknown }): void
-  configureCapture?(opts: { desktopCapturer: unknown; ownSourceIds?: () => string[] }): void
+  configureCapture?(opts: { desktopCapturer: unknown; ownSourceIds?: () => string[]; windowTools?: WindowTools | null }): void
   /** The source the coach picked, consumed once. See services/captureService. */
   resolvePendingSource?(): Promise<
     { kind: 'self' } | { kind: 'source'; source: Electron.DesktopCapturerSource } | null
@@ -79,6 +80,12 @@ let serverBundle: ServerBundle | null = null
 
 /** The app window, once created — the recorder leaves it out of the window list. */
 let ownWindow: BrowserWindow | null = null
+
+/** Set while the app is quitting, so the close guard can finish a quit it interrupted. */
+let quitting = false
+app.on('before-quit', () => {
+  quitting = true
+})
 
 let logPath = ''
 
@@ -204,6 +211,8 @@ async function startServer(): Promise<void> {
   bundle.configureCapture?.({
     desktopCapturer,
     ownSourceIds: () => (ownWindow && !ownWindow.isDestroyed() ? [ownWindow.getMediaSourceId()] : []),
+    // Minimised windows, which Electron does not list (Windows only; null elsewhere).
+    windowTools: createWindowTools(log),
   })
 
   // Feedback recordings are scratch space: the coach keeps one only by saving or
@@ -552,18 +561,45 @@ async function createWindow(): Promise<void> {
   // program edits that have not saved — asks the browser not to unload, and
   // Electron then cancels the close SILENTLY: the window just would not shut.
   // This is the documented hook for asking instead.
-  win.webContents.on('will-prevent-unload', (event) => {
-    const choice = dialog.showMessageBoxSync(win, {
-      type: 'warning',
-      buttons: ['Close anyway', 'Keep working'],
-      defaultId: 1,
-      cancelId: 1,
-      title: 'CoachBoard',
-      message: 'CoachBoard is still working on something.',
-      detail:
-        'A recording, a video upload, or program changes that have not saved yet would be lost if you close now.',
-    })
-    if (choice === 0) event.preventDefault() // preventDefault here means "unload anyway"
+  //
+  // Asked WITHOUT blocking. This used showMessageBoxSync, which halts the main
+  // process until answered — and the main process produces the frames when
+  // CoachBoard records itself and receives every uploaded chunk, so a recording
+  // froze for as long as the question was on screen. Not calling
+  // preventDefault() cancels this close straight away; the question is then
+  // asked asynchronously, and "Close anyway" closes the window directly
+  // (destroy() skips beforeunload, so it cannot ask a second time).
+  let asking = false
+  win.webContents.on('will-prevent-unload', () => {
+    if (asking) return // a second click on × while the question is already up
+    asking = true
+    const quitWasRequested = quitting
+    void dialog
+      .showMessageBox(win, {
+        type: 'warning',
+        buttons: ['Close anyway', 'Keep working'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'CoachBoard',
+        message: 'CoachBoard is still working on something.',
+        detail:
+          'A recording, a video upload, or program changes that have not saved yet would be lost if you close now.',
+      })
+      .then(({ response }) => {
+        if (response !== 0) {
+          quitting = false
+          return
+        }
+        if (!win.isDestroyed()) win.destroy()
+        // A quit (Cmd+Q, or installing an update) was what asked to close. On
+        // Windows the app quits with its last window anyway; on macOS it would
+        // otherwise stay running with no window.
+        if (quitWasRequested) app.quit()
+      })
+      .catch((err: unknown) => log(`Close confirmation failed: ${describeError(err)}`))
+      .finally(() => {
+        asking = false
+      })
   })
 
   await win.loadURL(appOrigin())

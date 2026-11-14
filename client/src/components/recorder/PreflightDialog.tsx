@@ -19,6 +19,8 @@ export interface CaptureSource {
   name: string
   kind: 'screen' | 'window' | 'self'
   thumbnailDataUrl: string | null
+  /** Minimised: Windows cannot show or record it until it is opened, which starting the recording does. */
+  minimized?: boolean
 }
 
 interface Props {
@@ -190,15 +192,20 @@ export default function PreflightDialog({ onStart, onCancel }: Props) {
                     className="mb-2 aspect-video w-full rounded bg-black object-contain"
                   />
                 ) : (
-                  <div className="mb-2 flex aspect-video w-full items-center justify-center rounded bg-muted">
+                  <div className="mb-2 flex aspect-video w-full flex-col items-center justify-center gap-1 rounded bg-muted px-2 text-center">
                     <Monitor className="h-6 w-6 text-muted-foreground" />
+                    {source.minimized && (
+                      <span className="text-[10px] leading-tight text-muted-foreground">
+                        Minimized — opens when you start recording
+                      </span>
+                    )}
                   </div>
                 )}
                 <div className="truncate text-xs" title={source.name}>
                   {source.name}
                 </div>
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {source.kind === 'self' ? 'this app' : source.kind}
+                  {source.kind === 'self' ? 'this app' : source.minimized ? 'window · minimized' : source.kind}
                 </div>
               </button>
             ))}
