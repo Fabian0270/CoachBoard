@@ -53,6 +53,28 @@ export default {
       transitionTimingFunction: {
         smooth: "cubic-bezier(0.2, 0.8, 0.2, 1)",
       },
+      // Dialogs, menus and toasts. Written out here rather than taken from
+      // tailwindcss-animate: the classes that plugin provides were used in the
+      // components but the plugin was never installed, so nothing animated.
+      //
+      // Scale is animated with the separate CSS `scale` property, not
+      // `transform`: a dialog is centred with a translate transform, and a
+      // keyframe that sets transform would throw it off-centre for the
+      // duration of the animation.
+      keyframes: {
+        "fade-in": { from: { opacity: "0" }, to: { opacity: "1" } },
+        "fade-out": { from: { opacity: "1" }, to: { opacity: "0" } },
+        "pop-in": { from: { opacity: "0", scale: "0.97" }, to: { opacity: "1", scale: "1" } },
+        "pop-out": { from: { opacity: "1", scale: "1" }, to: { opacity: "0", scale: "0.97" } },
+        "toast-in": { from: { opacity: "0", translate: "8px 0" }, to: { opacity: "1", translate: "0 0" } },
+      },
+      animation: {
+        "fade-in": "fade-in 150ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "fade-out": "fade-out 120ms ease-in",
+        "pop-in": "pop-in 150ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "pop-out": "pop-out 120ms ease-in",
+        "toast-in": "toast-in 150ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+      },
       transitionDuration: {
         DEFAULT: "150ms",
       },

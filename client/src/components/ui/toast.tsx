@@ -98,7 +98,7 @@ function ToastViewport({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: 
           <div
             key={t.id}
             role={t.variant === 'error' ? 'alert' : 'status'}
-            className="pointer-events-auto flex items-start gap-3 rounded-lg border bg-popover p-4 shadow-xl shadow-black/20data-[state=open]:animate-in slide-in-from-right-2 fade-in-0"
+            className="pointer-events-auto flex items-start gap-3 rounded-lg border bg-popover p-4 shadow-xl shadow-black/20 animate-toast-in motion-reduce:animate-none"
             data-state="open"
           >
             <Icon className={cn('mt-0.5 h-5 w-5 shrink-0', ACCENTS[t.variant])} />
