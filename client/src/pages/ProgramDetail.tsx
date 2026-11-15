@@ -28,6 +28,7 @@ import {
   COLUMN_LABELS,
   DAY_LABELS,
   weeksBetween,
+  planDurationChange,
   type Program,
 } from '../lib/programUtils'
 import { errorMessage, getJson, sendJson } from '../lib/api'
@@ -41,6 +42,7 @@ export default function ProgramDetail() {
   const { program, setProgram, notFound, loadError, reload } = useProgramData(id)
   const [setupForm, setSetupForm] = useState({ start_date: '', weeks: '4' })
   const [savingDuration, setSavingDuration] = useState(false)
+  const [durationOpen, setDurationOpen] = useState(false)
   const [openDate, setOpenDate] = useState<string | null>(null)
   const [cellStatus, setCellStatus] = useState<Record<string, 'saving' | 'saved' | 'error'>>({})
   const [columnsOpen, setColumnsOpen] = useState(false)
@@ -292,25 +294,42 @@ export default function ProgramDetail() {
     )
   }
 
+  // What the dates in the duration form would do to the training days, worked
+  // out before anything is sent so the coach is asked about what is at stake.
+  const durationPlan = program && setupForm.start_date && Number(setupForm.weeks) >= 1
+    ? planDurationChange(program, setupForm.start_date, Number(setupForm.weeks))
+    : null
+
   const handleSetupSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!id) return
+    if (!id || !durationPlan) return
+    const removed = durationPlan.outside
+    if (removed.length > 0) {
+      const withResults = removed.filter((w) => dayHasResults(w)).length
+      const ok = await confirm({
+        title: `Remove ${removed.length} training day${removed.length === 1 ? '' : 's'}?`,
+        description:
+          `${removed.length === 1 ? 'It falls' : 'They fall'} outside the new dates and will be deleted.` +
+          (withResults > 0
+            ? ` ${withResults} of them ${withResults === 1 ? 'holds' : 'hold'} what the athlete logged.`
+            : ''),
+        confirmLabel: 'Remove and save',
+        destructive: true,
+      })
+      if (!ok) return
+    }
     setSavingDuration(true)
     try {
-      const res = await fetch(`/api/programs/${id}/duration`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start_date: setupForm.start_date, weeks: Number(setupForm.weeks) }),
+      await sendJson('PUT', `/api/programs/${id}/duration`, {
+        start_date: setupForm.start_date,
+        weeks: Number(setupForm.weeks),
+        remove_outside: removed.length > 0,
       })
-      if (res.ok) {
-        const updated = await res.json()
-        setProgram((p) => p ? { ...p, ...updated } : p)
-      } else {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        toast.error(`Failed to set duration: ${err.error ?? JSON.stringify(err)}`)
-      }
+      // The training days may have moved or gone: show what is stored.
+      await reloadProgram()
+      setDurationOpen(false)
     } catch (err) {
-      toast.error(`Network error: ${String(err)}`)
+      toast.error(`Could not change the dates. ${errorMessage(err)} Nothing was changed.`)
     } finally {
       setSavingDuration(false)
     }
@@ -339,13 +358,15 @@ export default function ProgramDetail() {
     }
   }
 
+  // Opens over the calendar. It used to blank the program's dates locally to
+  // swap the whole calendar for the setup form.
   const handleChangeDuration = () => {
     if (!program) return
     const current = program.start_date && program.end_date
       ? weeksBetween(program.start_date, program.end_date)
       : 4
     setSetupForm({ start_date: program.start_date ?? '', weeks: String(current) })
-    setProgram({ ...program, start_date: null, end_date: null })
+    setDurationOpen(true)
   }
 
   const toggleColumn = async (col: ToggleableColumn) => {
@@ -431,7 +452,7 @@ export default function ProgramDetail() {
                 <SlidersHorizontal className="h-4 w-4" />Columns
               </Button>
               <Button variant="ghost" size="sm" onClick={handleChangeDuration}>
-                <CalendarRange className="h-4 w-4" />Duration
+                <CalendarRange className="h-4 w-4" />Dates
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)}>
                 <Download className="h-4 w-4" />Import
@@ -895,6 +916,56 @@ export default function ProgramDetail() {
             </div>
           </DialogContent>
         )}
+      </Dialog>
+
+      <Dialog open={durationOpen} onOpenChange={(o) => { if (!savingDuration) setDurationOpen(o) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Dates</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSetupSubmit} className="space-y-4">
+            <div className="space-y-1">
+              <Label htmlFor="duration_start">Start date</Label>
+              <Input
+                id="duration_start" type="date" required autoFocus
+                value={setupForm.start_date}
+                onChange={(e) => setSetupForm({ ...setupForm, start_date: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="duration_weeks">Number of weeks</Label>
+              <Input
+                id="duration_weeks" type="number" min="1" max="52" required
+                value={setupForm.weeks}
+                onChange={(e) => setSetupForm({ ...setupForm, weeks: e.target.value })}
+              />
+            </div>
+            {durationPlan && (
+              <div className="space-y-1 text-xs" aria-live="polite">
+                <p className="text-muted-foreground">
+                  <span className="num text-foreground">{durationPlan.newStart} → {durationPlan.newEnd}</span>.{' '}
+                  {durationPlan.shiftDays === 0
+                    ? 'The training days stay where they are.'
+                    : `Every training day moves ${Math.abs(durationPlan.shiftDays)} day${Math.abs(durationPlan.shiftDays) === 1 ? '' : 's'} ${durationPlan.shiftDays > 0 ? 'later' : 'earlier'}.`}
+                </p>
+                {durationPlan.outside.length > 0 && (
+                  <p className="font-medium text-destructive" role="alert">
+                    {durationPlan.outside.length} training day{durationPlan.outside.length === 1 ? '' : 's'} would fall
+                    outside these dates and be removed.
+                  </p>
+                )}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Button type="submit" disabled={savingDuration || !setupForm.start_date}>
+                {savingDuration ? 'Saving…' : 'Save'}
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setDurationOpen(false)} disabled={savingDuration}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
       </Dialog>
 
       <Dialog open={columnsOpen} onOpenChange={setColumnsOpen}>

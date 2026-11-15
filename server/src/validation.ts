@@ -120,6 +120,8 @@ export const schemas = {
     duration: z.object({
       start_date: isoDate,
       weeks: z.number().int().min(1).max(52),
+      // The coach has agreed that training days outside the new dates go.
+      remove_outside: z.boolean().optional(),
     }),
   },
 

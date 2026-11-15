@@ -8,6 +8,7 @@ import {
   updateProgram,
   deleteProgram,
   setProgramDuration,
+  DurationWouldRemoveDays,
   createWorkout,
   updateWorkout,
   deleteWorkout,
@@ -138,10 +139,19 @@ router.put('/:programId/duration', async (req: Request, res: Response): Promise<
   const body = validate(schemas.program.duration, req.body, res)
   if (!body) return
   try {
-    const updated = await setProgramDuration(String(req.params.programId), body.start_date, body.weeks)
+    const updated = await setProgramDuration(
+      String(req.params.programId), body.start_date, body.weeks, body.remove_outside === true,
+    )
     if (!updated) { res.status(404).json({ error: 'Program not found' }); return }
     res.json(withoutTemplateBlob(updated))
   } catch (err) {
+    if (err instanceof DurationWouldRemoveDays) {
+      // Nothing was changed. The page asks the coach first and sends again.
+      res.status(409).json({
+        error: err.message, code: 'would_remove_days', days: err.days, daysWithResults: err.daysWithResults,
+      })
+      return
+    }
     fail(res, 'Failed to update program duration', err)
   }
 })

@@ -116,4 +116,30 @@ export function buildColumns(enabled: ToggleableColumn[]): ColDef[] {
   return cols
 }
 
+/**
+ * What changing a program's start date and length would do to its training days.
+ *
+ * Mirrors setProgramDuration on the server, so the page can tell the coach
+ * before anything is sent: the days move with the first Monday, and any that
+ * then fall outside the new dates are the ones a shorter program removes.
+ */
+export function planDurationChange(
+  program: { start_date: string | null; workouts: Workout[] },
+  startDate: string,
+  weeks: number,
+): { shiftDays: number; outside: Workout[]; newStart: string; newEnd: string } {
+  const monday = mondayOf(parseIsoDate(startDate))
+  const newStart = toIsoDate(monday)
+  const newEnd = toIsoDate(addDays(monday, weeks * 7 - 1))
+  const shiftDays = program.start_date
+    ? Math.round((monday.getTime() - mondayOf(parseIsoDate(program.start_date)).getTime()) / 86_400_000)
+    : 0
+  const outside = program.workouts.filter((w) => {
+    if (!w.scheduled_date) return false
+    const moved = toIsoDate(addDays(parseIsoDate(w.scheduled_date), shiftDays))
+    return moved < newStart || moved > newEnd
+  })
+  return { shiftDays, outside, newStart, newEnd }
+}
+
 export const pendingWorkoutCreations = new Map<string, Promise<Workout | null>>()
