@@ -168,6 +168,8 @@ export default function RecorderProvider({ children }: { children: React.ReactNo
           recordingId={engine.recordingId}
           bytes={engine.bytes}
           error={engine.error}
+          cameraOffsetMs={engine.cameraOffsetMs}
+          corner={engine.bubbleCorner}
           onSaved={onSaved}
           onSent={onSent}
           onDiscard={onDiscard}

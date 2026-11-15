@@ -36,6 +36,11 @@ export interface RecorderEngine {
   recordingId: string | null
   error: string | null
   webcamStream: MediaStream | null
+  /**
+   * How much later the webcam file starts than the screen file, in ms, or null
+   * when no webcam was recorded. The editor lines the two up with it.
+   */
+  cameraOffsetMs: number | null
   bubbleCorner: BubbleCorner
   setBubbleCorner(corner: BubbleCorner): void
   send(event: RecorderEvent): void
@@ -50,6 +55,9 @@ export interface RecorderEngine {
 /** How often MediaRecorder hands over bytes. Short enough that a crash loses little. */
 const TIMESLICE_MS = 3000
 
+/** The webcam is shown small in the final video, so it needs little. */
+const CAMERA_BITS_PER_SECOND = 1_000_000
+
 export function useRecorderEngine(): RecorderEngine {
   const [state, setState] = useState<RecorderState>('idle')
   const [bytes, setBytes] = useState(0)
@@ -58,9 +66,12 @@ export function useRecorderEngine(): RecorderEngine {
   const [error, setError] = useState<string | null>(null)
   const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null)
   const [bubbleCorner, setBubbleCornerState] = useState<BubbleCorner>('bottom-right')
+  const [cameraOffsetMs, setCameraOffsetMs] = useState<number | null>(null)
 
   const compositorRef = useRef<Compositor | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
+  /** The webcam's own recorder. Its file is placed over the screen afterwards, in the editor. */
+  const camRecorderRef = useRef<MediaRecorder | null>(null)
   const streamsRef = useRef<MediaStream[]>([])
   const audioCtxRef = useRef<AudioContext | null>(null)
   const idRef = useRef<string | null>(null)
@@ -88,6 +99,7 @@ export function useRecorderEngine(): RecorderEngine {
     compositorRef.current?.stop()
     compositorRef.current = null
     recorderRef.current = null
+    camRecorderRef.current = null
     for (const stream of streamsRef.current) {
       for (const track of stream.getTracks()) track.stop()
     }
@@ -102,6 +114,7 @@ export function useRecorderEngine(): RecorderEngine {
       setError(null)
       setBytes(0)
       setElapsedMs(0)
+      setCameraOffsetMs(null)
       pausedForMsRef.current = 0
       uploadChain.current = Promise.resolve()
 
@@ -146,7 +159,11 @@ export function useRecorderEngine(): RecorderEngine {
           streamsRef.current.push(mic)
         }
 
-        const compositor = createCompositor({ display, webcam, plan, corner: bubbleCorner })
+        // The webcam is NOT drawn into the screen recording any more: it is
+        // recorded as its own file and placed afterwards, in the editor, where
+        // the coach can move, resize or hide it. Drawing it in here baked its
+        // position into the video.
+        const compositor = createCompositor({ display, webcam: null, plan, corner: bubbleCorner })
         compositorRef.current = compositor
 
         const mixed = new MediaStream(compositor.stream.getVideoTracks())
@@ -185,6 +202,47 @@ export function useRecorderEngine(): RecorderEngine {
         })
         recorderRef.current = recorder
 
+        // The webcam, recorded on its own (see the compositor note above).
+        let camRecorder: MediaRecorder | null = null
+        let camChain: Promise<void> = Promise.resolve()
+        let camFailed = false
+        let camStopped: Promise<void> = Promise.resolve()
+        if (webcam) {
+          const camBegun = await fetch(`/api/recorder/recordings/${id}/begin?track=camera`, { method: 'POST' })
+          if (camBegun.ok) {
+            const camMime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((t) =>
+              MediaRecorder.isTypeSupported(t),
+            )
+            const cam = new MediaRecorder(new MediaStream(webcam.getVideoTracks()), {
+              mimeType: camMime,
+              videoBitsPerSecond: CAMERA_BITS_PER_SECOND,
+            })
+            camRecorder = cam
+            camRecorderRef.current = cam
+            camStopped = new Promise<void>((resolve) => {
+              cam.onstop = () => resolve()
+            })
+            cam.ondataavailable = (e) => {
+              if (e.data.size === 0 || camFailed) return
+              camChain = camChain
+                .then(async () => {
+                  const res = await fetch(`/api/recorder/recordings/${id}/chunk?track=camera`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'video/webm' },
+                    body: e.data,
+                  })
+                  if (!res.ok) throw new Error((await res.json()).error ?? 'Webcam chunk rejected')
+                })
+                .catch(() => {
+                  // Losing the webcam must not lose the recording: it is
+                  // finished without one, and the editor offers no bubble.
+                  camFailed = true
+                  if (cam.state !== 'inactive') cam.stop()
+                })
+            }
+          }
+        }
+
         recorder.ondataavailable = (e) => {
           if (e.data.size === 0) return
           uploadChain.current = uploadChain.current
@@ -214,7 +272,21 @@ export function useRecorderEngine(): RecorderEngine {
         }
 
         recorder.onstop = () => {
-          void uploadChain.current
+          // The webcam is sealed first, so the screen's "finalized" — which
+          // opens the editor — only arrives once both files are complete.
+          if (camRecorder && camRecorder.state !== 'inactive') camRecorder.stop()
+          void camStopped
+            .then(() => camChain)
+            .then(async () => {
+              if (!camRecorder || camFailed) {
+                setCameraOffsetMs(null)
+                return
+              }
+              const res = await fetch(`/api/recorder/recordings/${id}/finish?track=camera`, { method: 'POST' })
+              if (!res.ok) setCameraOffsetMs(null)
+            })
+            .catch(() => setCameraOffsetMs(null))
+            .then(() => uploadChain.current)
             .then(() => fetch(`/api/recorder/recordings/${id}/finish`, { method: 'POST' }))
             .then(async (res) => {
               if (!res.ok) throw new Error((await res.json()).error ?? 'Could not finish')
@@ -238,6 +310,10 @@ export function useRecorderEngine(): RecorderEngine {
 
         recorder.start(TIMESLICE_MS)
         startedAtRef.current = performance.now()
+        if (camRecorder) {
+          camRecorder.start(TIMESLICE_MS)
+          setCameraOffsetMs(performance.now() - startedAtRef.current)
+        }
         timerRef.current = window.setInterval(() => {
           if (pausedAtRef.current) return
           setElapsedMs(performance.now() - startedAtRef.current - pausedForMsRef.current)
@@ -261,6 +337,7 @@ export function useRecorderEngine(): RecorderEngine {
     const recorder = recorderRef.current
     if (!recorder || recorder.state !== 'recording') return
     recorder.pause()
+    if (camRecorderRef.current?.state === 'recording') camRecorderRef.current.pause()
     pausedAtRef.current = performance.now()
     send('pause')
   }, [send])
@@ -269,6 +346,7 @@ export function useRecorderEngine(): RecorderEngine {
     const recorder = recorderRef.current
     if (!recorder || recorder.state !== 'paused') return
     recorder.resume()
+    if (camRecorderRef.current?.state === 'paused') camRecorderRef.current.resume()
     pausedForMsRef.current += performance.now() - pausedAtRef.current
     pausedAtRef.current = 0
     send('resume')
@@ -315,6 +393,7 @@ export function useRecorderEngine(): RecorderEngine {
     recordingId,
     error,
     webcamStream,
+    cameraOffsetMs,
     bubbleCorner,
     setBubbleCorner,
     send,
