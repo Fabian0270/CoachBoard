@@ -72,7 +72,7 @@ export default function FloatingControls() {
       className="flex h-screen w-screen select-none items-center gap-3 rounded-full border border-border bg-card px-4 text-foreground"
     >
       <span
-        className={`h-2.5 w-2.5 shrink-0 rounded-full ${paused ? 'bg-muted-foreground' : 'animate-pulse bg-red-500'}`}
+        className={`h-2.5 w-2.5 shrink-0 rounded-full ${paused ? 'bg-muted-foreground' : 'animate-pulse bg-destructive'}`}
       />
       <span className="font-mono text-sm tabular-nums">{state ? formatDuration(elapsedMs) : '—'}</span>
       <span className="truncate text-xs text-muted-foreground">

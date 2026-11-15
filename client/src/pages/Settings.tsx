@@ -8,7 +8,8 @@ import {
 } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
-import { Mail, Send, ExternalLink, AlertTriangle, Lock, MessageSquare, Database, Settings as SettingsIcon } from 'lucide-react'
+import { Mail, Send, ExternalLink, AlertTriangle, Lock, MessageSquare, Database } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
 import DiscordSettingsCard from '../components/discord/DiscordSettingsCard'
 import DataSettingsCard from '../components/DataSettingsCard'
 import { errorMessage, getJson } from '../lib/api'
@@ -163,11 +164,8 @@ export default function Settings() {
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
-      <div className="flex items-center gap-3">
-        <SettingsIcon className="h-6 w-6 text-muted-foreground" />
-        <h1 className="text-3xl font-bold">Settings</h1>
-      </div>
+    <div className="mx-auto max-w-3xl space-y-6">
+      <PageHeader title="Settings" />
 
       <Tabs defaultValue="email">
         <TabsList>
@@ -186,7 +184,7 @@ export default function Settings() {
         </CardHeader>
         <CardContent className="space-y-4">
           {configured && (
-            <p className="text-sm text-emerald-600 dark:text-emerald-400">
+            <p className="text-sm text-success">
               ✓ Email is set up. You can update it below.
             </p>
           )}
@@ -204,7 +202,7 @@ export default function Settings() {
           </div>
 
           {preset.warning && (
-            <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
+            <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground [&>svg]:text-warning">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{preset.warning}</span>
             </div>

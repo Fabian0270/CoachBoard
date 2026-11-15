@@ -30,7 +30,7 @@ export default function BookmarkStar({
       <Star
         className={cn(
           'h-4 w-4',
-          bookmarked ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground/60',
+          bookmarked ? 'fill-warning text-warning' : 'text-muted-foreground/60',
         )}
       />
     </button>

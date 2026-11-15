@@ -89,7 +89,7 @@ export default function SingleImportForm({
 
           {singlePreview!.warnings.length > 0 && (
             <div className="space-y-1">
-              <h3 className="text-sm font-semibold flex items-center gap-1 text-amber-600 dark:text-amber-400">
+              <h3 className="text-sm font-semibold flex items-center gap-1 text-warning">
                 <AlertTriangle className="h-3.5 w-3.5" />
                 {singlePreview!.warnings.length} warning{singlePreview!.warnings.length !== 1 ? 's' : ''}
               </h3>

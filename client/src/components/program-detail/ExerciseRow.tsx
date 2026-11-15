@@ -157,7 +157,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                     {nameMatches.length > 0 && menuRect && portalContainer && createPortal(
                       <ul
                         style={{ position: 'absolute', left: menuRect.left, top: menuRect.top, width: menuRect.width }}
-                        className="z-[60] mt-0.5 max-h-56 overflow-auto rounded-md border bg-card shadow-lg py-1 text-sm"
+                        className="z-[60] mt-0.5 max-h-56 overflow-auto rounded-lg border bg-popover py-1 text-sm shadow-xl shadow-black/20"
                       >
                         {nameMatches.map((name) => (
                           <li key={name}>
@@ -196,7 +196,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
             title={unsavedTitle}
-            className={inputCls + unsavedCls(c.key)}
+            className={inputCls + ' num' + unsavedCls(c.key)}
           />
         ) : (
           <textarea

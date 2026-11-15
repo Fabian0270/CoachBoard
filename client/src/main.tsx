@@ -2,6 +2,8 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import FloatingControls from './components/recorder/FloatingControls'
+import '@fontsource-variable/geist'
+import '@fontsource-variable/geist-mono'
 import './index.css'
 import { watchSystemTheme } from './lib/theme'
 

@@ -280,7 +280,7 @@ export default function ReviewDialog({
             filling in a message and pressing Send. Only once the size is that
             of the video that would actually go out. */}
         {!sending && upToDate && !fitness.discord && (
-          <p className="mt-3 text-xs text-amber-500">{blockedReason('discord', deliverBytes)}</p>
+          <p className="mt-3 text-xs text-warning">{blockedReason('discord', deliverBytes)}</p>
         )}
 
         <p className="mt-4 text-xs text-muted-foreground">

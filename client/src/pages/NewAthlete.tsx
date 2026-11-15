@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -9,7 +9,7 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
-import { ArrowLeft } from 'lucide-react'
+import PageHeader, { BackLink } from '../components/PageHeader'
 import { WEIGHT_CLASSES, isPowerlifting } from 'coachboard-shared'
 
 export default function NewAthlete() {
@@ -42,11 +42,9 @@ export default function NewAthlete() {
   }
 
   return (
-    <div className="max-w-lg space-y-6">
-      <div className="flex items-center gap-3">
-        <Link to="/athletes"><ArrowLeft className="h-5 w-5 text-muted-foreground" /></Link>
-        <h1 className="text-3xl font-bold">New Athlete</h1>
-      </div>
+    <div className="mx-auto max-w-lg space-y-6">
+      <BackLink to="/athletes">Athletes</BackLink>
+      <PageHeader title="New Athlete" />
       <Card>
         <CardHeader><CardTitle>Athlete Details</CardTitle></CardHeader>
         <CardContent>

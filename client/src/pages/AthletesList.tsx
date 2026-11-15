@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getList, errorMessage } from '../lib/api'
 import LoadError from '../components/LoadError'
-import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
+import PageHeader from '../components/PageHeader'
 import { Input } from '../components/ui/input'
-import { Plus, Search, Users, Trash2 } from 'lucide-react'
+import { Plus, Search, Users, Trash2, ChevronRight } from 'lucide-react'
 import { matchesSearch } from '../lib/search'
+import { cn, initials } from '../lib/utils'
 
 interface Athlete {
   id: string
@@ -62,37 +63,53 @@ export default function AthletesList() {
   // should not depend on remembering whether they were archived.
   const matches = athletes.filter((a) => matchesSearch(query, [a.name, a.email, a.sport]))
 
-  const renderCard = (athlete: Athlete) => (
-    <div key={athlete.id} className="relative group">
-      <Link to={`/athletes/${athlete.id}`}>
-        <Card className="hover:shadow-md transition-shadow cursor-pointer">
-          <CardContent className="p-4 pr-12">
-            <div className="font-semibold text-lg flex items-center gap-2">
-              {athlete.name}
-              {athlete.archived ? <Badge variant="outline" className="text-xs font-normal">Archived</Badge> : null}
-            </div>
-            {athlete.sport && <Badge variant="secondary" className="mt-1">{athlete.sport}</Badge>}
-            {athlete.email && <div className="text-sm text-muted-foreground mt-2">{athlete.email}</div>}
-          </CardContent>
-        </Card>
+  const renderRow = (athlete: Athlete) => (
+    <li key={athlete.id} className="group relative">
+      <Link
+        to={`/athletes/${athlete.id}`}
+        className="flex items-center gap-4 px-4 py-3 pr-14 transition-colors duration-150 ease-smooth hover:bg-foreground/[0.03]"
+      >
+        <span
+          aria-hidden
+          className={cn(
+            'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+            athlete.archived ? 'bg-muted text-muted-foreground' : 'bg-primary/15 text-primary',
+          )}
+        >
+          {initials(athlete.name)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 font-medium">
+            <span className="truncate">{athlete.name}</span>
+            {athlete.archived ? <Badge variant="outline">Archived</Badge> : null}
+          </div>
+          {athlete.email && <div className="truncate text-xs text-muted-foreground">{athlete.email}</div>}
+        </div>
+        {athlete.sport && <Badge variant="secondary" className="hidden sm:inline-flex">{athlete.sport}</Badge>}
+        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5" />
       </Link>
       <button
         type="button"
         onClick={(e) => handleDelete(e, athlete)}
         aria-label={`Delete ${athlete.name}`}
-        className="absolute top-2 right-2 p-2 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-destructive transition-opacity disabled:opacity-50"
+        className="absolute right-10 top-1/2 -translate-y-1/2 rounded-md p-2 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-destructive group-hover:opacity-100 disabled:opacity-50"
       >
         <Trash2 className="h-4 w-4" />
       </button>
-    </div>
+    </li>
+  )
+
+  const renderList = (list: Athlete[]) => (
+    <ul className="divide-y overflow-hidden rounded-xl border bg-card">{list.map(renderRow)}</ul>
   )
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Athletes</h1>
-        <Link to="/athletes/new"><Button><Plus className="h-4 w-4 mr-2" />New Athlete</Button></Link>
-      </div>
+    <div className="mx-auto max-w-5xl space-y-6">
+      <PageHeader
+        title="Athletes"
+        description={!error && active.length > 0 ? `${active.length} active${archived.length ? ` · ${archived.length} archived` : ''}` : undefined}
+        actions={<Link to="/athletes/new"><Button><Plus className="h-4 w-4" />New Athlete</Button></Link>}
+      />
       {/* The error branch comes FIRST: an empty roster and an unreadable one look
           the same in the data, and only one of them should say "No athletes yet". */}
       {!error && athletes.length > 0 && (
@@ -114,23 +131,19 @@ export default function AthletesList() {
         matches.length === 0 ? (
           <p className="text-sm text-muted-foreground">No athletes match “{query.trim()}”.</p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {matches.map(renderCard)}
-          </div>
+          renderList(matches)
         )
       ) : active.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <Users className="h-12 w-12 text-muted-foreground mb-4" />
-            <h2 className="text-lg font-semibold mb-2">No athletes yet</h2>
-            <p className="text-muted-foreground mb-4">Add your first athlete to get started.</p>
-            <Link to="/athletes/new"><Button>Add Athlete</Button></Link>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {active.map(renderCard)}
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-card/50 bg-glow-hero py-14 text-center">
+          <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/15 text-primary">
+            <Users className="h-6 w-6" />
+          </span>
+          <h2 className="mb-1 text-lg font-semibold">No athletes yet</h2>
+          <p className="mb-5 text-sm text-muted-foreground">Add your first athlete to get started.</p>
+          <Link to="/athletes/new"><Button>Add Athlete</Button></Link>
         </div>
+      ) : (
+        renderList(active)
       )}
 
       {archived.length > 0 && !searching && (
@@ -143,9 +156,7 @@ export default function AthletesList() {
             {showArchived ? 'Hide' : 'Show'} archived athletes ({archived.length})
           </button>
           {showArchived && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {archived.map(renderCard)}
-            </div>
+            renderList(archived)
           )}
         </div>
       )}

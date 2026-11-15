@@ -4,7 +4,8 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Palette, Pencil, Trash2, Check, X } from 'lucide-react'
+import { Pencil, Trash2, Check, X } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
 import { errorMessage, getList } from '../lib/api'
 import LoadError from '../components/LoadError'
 
@@ -65,11 +66,8 @@ export default function ExportStyles() {
   }
 
   return (
-    <div className="max-w-2xl space-y-6">
-      <div className="flex items-center gap-3">
-        <Palette className="h-6 w-6 text-muted-foreground" />
-        <h1 className="text-3xl font-bold">Excel Styles</h1>
-      </div>
+    <div className="mx-auto max-w-3xl space-y-6">
+      <PageHeader title="Excel Styles" />
       <p className="text-sm text-muted-foreground">
         Saved layouts captured from imported programs. Apply one when creating a new program to export it
         in that coach’s style — colours, columns, day labels and any form link are kept.
