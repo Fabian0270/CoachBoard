@@ -161,3 +161,71 @@ describe('Day editor — what is typed is never lost', () => {
     expect(screen.queryByText(/could not be saved/)).toBeNull()
   })
 })
+
+describe('Day editor — the dialog', () => {
+  const twoDays = {
+    ...program,
+    workouts: [
+      program.workouts[0],
+      { id: 'w2', program_id: 'p1', name: 'Day 2', scheduled_date: '2026-06-16', completed_at: null, notes: null, created_at: '',
+        exercises: [{ ...squat, id: 'e2', workout_id: 'w2', name: 'Bench Press' }] },
+    ],
+  }
+
+  it('titles the day by week and weekday, and starts with the cursor in the first cell', async () => {
+    serve({ '/api/programs/p1': { body: twoDays } })
+    open()
+    await userEvent.click(await screen.findByText('Squat'))
+    expect(await screen.findByRole('heading', { name: /Week 1 · Monday · /i })).toBeTruthy()
+    expect((document.activeElement as HTMLTextAreaElement).value).toBe('Squat')
+  })
+
+  it('pages to the next and previous calendar day with Page Down / Page Up', async () => {
+    serve({ '/api/programs/p1': { body: twoDays } })
+    open()
+    await userEvent.click(await screen.findByText('Squat'))
+    await screen.findByRole('heading', { name: /Monday/ })
+
+    await userEvent.keyboard('{PageDown}')
+    expect(await screen.findByRole('heading', { name: /Week 1 · Tuesday/ })).toBeTruthy()
+    expect(await screen.findByDisplayValue('Bench Press')).toBeTruthy()
+
+    // Wednesday is empty: paging goes to the next calendar day regardless.
+    await userEvent.keyboard('{PageDown}')
+    expect(await screen.findByRole('heading', { name: /Wednesday/ })).toBeTruthy()
+    expect(screen.getByText(/No exercises yet/)).toBeTruthy()
+
+    await userEvent.keyboard('{PageUp}{PageUp}')
+    expect(await screen.findByRole('heading', { name: /Monday/ })).toBeTruthy()
+    // Monday is the first day of the program: there is nothing before it.
+    expect((screen.getByRole('button', { name: 'Previous day' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('saves the cell in hand when paging away from a day', async () => {
+    serve({
+      '/api/programs/p1': { body: twoDays },
+      'PUT /api/programs/p1/workouts/w1/exercises/e1': (_url, init) => ({
+        body: { ...squat, ...(JSON.parse(String(init?.body)) as object) },
+      }),
+    })
+    open()
+    await userEvent.click(await screen.findByText('Squat'))
+    const sets = await screen.findByDisplayValue('3')
+    await userEvent.clear(sets)
+    await userEvent.type(sets, '6')
+    await userEvent.keyboard('{PageDown}')
+    await waitFor(() => expect(putBodies()).toContainEqual({ sets: '6' }))
+  })
+
+  it('returns to the day that was open when the dialog closes', async () => {
+    serve({ '/api/programs/p1': { body: twoDays } })
+    open()
+    await userEvent.click(await screen.findByText('Squat'))
+    await screen.findByRole('heading', { name: /Monday/ })
+    await userEvent.keyboard('{PageDown}')
+    await screen.findByRole('heading', { name: /Tuesday/ })
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(document.activeElement?.getAttribute('data-day')).toBe('2026-06-16'))
+  })
+})

@@ -216,6 +216,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                       ref={nameInputRef}
                       rows={1}
                       value={draft[c.key] ?? ''}
+                      data-cell={`${exercise.id}:${c.key}`}
                       onChange={(e) => edit(c.key, e.target.value)}
                       onFocus={() => setNameFocused(true)}
                       onBlur={() => { commit(c); setNameFocused(false) }}
@@ -270,7 +271,8 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
             min="0"
             step="0.5"
             value={draft[c.key] ?? ''}
-            onChange={(e) => edit(c.key, e.target.value)}
+            data-cell={`${exercise.id}:${c.key}`}
+                      onChange={(e) => edit(c.key, e.target.value)}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
             title={unsavedTitle}
@@ -280,7 +282,8 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
           <textarea
             rows={1}
             value={draft[c.key] ?? ''}
-            onChange={(e) => edit(c.key, e.target.value)}
+            data-cell={`${exercise.id}:${c.key}`}
+                      onChange={(e) => edit(c.key, e.target.value)}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
             title={unsavedTitle}

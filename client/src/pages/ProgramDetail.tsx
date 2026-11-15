@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { useToast } from '../components/ui/toast'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, Eye, Film } from 'lucide-react'
+import { Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
 import { BackLink } from '../components/PageHeader'
 import DayAttachments from '../components/discord/DayAttachments'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
@@ -27,7 +27,6 @@ import {
   COLUMN_LABELS,
   DAY_LABELS,
   weeksBetween,
-  dayName,
   type Program,
 } from '../lib/programUtils'
 import { errorMessage, getJson } from '../lib/api'
@@ -145,6 +144,32 @@ export default function ProgramDetail() {
       .filter((row) => row.days[colIndex]?.date !== openDate)
       .map((row) => ({ date: row.days[colIndex].date, weekIndex: row.weekIndex }))
   }, [grid, openDate])
+
+  // ── Moving between days while one is open ───────────────────────────────
+  const allDates = useMemo(() => (grid ? grid.rows.flatMap((r) => r.days.map((d) => d.date)) : []), [grid])
+  const lastOpenDate = useRef<string | null>(null)
+  if (openDate) lastOpenDate.current = openDate
+
+  /** Whether there is a day `step` calendar days away inside the program. */
+  const canGoToDay = (step: number): boolean => {
+    const i = openDate ? allDates.indexOf(openDate) : -1
+    return i !== -1 && i + step >= 0 && i + step < allDates.length
+  }
+  /** Next / previous CALENDAR day, empty or not; ±7 is the same weekday. */
+  const goToDay = (step: number) => {
+    if (!openDate || !canGoToDay(step)) return
+    setOpenDate(allDates[allDates.indexOf(openDate) + step])
+  }
+  /** "Week 3 · Monday · 2 Dec" — the week is what a coach thinks in. */
+  const dayTitle = (date: string): string => {
+    const i = allDates.indexOf(date)
+    // English names on purpose: the app is in English, and the system locale
+    // would give "Week 3 · måndag" on a Swedish machine.
+    const d = new Date(`${date}T00:00:00Z`)
+    const weekday = d.toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' })
+    const short = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+    return `${i === -1 ? '' : `Week ${Math.floor(i / 7) + 1} · `}${weekday} · ${short}`
+  }
 
   // A failed reload used to put a 500's error object in place of the program.
   // Now the page keeps what it had and says the view may be out of date.
@@ -477,6 +502,7 @@ export default function ProgramDetail() {
                         >
                           <button
                             type="button"
+                            data-day={cell.date}
                             onClick={() => setOpenDate(cell.date)}
                             className={`group/cell block h-full min-h-[92px] w-full px-2.5 py-2 text-left transition-colors duration-150 ease-smooth hover:bg-primary/[0.06] focus:bg-primary/[0.06] focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary ${
                               exercises.length > 0 ? 'shadow-[inset_2px_0_0_hsl(var(--primary)/0.55)]' : ''
@@ -535,14 +561,70 @@ export default function ProgramDetail() {
       )}
 
       <Dialog open={openDate !== null} onOpenChange={(o) => { if (!o) setOpenDate(null) }}>
-        <DialogContent className="w-fit max-w-[95vw]">
-          <DialogHeader>
-            <DialogTitle>
-              {openDate ? `${dayName(openDate)} · ${openDate}` : ''}
-            </DialogTitle>
+        {/* Bounded and laid out as a column so a long day scrolls inside the
+            dialog. Unbounded, a 25-exercise day measured 1,437 px in a 764 px
+            window with the title and "Add exercise" both off-screen. */}
+        <DialogContent
+          className="flex max-h-[92vh] w-fit max-w-[95vw] flex-col"
+          // The editor puts the cursor in the first cell itself; Radix would
+          // otherwise pick the first button in the header.
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          // Back to the day that was open — which, after paging, is not the
+          // cell that was clicked to open the dialog.
+          onCloseAutoFocus={(e) => {
+            const date = lastOpenDate.current
+            const cell = date ? document.querySelector<HTMLElement>(`[data-day="${date}"]`) : null
+            if (cell) { e.preventDefault(); cell.focus() }
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'PageDown' && e.key !== 'PageUp') return
+            e.preventDefault()
+            const step = (e.ctrlKey ? 7 : 1) * (e.key === 'PageDown' ? 1 : -1)
+            goToDay(step)
+          }}
+        >
+          <DialogHeader className="shrink-0 pr-8">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <DialogTitle>{openDate ? dayTitle(openDate) : ''}</DialogTitle>
+              <div className="flex items-center gap-0.5">
+                <Button
+                  type="button" variant="ghost" size="icon" className="h-7 w-7"
+                  onClick={() => goToDay(-1)} disabled={!canGoToDay(-1)}
+                  aria-label="Previous day" title="Previous day (Page Up)"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button" variant="ghost" size="icon" className="h-7 w-7"
+                  onClick={() => goToDay(1)} disabled={!canGoToDay(1)}
+                  aria-label="Next day" title="Next day (Page Down)"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+              {/* The same status the calendar cell shows — but that cell is
+                  under the overlay while the day is open. */}
+              <span className="ml-auto text-xs text-muted-foreground" role="status" aria-live="polite">
+                {openDate && cellStatus[openDate] === 'saving' && (
+                  <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" />Saving…</span>
+                )}
+                {openDate && cellStatus[openDate] === 'error' && (
+                  <span className="inline-flex items-center gap-1 text-destructive"><X className="h-3 w-3" />Not saved</span>
+                )}
+                {openDate && !cellStatus[openDate] && unsavedCount === 0 && (
+                  <span className="inline-flex items-center gap-1"><Check className="h-3 w-3 text-success" />Saved</span>
+                )}
+                {openDate && cellStatus[openDate] === 'saved' && (
+                  <span className="inline-flex items-center gap-1"><Check className="h-3 w-3 text-success" />Saved</span>
+                )}
+              </span>
+            </div>
           </DialogHeader>
           {openDate && (
             <ExerciseEditor
+              // A fresh editor per day: paging must not carry the copy panel or
+              // a drag over from the day before.
+              key={openDate}
               workout={openWorkout}
               enabledColumns={enabledColumns}
               programId={id ?? ''}

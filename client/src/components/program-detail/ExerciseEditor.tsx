@@ -90,6 +90,14 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
   // The autocomplete menu portals into the dialog content (not document.body),
   // so Radix keeps it interactive and it escapes the table's scroll clipping.
   const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null)
+  // The cursor starts in the day, not on a header button: first cell if there
+  // is one, otherwise "Add exercise".
+  useEffect(() => {
+    const root = tableWrapperRef.current?.parentElement
+    const target = root?.querySelector<HTMLElement>('[data-cell]') ?? root?.querySelector<HTMLElement>('[data-add-exercise]')
+    target?.focus()
+  }, [])
+
   useEffect(() => {
     setPortalContainer((tableWrapperRef.current?.closest('[role="dialog"]') as HTMLElement) ?? null)
   }, [])
@@ -256,10 +264,11 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
   const groups = buildGroups(exercises)
 
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-0 flex-col gap-3">
+      {/* The table is the part that scrolls; the buttons under it stay put. */}
       <div
         ref={tableWrapperRef}
-        className="overflow-x-auto rounded-md border border-border"
+        className="min-h-0 overflow-auto rounded-md border border-border"
         style={dragLockedHeight != null ? { height: dragLockedHeight, overflowY: 'auto' } : undefined}
       >
         <table className="w-full border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
@@ -271,7 +280,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
             {/* delete action */}
             <col style={{ width: 28 }} />
           </colgroup>
-          <thead>
+          <thead className="sticky top-0 z-10 bg-popover">
             <tr className="bg-muted/50 text-xs text-muted-foreground">
               {columns.flatMap((c) => {
                 const th = (
@@ -352,9 +361,9 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
       </div>
 
       {/* Footer: add exercise / clear day / copy to weeks */}
-      <div className="flex items-center justify-between">
+      <div className="flex shrink-0 items-center justify-between">
         <div className="flex gap-2">
-          <Button type="button" size="sm" variant="outline" onClick={onAdd}>
+          <Button type="button" size="sm" variant="outline" onClick={onAdd} data-add-exercise>
             <Plus className="h-4 w-4 mr-1" />Add exercise
           </Button>
           {sameDayDates.length > 0 && exercises.length > 0 && !copyOpen && (
@@ -372,7 +381,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
 
       {/* Inline copy-to-weeks panel */}
       {copyOpen && (
-        <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+        <div className="shrink-0 rounded-md border border-border bg-muted/30 p-3 space-y-2">
           <p className="text-sm font-medium">Copy exercises to:</p>
           <div className="space-y-1.5">
             {sameDayDates.map(({ date, weekIndex }) => (
