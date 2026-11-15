@@ -19,6 +19,8 @@ import {
   findExerciseNames,
   copyWorkoutDay,
   moveWorkoutDay,
+  restoreDays,
+  restoreExercises,
   reorderExercises,
   withoutTemplateBlob,
 } from '../services/programService.js'
@@ -271,11 +273,40 @@ router.post('/:programId/move-day', async (req: Request, res: Response): Promise
   const body = validate(schemas.moveDay, req.body, res)
   if (!body) return
   try {
-    await moveWorkoutDay(String(req.params.programId), body.sourceDate, body.targetDate)
+    await moveWorkoutDay(String(req.params.programId), body.sourceDate, body.targetDate, body.replace === true)
     res.json({ ok: true })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Move failed'
     res.status(msg.includes('No workout') ? 400 : 500).json({ error: msg })
+  }
+})
+
+// Undo: put whole days back as they were before a clear, copy, paste or move.
+// Answers with the program, so the page shows exactly what is now stored.
+router.put('/:programId/days/restore', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.restoreDays, req.body, res)
+  if (!body) return
+  try {
+    const programId = String(req.params.programId)
+    if (!(await restoreDays(programId, body.days))) { res.status(404).json({ error: 'Program not found' }); return }
+    const program = await findProgramById(programId)
+    if (!program) { res.status(404).json({ error: 'Program not found' }); return }
+    res.json(withoutTemplateBlob(program))
+  } catch (err) {
+    fail(res, 'Failed to undo', err)
+  }
+})
+
+// Undo of a deleted exercise: the rows go back into the day they came from.
+router.post('/:programId/workouts/:workoutId/exercises/restore', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.restoreExercises, req.body, res)
+  if (!body) return
+  try {
+    const exercises = await restoreExercises(String(req.params.programId), String(req.params.workoutId), body.exercises)
+    if (!exercises) { res.status(404).json({ error: 'That training day no longer exists' }); return }
+    res.json({ exercises })
+  } catch (err) {
+    fail(res, 'Failed to undo', err)
   }
 })
 

@@ -16,6 +16,25 @@ const optionalIsoDate = z.preprocess(emptyToNull, isoDate.nullable().optional())
 const optionalFocus = z.preprocess(emptyToNull, focusEnum.nullable().optional())
 const optionalEmail = z.preprocess(emptyToNull, z.email().max(200).nullable().optional())
 
+/** One exercise row exactly as it was stored, id included — what an undo puts back. */
+const restoredExercise = z.object({
+  id: z.uuid(),
+  name: z.string().max(200),
+  sets: optionalString(50),
+  reps: optionalString(50),
+  weight: z.number().min(0).nullable().optional(),
+  duration: z.number().int().min(0).nullable().optional(),
+  distance: z.number().min(0).nullable().optional(),
+  notes: optionalString(2000),
+  order_index: z.number().int().min(0),
+  rest_time: optionalString(50),
+  intensity: optionalString(100),
+  load_used: optionalString(100),
+  rpe: optionalString(50),
+  group_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
+  suggestion_note: optionalString(2000),
+})
+
 /**
  * Standing height in whole centimetres.
  *
@@ -158,6 +177,31 @@ export const schemas = {
   moveDay: z.object({
     sourceDate: isoDate,
     targetDate: isoDate,
+    // false/absent: an occupied target swaps places with the source (dragging).
+    // true: the target is replaced by the source (cut and paste).
+    replace: z.boolean().optional(),
+  }),
+
+  // Undo. A day, or some of its exercises, put back exactly as they were —
+  // same ids, same order. See restoreDays / restoreExercises.
+  restoreDays: z.object({
+    days: z.array(z.object({
+      date: isoDate,
+      workout: z.object({
+        id: z.uuid(),
+        name: z.string().max(200),
+        notes: optionalString(2000),
+        completed_at: z.string().max(40).nullable().optional(),
+        created_at: z.string().max(40).optional(),
+        // Discord videos that were attached to the day, to attach again.
+        mediaIds: z.array(z.uuid()).max(500).optional(),
+        exercises: z.array(restoredExercise).max(300),
+      }).nullable(),
+    })).min(1).max(120),
+  }),
+
+  restoreExercises: z.object({
+    exercises: z.array(restoredExercise).min(1).max(300),
   }),
 
   reorderExercises: z.object({
