@@ -27,6 +27,26 @@ const LIFT_COLORS: Record<string, string> = {
   deadlift: 'hsl(var(--chart-3))',
 }
 
+/**
+ * Evenly spaced, round y-axis ticks for an e1RM chart: steps of 1, 2, 5, 10…
+ * whole kilos, about four intervals, bracketing every value. Left to Recharts,
+ * the axis landed on uneven ticks like 171 / 168 / 166 / 164 or 169.05.
+ */
+export function kgTicks(values: number[], intervals = 4): number[] {
+  const lo = Math.min(...values)
+  const hi = Math.max(...values)
+  const raw = Math.max((hi - lo) / intervals, 1)
+  const mag = 10 ** Math.floor(Math.log10(raw))
+  const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag
+  let start = Math.floor(lo / step) * step
+  let end = Math.ceil(hi / step) * step
+  // A flat line would otherwise sit on the bottom edge with a single tick.
+  if (start === end) { start -= step; end += step }
+  const ticks: number[] = []
+  for (let v = start; v <= end + step / 1000; v += step) ticks.push(Math.round(v))
+  return ticks
+}
+
 function fmt(n: number | null | undefined, decimals = 1): string {
   if (n == null) return '—'
   return n.toFixed(decimals)
@@ -236,27 +256,46 @@ export default function ProgramReport() {
                       <ResponsiveContainer width="100%" height={180}>
                         <LineChart
                           data={trend.dataPoints}
-                          margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
+                          margin={{ top: 12, right: 20, left: 0, bottom: 4 }}
                         >
                           <CartesianGrid
                             strokeDasharray="3 3"
                             stroke="hsl(var(--border))"
+                            vertical={false}
                           />
                           <XAxis
                             dataKey="weekIndex"
                             tickFormatter={(w: number) => `Wk ${w + 1}`}
-                            tick={{ fontSize: 12 }}
+                            tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                            stroke="hsl(var(--border))"
+                            tickLine={false}
+                            padding={{ left: 16, right: 16 }}
                           />
+                          {/* No per-tick "kg": at this width it wrapped every label onto
+                              two lines and clipped the top one. The badges above say kg. */}
                           <YAxis
-                            domain={['auto', 'auto']}
-                            tickFormatter={(v: number) => `${v}`}
-                            tick={{ fontSize: 12 }}
-                            width={48}
-                            unit=" kg"
+                            {...(() => {
+                              const ticks = kgTicks(trend.dataPoints.map((d) => d.e1rm))
+                              return { ticks, domain: [ticks[0], ticks[ticks.length - 1]] as [number, number] }
+                            })()}
+                            tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))', fontFamily: 'Geist Mono Variable, ui-monospace, monospace' }}
+                            stroke="hsl(var(--border))"
+                            tickLine={false}
+                            axisLine={false}
+                            width={40}
                           />
                           <Tooltip
                             formatter={(value: number) => [`${value} kg`, 'e1RM']}
                             labelFormatter={(label: number) => `Week ${label + 1}`}
+                            contentStyle={{
+                              background: 'hsl(var(--popover))',
+                              border: '1px solid hsl(var(--border))',
+                              borderRadius: 8,
+                              fontSize: 12,
+                              color: 'hsl(var(--popover-foreground))',
+                            }}
+                            labelStyle={{ color: 'hsl(var(--muted-foreground))' }}
+                            cursor={{ stroke: 'hsl(var(--border))' }}
                           />
                           <Line
                             type="monotone"
