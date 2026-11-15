@@ -73,7 +73,11 @@ jobs:
 
   build-mac:
     needs: verify
-    runs-on: macos-14   # Apple Silicon (arm64)
+    # Apple Silicon (arm64). Pinned, not macos-latest, so the build image only
+    # changes when we choose. GitHub retired macos-14 in 2026: a job asking for
+    # it is cancelled before its first step ("configuration ... is not supported"),
+    # which is what stopped the first v1.17.0 build.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
