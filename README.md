@@ -18,7 +18,8 @@ A desktop application for strength coaches to manage athletes, build and analyze
 - **Velocity-based training** — turn that bar speed into decisions: estimated RPE for the last rep against published per-lift references, agreement with the RPE the athlete called, an estimated 1RM from a single set, a fitted load–velocity profile across several loads, and velocity loss with the caveat that decides whether to read it. The athlete's own tracked history replaces the published references as it accumulates, and the bar speed their true 1RM moves at is remembered per lift — measured once, or learned from a set called RPE 10.
 - **Pose & joint angles** — an optional skeleton runs alongside the bar path, entirely on your machine, and plots knee and hip angle against bar speed on one timeline, so the sticking point can be read off the picture: where the knee stopped extending, whether the hips shot up first. Landmarks the model could not actually see are ruled out rather than guessed, and a coach can correct a joint by hand — the correction is layered on top of the measurement, so re-running the model never overwrites it.
 - **Saved analyses & comparison** — keep an analysis with its clip, reopen it later from the athlete's page or the bar path page, and put two lifts side by side with independent scrubbing. Draw on either one with a pen; the marks stay on the lifter through resizing and fullscreen.
-- **Screen recording** — record your screen with voice-over (and optionally camera and system sound) while you talk an athlete through their program or their lift, review the take, then send it to them over Discord or email — or save it to disk. The app tells you before you start whether the result will fit the channel you want to use.
+- **Screen recording** — record your screen, any window (even a minimised one — CoachBoard restores it first) or CoachBoard itself, with voice-over and optionally camera and system sound, while you talk an athlete through their program or their lift. When you record anything other than CoachBoard, a small always-on-top control bar (timer, pause, stop; draggable, and kept out of the video) stays on screen so you never have to dig CoachBoard out to stop. Then review the take and send it to the athlete over Discord or email — or save it to disk. The app tells you before you start whether the result will fit the channel you want to use.
+- **Recording editor** — the webcam is recorded separately, so after recording you can drag the webcam circle anywhere on the picture (one position for the whole video), resize it or hide it, and trim the start and end. The final video is rendered on your machine at several times real-time speed (a 10-second clip takes about two seconds) and works fully offline; a recording you don't edit is saved as recorded.
 - **Program bookmarking** — star programs to favorite them for reuse, with a filter to show bookmarked-only.
 - **Calculators** — RPE cheat sheet, 1RM estimates, and warm-up set suggestions.
 - **Payments** — track athlete payments and balances.
@@ -52,7 +53,7 @@ The app stores all data locally in a single folder named `coachboard-electron` i
 
 | Layer | Technology |
 |---|---|
-| Desktop shell | Electron |
+| Desktop shell | Electron 45 |
 | Frontend | React 18, Vite, Tailwind CSS, React Router |
 | Backend | Express (embedded, localhost only) |
 | Database | SQLite via better-sqlite3 + Kysely |
@@ -64,6 +65,7 @@ The app stores all data locally in a single folder named `coachboard-electron` i
 | Bar path tracking | opencv.js (vendored, Lucas–Kanade optical flow) in a Web Worker |
 | Pose estimation | MediaPipe Pose Landmarker Lite (`@mediapipe/tasks-vision`, vendored WASM + model) in its own Web Worker |
 | Screen recording | `getDisplayMedia` + canvas compositor + `MediaRecorder` (WebM) |
+| Recording editor | mediabunny (WebCodecs, bundled) re-renders the screen and webcam tracks with the chosen webcam position and trim |
 | Auto-update | electron-updater (GitHub provider) |
 | Tests | Vitest |
 
@@ -175,7 +177,8 @@ CoachBoard/
 │       ├── components/
 │       │   ├── analysis/  # bar-path stage, frame capture, tracker + pose workers,
 │       │   │              # velocity panel, joint-angle chart, pen annotations
-│       │   └── recorder/  # screen-recorder provider, preflight, compositor, review, send
+│       │   └── recorder/  # screen-recorder provider, preflight, compositor, floating controls,
+│       │                  # review + editor (webcam placement, trim), export, send
 │       ├── pages/    # Dashboard, Athletes, Programs, Calculators, Payments,
 │       │             # Excel Styles, Settings, Discord Inbox, Bar path,
 │       │             # Saved analysis, Compare analyses
@@ -200,7 +203,7 @@ CoachBoard/
 └── package.json       # npm workspaces root (client, server, shared, electron)
 ```
 
-The app runs Express on `localhost:3001` inside the Electron process. The React frontend talks to it via the `/api/*` routes. SQLite data is stored as `coachboard.sqlite` in the app's `userData` directory (`%APPDATA%\coachboard-electron` on Windows — the folder name comes from `electron/package.json` `"name"`, as no `productName` is set).
+The app runs Express on `localhost:3001` inside the Electron process (the next free port from 3002 to 3010 if something else holds 3001). The React frontend talks to it via the `/api/*` routes. SQLite data is stored as `coachboard.sqlite` in the app's `userData` directory (`%APPDATA%\coachboard-electron` on Windows — the folder name comes from `electron/package.json` `"name"`, as no `productName` is set).
 
 Anything that is really a calculation rather than plumbing lives in `shared/` as pure
 functions with no I/O and no DOM — the RPE chart, the velocity maths, the bar-path
