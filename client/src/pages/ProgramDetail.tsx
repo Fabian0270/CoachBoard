@@ -12,7 +12,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { useToast } from '../components/ui/toast'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, Eye, Film } from 'lucide-react'
+import { Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, Eye, Film } from 'lucide-react'
+import { BackLink } from '../components/PageHeader'
 import DayAttachments from '../components/discord/DayAttachments'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import ImportDialog from '../components/ImportDialog'
@@ -271,12 +272,7 @@ export default function ProgramDetail() {
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-6">
-      <Link
-        to="/programs"
-        className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />Programs
-      </Link>
+      <BackLink to="/programs">Programs</BackLink>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <h1 className="text-[28px] font-semibold leading-tight tracking-tight">{program.name}</h1>

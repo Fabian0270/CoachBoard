@@ -300,7 +300,7 @@ export default function ProgramComparison() {
           onClick={() => setBookmarkedOnly((v) => !v)}
           title="Show only bookmarked programs"
         >
-          <Star className={cn('h-4 w-4 mr-2', bookmarkedOnly && 'fill-yellow-400 text-yellow-400')} />
+          <Star className={cn('h-4 w-4 mr-2', bookmarkedOnly && 'fill-warning text-warning')} />
           Bookmarked
         </Button>
       </div>

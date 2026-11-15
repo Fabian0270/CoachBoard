@@ -22,8 +22,9 @@ import {
 import { WEIGHT_CLASSES, isPowerlifting } from 'coachboard-shared'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
 import type { DiscordUserItem } from 'coachboard-shared/discord'
-import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
+import { Plus, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
 import { cn, initials } from '../lib/utils'
+import { BackLink } from '../components/PageHeader'
 
 /** One labelled fact in the athlete's Info tab. */
 function InfoField({ label, mono, className, children }: { label: string; mono?: boolean; className?: string; children: React.ReactNode }) {
@@ -210,12 +211,7 @@ export default function AthleteDetail() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <Link
-        to="/athletes"
-        className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />Athletes
-      </Link>
+      <BackLink to="/athletes">Athletes</BackLink>
       {/* Profile header: who this is at a glance, on the same glow as the hero figures. */}
       <section className="flex flex-wrap items-center gap-5 rounded-xl border bg-card bg-glow-hero px-6 py-5">
         <span

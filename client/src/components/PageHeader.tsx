@@ -1,5 +1,20 @@
 import type { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 import { cn } from '../lib/utils'
+
+/** The small "← Parent" breadcrumb above a sub-page's header. */
+export function BackLink({ to, children }: { to: string; children: ReactNode }) {
+  return (
+    <Link
+      to={to}
+      className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+    >
+      <ArrowLeft className="h-3.5 w-3.5" />
+      {children}
+    </Link>
+  )
+}
 
 /**
  * The one title treatment every screen uses: an optional small eyebrow above

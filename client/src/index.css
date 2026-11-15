@@ -34,6 +34,10 @@
     --input: 50 12% 82%;
     --ring: 81 60% 30%;
     --sidebar: 53 19% 92%;
+    /* Chart series: Moss, steel blue, ember. Distinct in hue and lightness. */
+    --chart-1: 81 60% 32%;
+    --chart-2: 208 65% 42%;
+    --chart-3: 22 85% 48%;
     /* Ambient glow: moss, stronger in light so it reads on paper */
     --glow: 77 51% 56%;
     --glow-main: 0.3;
@@ -67,6 +71,9 @@
     --input: 223 9% 19%;
     --ring: 77 51% 56%;
     --sidebar: 225 13% 4%;
+    --chart-1: 77 51% 56%;
+    --chart-2: 208 75% 66%;
+    --chart-3: 24 92% 62%;
     --glow-main: 0.16;
     --glow-side: 0.22;
     --glow-hero: 0.12;

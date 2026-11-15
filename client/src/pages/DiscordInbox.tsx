@@ -8,7 +8,8 @@ import { useToast } from '../components/ui/toast'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '../components/ui/dialog'
-import { MessageSquare, Check, RefreshCw, CalendarCheck2 } from 'lucide-react'
+import { Check, RefreshCw, CalendarCheck2 } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
 import MediaThumb from '../components/discord/MediaThumb'
 import MediaPlayerDialog from '../components/discord/MediaPlayerDialog'
 import LinkUserDialog from '../components/discord/LinkUserDialog'
@@ -218,7 +219,7 @@ export default function DiscordInbox() {
                   </div>
                   <div className="flex flex-col items-end gap-2">
                     {item.workoutId ? (
-                      <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                      <Badge className="border-success/35 bg-success/10 text-success">
                         <CalendarCheck2 className="mr-1 h-3 w-3" />
                         {item.workoutName} · {item.workoutDate}
                       </Badge>
@@ -274,7 +275,7 @@ export default function DiscordInbox() {
                       <span className="text-xs text-muted-foreground">
                         {t.lastAt.slice(0, 16).replace('T', ' ')}
                       </span>
-                      <Badge className="bg-red-500 text-white hover:bg-red-500">{t.unread}</Badge>
+                      <Badge className="border-transparent bg-destructive text-destructive-foreground">{t.unread}</Badge>
                     </div>
                   </CardContent>
                 </Card>
@@ -301,11 +302,15 @@ export default function DiscordInbox() {
 function Header({ unmatchedCount, unreviewedCount }: { unmatchedCount: number; unreviewedCount: number }) {
   const total = unmatchedCount + unreviewedCount
   return (
-    <div className="flex items-center gap-3">
-      <MessageSquare className="h-6 w-6 text-muted-foreground" />
-      <h1 className="text-3xl font-bold">Inbox</h1>
-      {total > 0 && <Badge>{total} new</Badge>}
-    </div>
+    <PageHeader
+      title={
+        <span className="flex items-center gap-3">
+          Inbox
+          {total > 0 && <Badge className="num">{total} new</Badge>}
+        </span>
+      }
+      description="Form-check videos and messages from Discord."
+    />
   )
 }
 
@@ -375,7 +380,7 @@ function StatusChips({
   if (item.downloadStatus === 'skipped_too_large') {
     return (
       <span className="flex items-center gap-1">
-        <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 hover:bg-amber-100">
+        <Badge className="border-warning/35 bg-warning/10 text-warning">
           Too large
         </Badge>
         {!compact && (

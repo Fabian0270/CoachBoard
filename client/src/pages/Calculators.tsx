@@ -5,6 +5,7 @@ import { Label } from '../components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Calculator, Flame } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
 import type { Sex, Equipment, MeetEvent } from 'coachboard-shared/scoring'
 import { allScores } from 'coachboard-shared/scoring'
 import { warmupPlan, platesPerSide } from 'coachboard-shared/warmup'
@@ -176,8 +177,8 @@ function WarmupCalculator() {
 
 export default function Calculators() {
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Calculators</h1>
+    <div className="mx-auto max-w-5xl space-y-6">
+      <PageHeader title="Calculators" description="Meet scoring and warm-up ladders." />
       <Tabs defaultValue="scoring">
         <TabsList>
           <TabsTrigger value="scoring"><Calculator className="h-4 w-4 mr-2" />Scoring</TabsTrigger>

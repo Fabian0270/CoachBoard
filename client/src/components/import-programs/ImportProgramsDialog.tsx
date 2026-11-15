@@ -451,7 +451,7 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
         {/* Step: done (bulk summary; single navigates away) */}
         {step === 'done' && summary && (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+            <div className="flex items-center gap-2 text-success">
               <Check className="h-5 w-5" />
               <span className="text-sm font-medium">
                 Imported {summary.imported} program{summary.imported !== 1 ? 's' : ''} into {summary.athletes} athlete{summary.athletes !== 1 ? 's' : ''}.

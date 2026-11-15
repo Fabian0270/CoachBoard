@@ -127,7 +127,7 @@ export default function SendPanel({ recordingId, bytes, channel, onSent, onCance
                   className="mt-1"
                 />
                 {missingEmail && (
-                  <p className="mt-1 text-xs text-amber-500">
+                  <p className="mt-1 text-xs text-warning">
                     {selected?.name} has no email saved — type one, or add it on their page.
                   </p>
                 )}

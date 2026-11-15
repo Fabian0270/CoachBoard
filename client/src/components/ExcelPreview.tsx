@@ -48,7 +48,7 @@ export default function ExcelPreview({ programId, refreshKey }: Props) {
 
   if (error) {
     return (
-      <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
+      <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground [&>svg]:text-warning">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
         <span>{error}</span>
       </div>
@@ -58,7 +58,7 @@ export default function ExcelPreview({ programId, refreshKey }: Props) {
   return (
     <div className="space-y-2">
       {notice && (
-        <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
+        <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground [&>svg]:text-warning">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{notice}</span>
         </div>

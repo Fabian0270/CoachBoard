@@ -89,7 +89,7 @@ export default function AthleteMediaSection({ athleteId }: { athleteId: string }
                       {m.postedAt.slice(0, 10)}
                     </p>
                     {m.workoutId && (
-                      <Badge className="max-w-full truncate bg-emerald-100 text-[10px] text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300">
+                      <Badge className="max-w-full truncate border-success/35 bg-success/10 text-[10px] text-success">
                         <CalendarCheck2 className="mr-0.5 h-3 w-3 shrink-0" />
                         {m.workoutName}
                       </Badge>

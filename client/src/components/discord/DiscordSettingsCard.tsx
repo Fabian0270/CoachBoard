@@ -276,13 +276,13 @@ export default function DiscordSettingsCard() {
               </div>
             )}
 
-            <p className="text-sm text-emerald-600 dark:text-emerald-400">
+            <p className="text-sm text-success">
               ✓ Connected as <strong>{settings.botUsername}</strong>
             </p>
 
             {(status?.warnings.includes('intent_disabled') ||
               status?.warnings.some((w) => w.startsWith('intent_missing:'))) && (
-              <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
+              <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground [&>svg]:text-warning">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
                   <strong>Message Content Intent is off</strong>, so Discord hides messages from the
@@ -314,7 +314,7 @@ export default function DiscordSettingsCard() {
                   </span>
                   <span className="flex items-center gap-2">
                     {c.syncError && (
-                      <span className="text-xs text-amber-600 dark:text-amber-400">
+                      <span className="text-xs text-warning">
                         {c.syncError === 'forbidden'
                           ? 'Bot lost access — check channel permissions, then re-enable'
                           : 'Channel no longer exists'}

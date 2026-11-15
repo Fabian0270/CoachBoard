@@ -50,7 +50,7 @@ export default function MediaThumb({
           type="button"
           onClick={del}
           title="Delete video"
-          className="absolute right-1 top-1 hidden rounded bg-black/60 p-1 text-white hover:bg-red-600 group-hover:block"
+          className="absolute right-1 top-1 hidden rounded bg-black/60 p-1 text-white hover:bg-destructive group-hover:block"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>

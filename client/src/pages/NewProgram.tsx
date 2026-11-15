@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useSearchParams, Link } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -7,7 +7,7 @@ import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
-import { ArrowLeft } from 'lucide-react'
+import PageHeader, { BackLink } from '../components/PageHeader'
 import TemplatePicker from '../components/TemplatePicker'
 import { errorMessage, getList } from '../lib/api'
 
@@ -75,11 +75,9 @@ export default function NewProgram() {
   }
 
   return (
-    <div className="max-w-5xl space-y-6">
-      <div className="flex items-center gap-3">
-        <Link to="/programs"><ArrowLeft className="h-5 w-5 text-muted-foreground" /></Link>
-        <h1 className="text-3xl font-bold">New Program</h1>
-      </div>
+    <div className="mx-auto max-w-5xl space-y-6">
+      <BackLink to="/programs">Programs</BackLink>
+      <PageHeader title="New Program" />
       <form onSubmit={handleSubmit} className="grid items-start gap-6 md:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>Program Details</CardTitle></CardHeader>

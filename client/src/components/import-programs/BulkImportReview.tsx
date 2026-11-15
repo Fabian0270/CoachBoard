@@ -103,7 +103,7 @@ export default function BulkImportReview({
                             {e.preview!.weeks}w × {e.preview!.exerciseCount} ex
                           </span>
                           {warnings > 0 && (
-                            <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-0.5 whitespace-nowrap" title={e.preview!.warnings.map((w) => w.message).join('\n')}>
+                            <span className="text-xs text-warning flex items-center gap-0.5 whitespace-nowrap" title={e.preview!.warnings.map((w) => w.message).join('\n')}>
                               <AlertTriangle className="h-3 w-3" />{warnings}
                             </span>
                           )}

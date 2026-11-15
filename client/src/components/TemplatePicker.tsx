@@ -41,7 +41,7 @@ function TemplatePreview({ id }: { id: string }) {
 
   if (error) {
     return (
-      <div className="flex items-center gap-2 py-3 text-xs text-amber-700 dark:text-amber-400">
+      <div className="flex items-center gap-2 py-3 text-xs text-warning">
         <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
         {error}
       </div>
@@ -91,7 +91,7 @@ export default function TemplatePicker({ value, onChange, inheritOption }: Props
   return (
     <div className="space-y-3">
       {loadError && (
-        <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
+        <div className="flex items-center gap-2 text-xs text-warning">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           {loadError}
         </div>
