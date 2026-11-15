@@ -16,7 +16,8 @@ interface ExerciseEditorProps {
   workout: Workout | null
   enabledColumns: ToggleableColumn[]
   programId: string
-  sameDayDates: { date: string; weekIndex: number }[]
+  /** Every day of the program, as somewhere this day could be copied to. */
+  copyGrid: CopyWeek[]
   /** `${exerciseId}:${field}` for every edit that has not been stored yet. */
   unsavedKeys?: Set<string>
   onAdd: () => Promise<void>
@@ -72,7 +73,20 @@ function buildGroups(exercises: Exercise[]) {
   return groups
 }
 
-export default function ExerciseEditor({ workout, enabledColumns, programId, sameDayDates, unsavedKeys, onAdd, onDuplicate, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
+export interface CopyDay {
+  date: string
+  /** "Mon" */
+  weekday: string
+  isSource: boolean
+  sameWeekday: boolean
+  /** Already has exercises, which a copy would replace. */
+  occupied: boolean
+  /** Holds Load Used / RPE from the athlete, which a copy would erase. */
+  hasResults: boolean
+}
+export interface CopyWeek { weekIndex: number; days: CopyDay[] }
+
+export default function ExerciseEditor({ workout, enabledColumns, programId, copyGrid, unsavedKeys, onAdd, onDuplicate, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
   const exercises = workout?.exercises ?? []
   const columns = buildColumns(enabledColumns)
   const [widths, setWidth] = useColumnWidths(programId, columns)
@@ -392,6 +406,10 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
   }
 
   const groups = buildGroups(exercises)
+  /** Ticked days that would lose what the athlete logged, by name. */
+  const tickedWithResults = copyGrid.flatMap((w) =>
+    w.days.filter((d) => d.hasResults && selectedDates.has(d.date)).map((d) => `Week ${w.weekIndex + 1} ${d.weekday}`),
+  )
 
   return (
     <div className="flex min-h-0 flex-col gap-3">
@@ -498,9 +516,9 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
           <Button type="button" size="sm" variant="outline" onClick={() => void addAndFocus()} data-add-exercise>
             <Plus className="h-4 w-4 mr-1" />Add exercise
           </Button>
-          {sameDayDates.length > 0 && exercises.length > 0 && !copyOpen && (
+          {copyGrid.some((w) => w.days.some((d) => !d.isSource)) && exercises.length > 0 && !copyOpen && (
             <Button type="button" size="sm" variant="outline" onClick={() => setCopyOpen(true)}>
-              <Copy className="h-4 w-4 mr-1" />Copy to weeks…
+              <Copy className="h-4 w-4 mr-1" />Copy to…
             </Button>
           )}
         </div>
@@ -511,28 +529,86 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
         )}
       </div>
 
-      {/* Inline copy-to-weeks panel */}
+      {/* Inline copy panel: any day of the program, not only the same weekday. */}
       {copyOpen && (
-        <div className="shrink-0 rounded-md border border-border bg-muted/30 p-3 space-y-2">
-          <p className="text-sm font-medium">Copy exercises to:</p>
-          <div className="space-y-1.5">
-            {sameDayDates.map(({ date, weekIndex }) => (
-              <label key={date} className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-primary"
-                  checked={selectedDates.has(date)}
-                  onChange={() => toggleDate(date)}
-                />
-                Week {weekIndex + 1}
-                <span className="text-muted-foreground">{date}</span>
-              </label>
-            ))}
+        <div className="shrink-0 space-y-2 rounded-md border border-border bg-muted/30 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-medium">Copy this day to:</p>
+            <Button
+              type="button" size="sm" variant="outline" className="h-7"
+              // Weeks that hold athlete results stay unticked: copying over
+              // them is a choice, never a side effect of "all weeks".
+              onClick={() => setSelectedDates(new Set(
+                copyGrid.flatMap((w) => w.days).filter((d) => d.sameWeekday && !d.isSource && !d.hasResults).map((d) => d.date),
+              ))}
+            >
+              Same day, all weeks
+            </Button>
+            {selectedDates.size > 0 && (
+              <Button type="button" size="sm" variant="ghost" className="h-7" onClick={() => setSelectedDates(new Set())}>
+                Untick all
+              </Button>
+            )}
           </div>
-          <p className="text-xs text-muted-foreground">Existing exercises on the target days will be replaced.</p>
+          <table className="border-collapse text-xs">
+            <thead>
+              <tr>
+                <th />
+                {copyGrid[0]?.days.map((d) => (
+                  <th key={d.weekday} className="px-1.5 pb-1 text-center font-medium text-muted-foreground">{d.weekday}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {copyGrid.map((week) => (
+                <tr key={week.weekIndex}>
+                  <th className="num pr-2 text-left font-medium text-muted-foreground">W{week.weekIndex + 1}</th>
+                  {week.days.map((d) => (
+                    <td key={d.date} className="px-1.5 py-0.5 text-center">
+                      <label
+                        className={`inline-flex cursor-pointer items-center gap-0.5 ${d.isSource ? 'cursor-default opacity-40' : ''}`}
+                        title={
+                          d.isSource ? 'The day being copied'
+                            : d.hasResults ? 'Has athlete results — copying over it erases them'
+                            : d.occupied ? 'Has exercises — they will be replaced'
+                            : undefined
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-primary"
+                          disabled={d.isSource}
+                          checked={selectedDates.has(d.date)}
+                          onChange={() => toggleDate(d.date)}
+                          aria-label={`Week ${week.weekIndex + 1} ${d.weekday}${d.hasResults ? ', has athlete results' : d.occupied ? ', has exercises' : ''}`}
+                        />
+                        <span
+                          aria-hidden
+                          className={`h-1.5 w-1.5 rounded-full ${d.hasResults ? 'bg-warning' : d.occupied && !d.isSource ? 'bg-muted-foreground/40' : 'bg-transparent'}`}
+                        />
+                      </label>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-xs text-muted-foreground">
+            Ticked days are replaced by this one.{' '}
+            <span className="inline-flex items-center gap-1">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-warning" />
+              has athlete results, so it is left out unless you tick it.
+            </span>
+          </p>
+          {tickedWithResults.length > 0 && (
+            <p className="text-xs font-medium text-destructive" role="alert">
+              {tickedWithResults.join(', ')} {tickedWithResults.length === 1 ? 'holds' : 'hold'} what the athlete
+              logged. Copying over {tickedWithResults.length === 1 ? 'it' : 'them'} erases that.
+            </p>
+          )}
           <div className="flex gap-2 pt-1">
             <Button size="sm" disabled={copying || selectedDates.size === 0} onClick={handleCopy}>
-              {copying ? 'Copying…' : `Copy to ${selectedDates.size || 0} week${selectedDates.size === 1 ? '' : 's'}`}
+              {copying ? 'Copying…' : `Copy to ${selectedDates.size || 0} day${selectedDates.size === 1 ? '' : 's'}`}
             </Button>
             <Button
               size="sm"

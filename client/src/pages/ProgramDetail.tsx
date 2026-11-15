@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useProgramData } from '../hooks/useProgramData'
 import { useProgramCalendar, useWorkoutByDate } from '../hooks/useProgramCalendar'
 import { useWorkoutActions } from '../hooks/useWorkoutActions'
+import { useDayOperations, dayHasResults } from '../hooks/useDayOperations'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -12,14 +13,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { useToast } from '../components/ui/toast'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
+import { Trash2, Copy, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
 import { BackLink } from '../components/PageHeader'
 import DayAttachments from '../components/discord/DayAttachments'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import ImportDialog from '../components/ImportDialog'
 import SendProgramDialog from '../components/SendProgramDialog'
 import PreviewProgramDialog from '../components/PreviewProgramDialog'
-import ExerciseEditor from '../components/program-detail/ExerciseEditor'
+import ExerciseEditor, { type CopyWeek } from '../components/program-detail/ExerciseEditor'
 import type { SuggestionGoal } from 'coachboard-shared'
 import {
   type ToggleableColumn,
@@ -29,7 +30,7 @@ import {
   weeksBetween,
   type Program,
 } from '../lib/programUtils'
-import { errorMessage, getJson } from '../lib/api'
+import { errorMessage, getJson, sendJson } from '../lib/api'
 import LoadError from '../components/LoadError'
 
 export default function ProgramDetail() {
@@ -101,7 +102,7 @@ export default function ProgramDetail() {
   }
 
   const {
-    addExercise, saveExerciseField, deleteExercise, deleteWorkout, addSet, duplicateExercise, reorderExercises,
+    addExercise, saveExerciseField, deleteExercise, addSet, duplicateExercise, reorderExercises,
     failedEdits, retryFailedEdits,
   } = useWorkoutActions(
     id, workoutByDate, setProgram, flashCell,
@@ -131,19 +132,25 @@ export default function ProgramDetail() {
     }
   }
 
-  // Dates for the same day-of-week across all weeks (excluding openDate itself)
-  const sameDayDates = useMemo<{ date: string; weekIndex: number }[]>(() => {
+  // Every day of the program as a place the open day could be copied to.
+  const copyGrid = useMemo<CopyWeek[]>(() => {
     if (!grid || !openDate) return []
-    let colIndex = -1
-    for (const row of grid.rows) {
-      const idx = row.days.findIndex((d) => d.date === openDate)
-      if (idx !== -1) { colIndex = idx; break }
-    }
-    if (colIndex === -1) return []
-    return grid.rows
-      .filter((row) => row.days[colIndex]?.date !== openDate)
-      .map((row) => ({ date: row.days[colIndex].date, weekIndex: row.weekIndex }))
-  }, [grid, openDate])
+    const sourceCol = grid.rows.map((r) => r.days.findIndex((d) => d.date === openDate)).find((i) => i !== -1) ?? -1
+    return grid.rows.map((row) => ({
+      weekIndex: row.weekIndex,
+      days: row.days.map((d, col) => {
+        const w = workoutByDate.get(d.date)
+        return {
+          date: d.date,
+          weekday: DAY_LABELS[col],
+          isSource: d.date === openDate,
+          sameWeekday: col === sourceCol,
+          occupied: !!w && w.exercises.length > 0,
+          hasResults: dayHasResults(w),
+        }
+      }),
+    }))
+  }, [grid, openDate, workoutByDate])
 
   // The coach's own exercise names, for the suggestions in the day editor.
   // Loaded once per visit; on failure the built-in list still suggests.
@@ -171,6 +178,81 @@ export default function ProgramDetail() {
     if (!openDate || !canGoToDay(step)) return
     setOpenDate(allDates[allDates.indexOf(openDate) + step])
   }
+  /** "Mon W2" — how a day is named in messages. */
+  const shortDayLabel = (date: string): string => {
+    const i = allDates.indexOf(date)
+    return i === -1 ? date : `${DAY_LABELS[i % 7]} W${Math.floor(i / 7) + 1}`
+  }
+
+  const days = useDayOperations({
+    programId: id,
+    workoutByDate,
+    setProgram,
+    mediaIdsFor: (workoutId) => (mediaByWorkoutId.get(workoutId) ?? []).map((m) => m.id),
+    onMediaChanged: () => void loadDiscordMedia(),
+    labelFor: shortDayLabel,
+  })
+
+  // ── The calendar from the keyboard ──────────────────────────────────────
+  // One day is "current": the only one Tab stops on, and where the arrow keys
+  // start from. Without that, Tab would have to cross every day of the block.
+  const [currentDay, setCurrentDay] = useState<string | null>(null)
+  const tabStopDay = currentDay && allDates.includes(currentDay) ? currentDay : allDates[0] ?? null
+  const focusDay = (date: string) => {
+    setCurrentDay(date)
+    document.querySelector<HTMLElement>(`[data-day="${date}"]`)?.focus()
+  }
+  const onDayKeyDown = (e: React.KeyboardEvent, date: string) => {
+    const i = allDates.indexOf(date)
+    const ctrl = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key]
+    if (step !== undefined && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault()
+      const to = allDates[i + step]
+      if (to) focusDay(to)
+      return
+    }
+    if (ctrl && e.key.toLowerCase() === 'c') { e.preventDefault(); days.copyToClipboard(date); return }
+    if (ctrl && e.key.toLowerCase() === 'x') { e.preventDefault(); days.cutToClipboard(date); return }
+    if (ctrl && e.key.toLowerCase() === 'v') {
+      e.preventDefault()
+      void days.paste(date).then(() => focusDay(date))
+      return
+    }
+    if (ctrl && e.key.toLowerCase() === 'z') {
+      if (days.undoLast()) e.preventDefault()
+      return
+    }
+    if (e.key === 'Delete' && !e.ctrlKey && !e.altKey) {
+      e.preventDefault()
+      void days.clearDay(date).then(() => focusDay(date))
+      return
+    }
+    if (e.key === 'Escape' && days.clipboard) days.clearClipboard()
+  }
+
+  // ── A whole week at a time ──────────────────────────────────────────────
+  const [weekMenu, setWeekMenu] = useState<number | null>(null)
+  const [copyWeekFrom, setCopyWeekFrom] = useState<number | null>(null)
+  const [copyWeekTo, setCopyWeekTo] = useState<Set<number>>(new Set())
+  useEffect(() => {
+    if (weekMenu === null) return
+    const close = () => setWeekMenu(null)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [weekMenu])
+  const weekDates = (w: number) => grid?.rows[w]?.days.map((d) => d.date) ?? []
+  const weekHasResults = (w: number) => weekDates(w).some((d) => dayHasResults(workoutByDate.get(d)))
+  const weekHasExercises = (w: number) => weekDates(w).some((d) => (workoutByDate.get(d)?.exercises.length ?? 0) > 0)
+  const runCopyWeek = async () => {
+    if (copyWeekFrom === null) return
+    const from = weekDates(copyWeekFrom)
+    const targets = [...copyWeekTo].sort((a, b) => a - b)
+    const pairs = targets.flatMap((w) => weekDates(w).map((target, col) => ({ source: from[col], target })))
+    const done = `Week ${copyWeekFrom + 1} copied to week${targets.length === 1 ? '' : 's'} ${targets.map((w) => w + 1).join(', ')}`
+    if (await days.copyDays(pairs, done)) setCopyWeekFrom(null)
+  }
+
   /** "Week 3 · Monday · 2 Dec" — the week is what a coach thinks in. */
   const dayTitle = (date: string): string => {
     const i = allDates.indexOf(date)
@@ -193,17 +275,21 @@ export default function ProgramDetail() {
     }
   }
 
-  const handleDayDrop = async (targetDate: string) => {
-    if (!dayDragSource || !id) return
+  // Dragging onto an occupied day swaps the two. It used to do so without a
+  // word, and a refused move did nothing at all; now it says what happened and
+  // offers Undo (see useDayOperations).
+  // Holding Ctrl while dropping copies the day instead of moving it.
+  const handleDayDrop = async (targetDate: string, copy: boolean) => {
+    if (!dayDragSource) return
     const sourceDate = dayDragSource
     setDayDragSource(null)
     setDayDragOver(null)
-    const res = await fetch(`/api/programs/${id}/move-day`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sourceDate, targetDate }),
-    })
-    if (res.ok) await reloadProgram()
+    if (!copy) { void days.moveDay(sourceDate, targetDate); return }
+    if (!(await days.confirmLosingResults([targetDate], 'Replace'))) return
+    void days.copyDays(
+      [{ source: sourceDate, target: targetDate }],
+      `${shortDayLabel(sourceDate)} copied to ${shortDayLabel(targetDate)}`,
+    )
   }
 
   const handleSetupSubmit = async (e: React.FormEvent) => {
@@ -232,20 +318,24 @@ export default function ProgramDetail() {
 
   const handleDelete = async () => {
     if (!(await confirm({ title: 'Delete this program?', confirmLabel: 'Delete', destructive: true }))) return
-    await fetch(`/api/programs/${id}`, { method: 'DELETE' })
+    // Used to navigate away whether or not anything had been deleted, so a
+    // refused delete looked like a successful one until the list was reopened.
+    try {
+      await sendJson('DELETE', `/api/programs/${id}`)
+    } catch (err) {
+      toast.error(`Could not delete this program. ${errorMessage(err)}`)
+      return
+    }
     navigate('/programs')
   }
 
   const handleActivateDraft = async () => {
     if (!program || !id) return
-    const res = await fetch(`/api/programs/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'active' }),
-    })
-    if (res.ok) {
-      const updated = await res.json()
+    try {
+      const updated = await sendJson<Partial<Program>>('PUT', `/api/programs/${id}`, { status: 'active' })
       setProgram((p) => p ? { ...p, ...updated } : p)
+    } catch (err) {
+      toast.error(`Could not make this program active. ${errorMessage(err)}`)
     }
   }
 
@@ -264,11 +354,14 @@ export default function ProgramDetail() {
     const nextSet = current.includes(col) ? current.filter((c) => c !== col) : [...current, col]
     const ordered = TOGGLEABLE_COLUMNS.filter((c) => nextSet.includes(c))
     setProgram({ ...program, enabled_columns: ordered })
-    await fetch(`/api/programs/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled_columns: ordered }),
-    })
+    try {
+      await sendJson('PUT', `/api/programs/${id}`, { enabled_columns: ordered })
+    } catch (err) {
+      // Shown ticked but not stored: the next export would not match the
+      // screen. Put the tick back where the server has it.
+      setProgram((p) => (p ? { ...p, enabled_columns: current } : p))
+      toast.error(`Could not change the columns. ${errorMessage(err)}`)
+    }
   }
 
   if (notFound) {
@@ -288,12 +381,12 @@ export default function ProgramDetail() {
   const handleSetFocus = async (value: string) => {
     if (!program) return
     const next = value === '' ? null : (value as SuggestionGoal)
-    const res = await fetch(`/api/programs/${program.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ focus: next }),
-    })
-    if (res.ok) setProgram((p) => (p ? { ...p, focus: next } : p))
+    try {
+      await sendJson('PUT', `/api/programs/${program.id}`, { focus: next })
+      setProgram((p) => (p ? { ...p, focus: next } : p))
+    } catch (err) {
+      toast.error(`Could not change the training focus. ${errorMessage(err)}`)
+    }
   }
 
   const handleExport = () => {
@@ -475,8 +568,46 @@ export default function ProgramDetail() {
               <tbody>
                 {grid.rows.map((row) => (
                   <tr key={row.weekIndex} className="[&:last-child>*]:border-b-0">
-                    <th className="num border-b border-r border-border px-2 py-2 align-top text-[11px] font-medium text-muted-foreground">
-                      W{row.weekIndex + 1}
+                    <th className="num relative border-b border-r border-border p-0 align-top text-[11px] font-medium text-muted-foreground">
+                      {/* The week's own actions: copying week 1 across a block
+                          used to mean opening every training day in turn. */}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setWeekMenu(weekMenu === row.weekIndex ? null : row.weekIndex) }}
+                        onKeyDown={(e) => { if (e.key === 'Escape') setWeekMenu(null) }}
+                        aria-haspopup="menu"
+                        aria-expanded={weekMenu === row.weekIndex}
+                        aria-label={`Week ${row.weekIndex + 1} actions`}
+                        title={`Week ${row.weekIndex + 1}: copy or clear`}
+                        className="h-full w-full px-2 py-2 text-left transition-colors hover:bg-foreground/[0.05] hover:text-foreground focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary"
+                      >
+                        W{row.weekIndex + 1}
+                      </button>
+                      {weekMenu === row.weekIndex && (
+                        <div
+                          role="menu"
+                          className="absolute left-1 top-8 z-20 min-w-[170px] rounded-lg border bg-popover py-1 text-left text-sm font-normal text-foreground shadow-xl shadow-black/20"
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setWeekMenu(null) }}
+                        >
+                          <button
+                            type="button" role="menuitem" autoFocus
+                            disabled={!weekHasExercises(row.weekIndex) || grid.rows.length < 2}
+                            onClick={() => { setWeekMenu(null); setCopyWeekTo(new Set()); setCopyWeekFrom(row.weekIndex) }}
+                            className="flex w-full items-center gap-2 px-3 py-2 hover:bg-accent focus:bg-accent focus:outline-none disabled:opacity-50"
+                          >
+                            <Copy className="h-4 w-4" />Copy week to…
+                          </button>
+                          <button
+                            type="button" role="menuitem"
+                            disabled={!weekHasExercises(row.weekIndex)}
+                            onClick={() => { setWeekMenu(null); void days.clearDays(weekDates(row.weekIndex), `Week ${row.weekIndex + 1} cleared`) }}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:outline-none disabled:opacity-50"
+                          >
+                            <Trash2 className="h-4 w-4" />Clear week
+                          </button>
+                        </div>
+                      )}
                     </th>
                     {row.days.map((cell) => {
                       const workout = workoutByDate.get(cell.date)
@@ -484,12 +615,13 @@ export default function ProgramDetail() {
                       const exercises = workout?.exercises ?? []
                       const isDragSource = dayDragSource === cell.date
                       const isDragOver = dayDragOver === cell.date
+                      const onClipboard = days.clipboard?.date === cell.date ? days.clipboard.mode : null
                       return (
                         <td
                           key={cell.date}
                           draggable={exercises.length > 0}
                           onDragStart={exercises.length > 0 ? (e) => {
-                            e.dataTransfer.effectAllowed = 'move'
+                            e.dataTransfer.effectAllowed = 'copyMove'
                             setDayDragSource(cell.date)
                           } : undefined}
                           onDragOver={dayDragSource && !isDragSource ? (e) => {
@@ -502,11 +634,11 @@ export default function ProgramDetail() {
                           }}
                           onDrop={dayDragSource && !isDragSource ? (e) => {
                             e.preventDefault()
-                            handleDayDrop(cell.date)
+                            void handleDayDrop(cell.date, e.ctrlKey)
                           } : undefined}
                           onDragEnd={() => { setDayDragSource(null); setDayDragOver(null) }}
                           className={`border-r border-b border-border align-top p-0 transition-colors last:border-r-0 ${
-                            isDragSource ? 'opacity-40' :
+                            isDragSource || onClipboard === 'cut' ? 'opacity-40' :
                             isDragOver ? (workout ? 'ring-2 ring-inset ring-warning bg-warning/10' : 'ring-2 ring-inset ring-primary/50 bg-primary/5') :
                             ''
                           }`}
@@ -514,10 +646,15 @@ export default function ProgramDetail() {
                           <button
                             type="button"
                             data-day={cell.date}
+                            // Arrow keys move between days; Tab stops on one.
+                            tabIndex={cell.date === tabStopDay ? 0 : -1}
+                            onFocus={() => setCurrentDay(cell.date)}
+                            onKeyDown={(e) => onDayKeyDown(e, cell.date)}
                             onClick={() => setOpenDate(cell.date)}
-                            className={`group/cell block h-full min-h-[92px] w-full px-2.5 py-2 text-left transition-colors duration-150 ease-smooth hover:bg-primary/[0.06] focus:bg-primary/[0.06] focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary ${
+                            aria-label={`${dayTitle(cell.date)}, ${exercises.length === 0 ? 'empty' : `${exercises.length} exercise${exercises.length === 1 ? '' : 's'}`}${onClipboard ? `, ${onClipboard === 'cut' ? 'cut' : 'copied'}` : ''}`}
+                            className={`group/cell block h-full min-h-[92px] w-full px-2.5 py-2 text-left transition-colors duration-150 ease-smooth hover:bg-primary/[0.06] focus:bg-primary/[0.06] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary ${
                               exercises.length > 0 ? 'shadow-[inset_2px_0_0_hsl(var(--primary)/0.55)]' : ''
-                            }`}
+                            } ${onClipboard ? 'outline-dashed outline-2 -outline-offset-2 outline-primary/70' : ''}`}
                           >
                             <div className="flex items-center justify-between text-[10px] text-muted-foreground">
                               <span className="num">{cell.label}</span>
@@ -598,6 +735,14 @@ export default function ProgramDetail() {
             const step = (e.ctrlKey ? 7 : 1) * (e.key === 'PageDown' ? 1 : -1)
             goToDay(step)
           }}
+          // Ctrl+Z reaches the last undoable action while its Undo is on offer.
+          // The toast holding that button is outside this dialog, where Tab
+          // cannot go.
+          onKeyDownCapture={(e) => {
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z' && days.undoLast()) {
+              e.preventDefault()
+            }
+          }}
         >
           <DialogHeader className="shrink-0 pr-8">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -644,7 +789,7 @@ export default function ProgramDetail() {
               workout={openWorkout}
               enabledColumns={enabledColumns}
               programId={id ?? ''}
-              sameDayDates={sameDayDates}
+              copyGrid={copyGrid}
               // Marks the exact cells that did not save, so the banner's count
               // maps to something the coach can actually find on the page.
               unsavedKeys={new Set(Object.keys(failedEdits))}
@@ -658,13 +803,18 @@ export default function ProgramDetail() {
                   ? saveExerciseField(openDate, openWorkout.id, exerciseId, patch)
                   : Promise.resolve(false)
               }
-              onDeleteExercise={(exerciseId) =>
-                openWorkout
-                  ? deleteExercise(openDate, openWorkout.id, exerciseId)
-                  : Promise.resolve(false)
-              }
+              onDeleteExercise={async (exerciseId) => {
+                if (!openWorkout) return false
+                // Kept as it was, to put back if the coach presses Undo.
+                const row = openWorkout.exercises.find((ex) => ex.id === exerciseId)
+                const gone = await deleteExercise(openDate, openWorkout.id, exerciseId)
+                if (gone && row) {
+                  days.offerExerciseUndo(openWorkout.id, [row], `${row.name.trim() || 'Exercise'} deleted`)
+                }
+                return gone
+              }}
               onDeleteWorkout={() => {
-                if (openWorkout) deleteWorkout(openWorkout.id, () => setOpenDate(null))
+                void days.clearDay(openDate).then((cleared) => { if (cleared) setOpenDate(null) })
               }}
               onAddSet={(exerciseId) => {
                 if (openWorkout) addSet(openDate, openWorkout.id, exerciseId)
@@ -672,27 +822,14 @@ export default function ProgramDetail() {
               onReorder={(exerciseIds) => {
                 if (openWorkout) reorderExercises(openDate, openWorkout.id, exerciseIds)
               }}
-              onCopyDay={async (targetDates) => {
-                if (!id || !openDate) return false
-                // A refused copy used to close the dialog exactly as a successful
-                // one did, so the coach believed days had been filled that were not.
-                try {
-                  const res = await fetch(`/api/programs/${id}/copy-day`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sourceDate: openDate, targetDates }),
-                  })
-                  if (!res.ok) {
-                    toast.error(`Could not copy the day (the server said ${res.status}). Nothing was changed.`)
-                    return false
-                  }
-                } catch {
-                  toast.error('CoachBoard could not reach its own server, so the day was not copied.')
-                  return false
-                }
-                await reloadProgram()
-                return true
-              }}
+              // Resolves false when nothing was copied, and the panel then
+              // stays open with its ticks, so a retry is one click.
+              onCopyDay={(targetDates) =>
+                days.copyDays(
+                  targetDates.map((target) => ({ source: openDate, target })),
+                  `${shortDayLabel(openDate)} copied to ${targetDates.length} day${targetDates.length === 1 ? '' : 's'}`,
+                )
+              }
             />
           )}
           {openWorkout && (
@@ -702,6 +839,62 @@ export default function ProgramDetail() {
             />
           )}
         </DialogContent>
+      </Dialog>
+
+      <Dialog open={copyWeekFrom !== null} onOpenChange={(o) => { if (!o) setCopyWeekFrom(null) }}>
+        {copyWeekFrom !== null && grid && (
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Copy week {copyWeekFrom + 1} to</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              Each ticked week becomes a copy of week {copyWeekFrom + 1}, rest days included. What is in it now is replaced.
+            </p>
+            <div className="space-y-1">
+              {grid.rows.filter((r) => r.weekIndex !== copyWeekFrom).map((r) => {
+                const results = weekHasResults(r.weekIndex)
+                return (
+                  <label key={r.weekIndex} className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-accent/40">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-primary"
+                      checked={copyWeekTo.has(r.weekIndex)}
+                      onChange={() => setCopyWeekTo((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(r.weekIndex)) next.delete(r.weekIndex); else next.add(r.weekIndex)
+                        return next
+                      })}
+                    />
+                    Week {r.weekIndex + 1}
+                    {results
+                      ? <span className="text-xs text-warning">has athlete results</span>
+                      : weekHasExercises(r.weekIndex) && <span className="text-xs text-muted-foreground">has exercises</span>}
+                  </label>
+                )
+              })}
+            </div>
+            {[...copyWeekTo].some(weekHasResults) && (
+              <p className="text-xs font-medium text-destructive" role="alert">
+                A ticked week holds what the athlete logged. Copying over it erases that.
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button size="sm" disabled={copyWeekTo.size === 0} onClick={() => void runCopyWeek()}>
+                Copy to {copyWeekTo.size} week{copyWeekTo.size === 1 ? '' : 's'}
+              </Button>
+              <Button
+                size="sm" variant="outline"
+                // Weeks with athlete results stay unticked, as in the day panel.
+                onClick={() => setCopyWeekTo(new Set(
+                  grid.rows.map((r) => r.weekIndex).filter((w) => w !== copyWeekFrom && !weekHasResults(w)),
+                ))}
+              >
+                All weeks
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setCopyWeekFrom(null)}>Cancel</Button>
+            </div>
+          </DialogContent>
+        )}
       </Dialog>
 
       <Dialog open={columnsOpen} onOpenChange={setColumnsOpen}>

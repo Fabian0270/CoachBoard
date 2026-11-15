@@ -7,7 +7,6 @@ import {
   rememberFailure,
   type FailedEditMap,
 } from '../lib/failedEdits'
-import { useConfirm } from '../components/ui/confirm-dialog'
 import { errorMessage, sendJson } from '../lib/api'
 
 type SetProgram = React.Dispatch<React.SetStateAction<Program | null>>
@@ -31,7 +30,6 @@ export function useWorkoutActions(
   flashCell: FlashCell,
   onSaveError?: (message: string) => void,
 ) {
-  const confirm = useConfirm()
   const [failedEdits, setFailedEdits] = useState<FailedEditMap>({})
 
   const updateWorkout = (workoutId: string, mut: (w: Workout) => Workout) => {
@@ -175,17 +173,6 @@ export function useWorkoutActions(
     }
   }
 
-  const deleteWorkout = async (workoutId: string, onDeleted: () => void): Promise<void> => {
-    if (!id) return
-    if (!(await confirm({ title: 'Clear this day?', description: 'All exercises will be removed.', confirmLabel: 'Clear', destructive: true }))) return
-    try {
-      const res = await fetch(`/api/programs/${id}/workouts/${workoutId}`, { method: 'DELETE' })
-      if (!res.ok && res.status !== 404) return
-      setProgram((p) => p ? { ...p, workouts: p.workouts.filter((w) => w.id !== workoutId) } : p)
-      onDeleted()
-    } catch { /* leave state unchanged on network failure */ }
-  }
-
   const addSet = async (date: string, workoutId: string, exerciseId: string): Promise<void> => {
     if (!id) return
     flashCell(date, 'saving')
@@ -242,7 +229,6 @@ export function useWorkoutActions(
     addExercise,
     saveExerciseField,
     deleteExercise,
-    deleteWorkout,
     addSet,
     duplicateExercise,
     reorderExercises,
