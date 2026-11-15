@@ -16,6 +16,7 @@ import {
   deleteExercise,
   addSetToExercise,
   duplicateExercise,
+  findExerciseNames,
   copyWorkoutDay,
   moveWorkoutDay,
   reorderExercises,
@@ -77,6 +78,15 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     res.json(await findAllPrograms(athleteId))
   } catch (err) {
     fail(res, 'Failed to fetch programs', err)
+  }
+})
+
+// Before /:id, or "exercise-names" would be looked up as a program id.
+router.get('/exercise-names', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    res.json(await findExerciseNames())
+  } catch (err) {
+    fail(res, 'Failed to fetch exercise names', err)
   }
 })
 

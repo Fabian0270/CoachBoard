@@ -54,6 +54,25 @@ describe('addSetToExercise', () => {
   })
 })
 
+describe('findExerciseNames', () => {
+  it('lists the names in use, most used first, ignoring case and blanks', async () => {
+    const { w } = await day('Names')
+    for (const name of ['Zercher Carry', 'zercher carry', 'ZERCHER CARRY', 'Yoke Walk', '', '   ']) {
+      await createExercise({ workout_id: w.id, name, order_index: 0 })
+    }
+    const { findExerciseNames } = await import('../programService.js')
+    const names = await findExerciseNames()
+    const zercher = names.find((n) => n.name.toLowerCase() === 'zercher carry')
+    const yoke = names.find((n) => n.name === 'Yoke Walk')
+    expect(zercher?.uses).toBe(3)
+    expect(yoke?.uses).toBe(1)
+    expect(names.indexOf(zercher!)).toBeLessThan(names.indexOf(yoke!))
+    expect(names.some((n) => n.name.trim() === '')).toBe(false)
+    // One entry per name, however it was capitalised.
+    expect(names.filter((n) => n.name.toLowerCase() === 'zercher carry')).toHaveLength(1)
+  })
+})
+
 describe('duplicateExercise', () => {
   it("copies a single exercise directly under it, without the athlete's results", async () => {
     const { p, w } = await day('Dup')

@@ -145,6 +145,17 @@ export default function ProgramDetail() {
       .map((row) => ({ date: row.days[colIndex].date, weekIndex: row.weekIndex }))
   }, [grid, openDate])
 
+  // The coach's own exercise names, for the suggestions in the day editor.
+  // Loaded once per visit; on failure the built-in list still suggests.
+  const [ownExerciseNames, setOwnExerciseNames] = useState<string[]>([])
+  useEffect(() => {
+    let cancelled = false
+    getJson<{ name: string }[]>('/api/programs/exercise-names')
+      .then((rows) => { if (!cancelled && Array.isArray(rows)) setOwnExerciseNames(rows.map((r) => r.name)) })
+      .catch(() => { /* a convenience: the built-in names are still offered */ })
+    return () => { cancelled = true }
+  }, [])
+
   // ── Moving between days while one is open ───────────────────────────────
   const allDates = useMemo(() => (grid ? grid.rows.flatMap((r) => r.days.map((d) => d.date)) : []), [grid])
   const lastOpenDate = useRef<string | null>(null)
@@ -638,6 +649,7 @@ export default function ProgramDetail() {
               // maps to something the coach can actually find on the page.
               unsavedKeys={new Set(Object.keys(failedEdits))}
               onAdd={() => addExercise(openDate)}
+              suggestions={ownExerciseNames}
               onDuplicate={(exerciseId) => {
                 if (openWorkout) void duplicateExercise(openDate, openWorkout.id, exerciseId)
               }}

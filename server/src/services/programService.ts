@@ -20,6 +20,7 @@ export {
   reorderExercises,
   addSetToExercise,
   duplicateExercise,
+  findExerciseNames,
 } from './program/exerciseService.js'
 
 const toIso = (d: Date) => d.toISOString().slice(0, 10)

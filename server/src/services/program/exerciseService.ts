@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid'
-import type { Transaction } from 'kysely'
+import { sql, type Transaction } from 'kysely'
 import { getDb, type DB } from '../../db.js'
 
 // ---------------------------------------------------------------------------
@@ -85,6 +85,26 @@ export async function updateExercise(
     .where('workout_id', '=', workoutId)
     .returningAll()
     .executeTakeFirst()
+}
+
+/**
+ * Every exercise name the coach has used, most used first.
+ *
+ * Feeds the name suggestions in the day editor, where the coach's own names
+ * come before the built-in directory. Grouped without regard to case, so
+ * "squat" and "Squat" count as one; capped, because it is a suggestion list and
+ * not a report.
+ */
+export async function findExerciseNames(): Promise<{ name: string; uses: number }[]> {
+  const result = await sql<{ name: string; uses: number }>`
+    SELECT MIN(TRIM(name)) AS name, COUNT(*) AS uses
+    FROM exercises
+    WHERE TRIM(name) <> ''
+    GROUP BY TRIM(name) COLLATE NOCASE
+    ORDER BY uses DESC, name COLLATE NOCASE ASC
+    LIMIT 500
+  `.execute(getDb())
+  return result.rows.map((r) => ({ name: r.name, uses: Number(r.uses) }))
 }
 
 export async function deleteExercise(id: string, workoutId: string) {

@@ -22,7 +22,7 @@ interface ExerciseEditorProps {
   onAdd: () => Promise<void>
   /** Copy the exercise (with its set rows) directly under itself. */
   onDuplicate: (exerciseId: string) => void
-  /** Exercise names to suggest, best first. Defaults to the built-in list. */
+  /** The coach's own exercise names, most used first. Offered before the built-in list. */
   suggestions?: readonly string[]
   onSaveField: (exerciseId: string, patch: Partial<Exercise>) => Promise<boolean>
   onDeleteExercise: (exerciseId: string) => Promise<boolean>

@@ -5,6 +5,7 @@ import { EXERCISE_NAMES } from 'coachboard-shared/exercises'
 import { type Exercise, type ColDef, exerciseValue } from '../../lib/programUtils'
 import { failedEditKeyForColumn } from '../../lib/failedEdits'
 import { useToast } from '../ui/toast'
+import { matchSuggestions } from '../../lib/exerciseSuggestions'
 
 interface ExerciseRowProps {
   exercise: Exercise
@@ -19,7 +20,7 @@ interface ExerciseRowProps {
    * these, because where "next" is depends on the rows around this one.
    */
   onKey: (action: RowKeyAction, colKey: string) => void
-  /** Exercise names to suggest, best first. */
+  /** The coach's own exercise names, most used first. Offered before the built-in list. */
   suggestions?: readonly string[]
   isSubSet?: boolean
   isInGroup?: boolean
@@ -42,22 +43,9 @@ export type RowKeyAction =
   | 'delete'      // Ctrl+Delete — the row is about to go; move the cursor off it
   | 'move-up' | 'move-down' // Alt+Up / Alt+Down
 
-/** Suggestions for what has been typed: names that start with it, then names that contain it. */
-export function matchSuggestions(names: readonly string[], typed: string, limit = 8): string[] {
-  const q = typed.trim().toLowerCase()
-  if (!q) return []
-  const starts: string[] = []
-  const contains: string[] = []
-  for (const n of names) {
-    const lower = n.toLowerCase()
-    if (lower === q) continue
-    if (lower.startsWith(q)) starts.push(n)
-    else if (lower.includes(q)) contains.push(n)
-  }
-  return [...starts, ...contains].slice(0, limit)
-}
+const NO_NAMES: readonly string[] = []
 
-export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, onKey, suggestions = EXERCISE_NAMES, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
+export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, onKey, suggestions = NO_NAMES, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
   const toast = useToast()
   /**
    * Whether this cell holds a value the server has not accepted.
@@ -125,7 +113,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
   // Nothing is highlighted until the coach presses an arrow key. Otherwise Enter
   // after typing "Squat" would swap it for the first suggestion.
   const [highlight, setHighlight] = useState(-1)
-  const nameMatches = nameFocused && !listClosed ? matchSuggestions(suggestions, draft.name ?? '') : []
+  const nameMatches = nameFocused && !listClosed ? matchSuggestions(suggestions, EXERCISE_NAMES, draft.name ?? '') : []
 
   useEffect(() => {
     if (nameMatches.length === 0 || !portalContainer) {
