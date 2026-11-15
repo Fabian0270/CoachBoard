@@ -147,7 +147,7 @@ the version is unchanged, or the tag already exists.
 
 Pushing the tag triggers the [`Release` workflow](.github/workflows/release.yml). It first runs
 a `verify` job — typecheck plus both test suites, on the tagged commit — and only then builds
-the Windows `.exe` (`windows-latest`) and the Apple Silicon `.dmg` (`macos-14`) in parallel and
+the Windows `.exe` (`windows-latest`) and the Apple Silicon `.dmg` (`macos-15`) in parallel and
 publishes a single `v1.16.0` Release with both attached. A tag whose commit fails verification
 produces no installers and no release, so a red build can never reach the auto-updater. Because the script derives the tag,
 commit, and installer filenames from the same version, they always stay in sync. Intel (x64)
