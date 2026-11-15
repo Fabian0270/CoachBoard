@@ -148,19 +148,29 @@ export function useWorkoutActions(
     return { recovered, stillFailing: pending.length - recovered }
   }
 
-  const deleteExercise = async (date: string, workoutId: string, exerciseId: string): Promise<void> => {
-    if (!id) return
+  /** Resolves false when the exercise is still there (the delete was refused). */
+  const deleteExercise = async (date: string, workoutId: string, exerciseId: string): Promise<boolean> => {
+    if (!id) return false
     flashCell(date, 'saving')
     try {
       const res = await fetch(`/api/programs/${id}/workouts/${workoutId}/exercises/${exerciseId}`, { method: 'DELETE' })
-      if (!res.ok && res.status !== 404) { flashCell(date, 'error'); return }
+      if (!res.ok && res.status !== 404) {
+        // Used to flash the day cell red and nothing else — invisible from
+        // inside the open day, where the row simply stayed put.
+        flashCell(date, 'error')
+        onSaveError?.(`Could not delete that exercise (server said ${res.status}). It is still there.`)
+        return false
+      }
       updateWorkout(workoutId, (w) => ({ ...w, exercises: w.exercises.filter((ex) => ex.id !== exerciseId) }))
       // A deleted exercise cannot have outstanding edits; leaving them would
       // keep the unsaved banner up forever with nothing behind it to retry.
       setFailedEdits((prev) => clearFailuresForExercise(prev, exerciseId))
       flashCell(date, 'saved')
+      return true
     } catch {
       flashCell(date, 'error')
+      onSaveError?.('Could not delete that exercise — CoachBoard could not reach its own server. It is still there.')
+      return false
     }
   }
 

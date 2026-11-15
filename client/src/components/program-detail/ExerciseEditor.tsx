@@ -20,8 +20,8 @@ interface ExerciseEditorProps {
   /** `${exerciseId}:${field}` for every edit that has not been stored yet. */
   unsavedKeys?: Set<string>
   onAdd: () => void
-  onSaveField: (exerciseId: string, patch: Partial<Exercise>) => void
-  onDeleteExercise: (exerciseId: string) => void
+  onSaveField: (exerciseId: string, patch: Partial<Exercise>) => Promise<boolean>
+  onDeleteExercise: (exerciseId: string) => Promise<boolean>
   onDeleteWorkout: () => void
   onAddSet: (exerciseId: string) => void
   /** Resolves false when the copy did not happen; the dialog then stays open. */

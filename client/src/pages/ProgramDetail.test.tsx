@@ -80,3 +80,84 @@ describe('Program page — an edit that does not save', () => {
     expect(server.calls.filter((c) => c.startsWith('PUT'))).toHaveLength(2)
   })
 })
+
+/** The body a PUT carried, read back from the recorded fetch call. */
+const putBodies = (): Record<string, unknown>[] =>
+  (globalThis.fetch as unknown as { mock: { calls: [unknown, RequestInit?][] } }).mock.calls
+    .filter(([, init]) => init?.method === 'PUT')
+    .map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>)
+
+describe('Day editor — what is typed is never lost', () => {
+  it('saves the cell being typed in when Esc closes the day', async () => {
+    // Reproduced in the 1.17.0 build: type 7 in Sets, press Esc without leaving
+    // the cell, and the day closed with the server still holding 3. Cells saved
+    // on blur only, and a focused element that unmounts never blurs.
+    serve({
+      '/api/programs/p1': { body: program },
+      'PUT /api/programs/p1/workouts/w1/exercises/e1': (_url, init) => ({
+        body: { ...squat, ...(JSON.parse(String(init?.body)) as object) },
+      }),
+    })
+    open()
+    await userEvent.click(await screen.findByText('Squat'))
+    const sets = await screen.findByDisplayValue('3')
+    await userEvent.clear(sets)
+    await userEvent.type(sets, '7')
+    await userEvent.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(putBodies()).toContainEqual({ sets: '7' }))
+  })
+
+  it('does not let one save overwrite the cell being typed in next', async () => {
+    // Reproduced in the 1.17.0 build with the Sets save slowed down: 9 typed in
+    // Reps snapped back to 5 the moment the Sets save answered, and was never
+    // sent. The row reset every draft whenever any saved field changed.
+    let answerSets: (r: { body: unknown }) => void = () => {}
+    serve({
+      '/api/programs/p1': { body: program },
+      'PUT /api/programs/p1/workouts/w1/exercises/e1': (_url, init) => {
+        const patch = JSON.parse(String(init?.body)) as Record<string, unknown>
+        if ('sets' in patch) return new Promise((resolve) => { answerSets = resolve })
+        return { body: { ...squat, sets: '4', ...patch } }
+      },
+    })
+    open()
+    await userEvent.click(await screen.findByText('Squat'))
+    const sets = await screen.findByDisplayValue('3')
+    await userEvent.clear(sets)
+    await userEvent.type(sets, '4')
+
+    // Click into Reps (this blurs Sets and starts its save) and type while that
+    // save is still in flight.
+    const reps = screen.getByDisplayValue('5')
+    await userEvent.clear(reps)
+    await userEvent.type(reps, '9')
+    answerSets({ body: { ...squat, sets: '4' } })
+
+    await waitFor(() => expect((sets as HTMLInputElement).value).toBe('4'))
+    expect((reps as HTMLInputElement).value).toBe('9')
+    await userEvent.tab()
+    await waitFor(() => expect(putBodies()).toContainEqual({ reps: '9' }))
+  })
+
+  it('does not send a save for a row that was just deleted', async () => {
+    // The flush-on-close must not fire for a row that is going away because the
+    // coach deleted it: that save would 404 and raise a "could not be saved"
+    // banner over something they removed on purpose.
+    const server = serve({
+      '/api/programs/p1': { body: program },
+      'DELETE /api/programs/p1/workouts/w1/exercises/e1': { status: 204 },
+    })
+    open()
+    await userEvent.click(await screen.findByText('Squat'))
+    const sets = await screen.findByDisplayValue('3')
+    await userEvent.clear(sets)
+    await userEvent.type(sets, '7')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete exercise' }))
+
+    await waitFor(() => expect(screen.queryByDisplayValue('7')).toBeNull())
+    expect(server.calls.filter((c) => c.startsWith('PUT'))).toHaveLength(0)
+    expect(screen.queryByText(/could not be saved/)).toBeNull()
+  })
+})

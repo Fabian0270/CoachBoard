@@ -551,12 +551,16 @@ export default function ProgramDetail() {
               // maps to something the coach can actually find on the page.
               unsavedKeys={new Set(Object.keys(failedEdits))}
               onAdd={() => addExercise(openDate)}
-              onSaveField={(exerciseId, patch) => {
-                if (openWorkout) saveExerciseField(openDate, openWorkout.id, exerciseId, patch)
-              }}
-              onDeleteExercise={(exerciseId) => {
-                if (openWorkout) deleteExercise(openDate, openWorkout.id, exerciseId)
-              }}
+              onSaveField={(exerciseId, patch) =>
+                openWorkout
+                  ? saveExerciseField(openDate, openWorkout.id, exerciseId, patch)
+                  : Promise.resolve(false)
+              }
+              onDeleteExercise={(exerciseId) =>
+                openWorkout
+                  ? deleteExercise(openDate, openWorkout.id, exerciseId)
+                  : Promise.resolve(false)
+              }
               onDeleteWorkout={() => {
                 if (openWorkout) deleteWorkout(openWorkout.id, () => setOpenDate(null))
               }}

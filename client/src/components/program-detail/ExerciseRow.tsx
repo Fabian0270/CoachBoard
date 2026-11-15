@@ -8,8 +8,10 @@ import { failedEditKeyForColumn } from '../../lib/failedEdits'
 interface ExerciseRowProps {
   exercise: Exercise
   columns: ColDef[]
-  onSave: (patch: Partial<Exercise>) => void
-  onDelete: () => void
+  /** Resolves true once the server has stored the change. */
+  onSave: (patch: Partial<Exercise>) => Promise<boolean>
+  /** Resolves false when the exercise could not be deleted and is still there. */
+  onDelete: () => Promise<boolean>
   onAddSet?: () => void
   isSubSet?: boolean
   isInGroup?: boolean
@@ -43,6 +45,40 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
     return d
   }
   const [draft, setDraft] = useState<Record<string, string>>(initDraft)
+
+  // ── What the coach typed is never dropped ──────────────────────────────
+  // A cell shows a local draft and saves when focus leaves it. Two ways that
+  // lost work, both reproduced in the 1.17.0 build:
+  //
+  //   1. Esc closed the day with the cursor still in a cell. A focused element
+  //      that unmounts never blurs, so the cell never saved — the day closed
+  //      and the server kept the old value.
+  //   2. Every draft in the row was reset whenever ANY saved field changed. A
+  //      save answering while the coach typed in the next cell put that cell
+  //      back to its stored value, and the typed text was never sent.
+  //
+  // `dirty` is what the coach has typed and not yet handed over. `pending` is
+  // what has been handed over and not yet answered — still theirs, not the
+  // server's, until the answer lands. Neither is ever overwritten from props.
+  const dirtyRef = useRef(new Set<string>())
+  const pendingRef = useRef(new Map<string, string>())
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  const exerciseRef = useRef(exercise)
+  exerciseRef.current = exercise
+  const columnsRef = useRef(columns)
+  columnsRef.current = columns
+  const onSaveRef = useRef(onSave)
+  onSaveRef.current = onSave
+  /** Set when this row is being deleted: there is nothing left to save into. */
+  const discardRef = useRef(false)
+  // Bumped when a save is answered, so the draft re-reads the stored value.
+  const [, setAnswered] = useState(0)
+
+  const edit = (key: string, value: string) => {
+    dirtyRef.current.add(key)
+    setDraft((d) => ({ ...d, [key]: value }))
+  }
   // Exercise-name autocomplete (exercise directory).
   const [nameFocused, setNameFocused] = useState(false)
   const nameInputRef = useRef<HTMLTextAreaElement>(null)
@@ -79,24 +115,65 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
     }
   }, [nameMatches.length, portalContainer])
 
+  // Follow the stored exercise — but only in cells the coach is not in the
+  // middle of. Runs after every render on purpose: it is cheap, and a dependency
+  // list here is exactly what went stale before.
   useEffect(() => {
-    setDraft(initDraft())
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exercise.id, exercise.name, exercise.sets, exercise.reps, exercise.weight, exercise.rest_time, exercise.intensity, exercise.load_used, exercise.rpe, columns.length])
+    setDraft((prev) => {
+      let next = prev
+      for (const c of columns) {
+        const stored = exerciseValue(exercise, c.key)
+        // A pending value the server now agrees with has been answered (a retry
+        // of a failed save lands this way, not through the promise above).
+        if (pendingRef.current.get(c.key) === stored) pendingRef.current.delete(c.key)
+        if (dirtyRef.current.has(c.key) || pendingRef.current.has(c.key)) continue
+        if (prev[c.key] !== stored) {
+          if (next === prev) next = { ...prev }
+          next[c.key] = stored
+        }
+      }
+      return next
+    })
+  })
 
+  /** Hand one cell's draft to the server, if it differs from what is stored. */
   const commit = (col: ColDef) => {
-    const v = draft[col.key] ?? ''
-    if (v === exerciseValue(exercise, col.key)) return
-    if (col.key === 'name') {
-      onSave({ name: v })
+    const key = col.key
+    const v = draftRef.current[key] ?? ''
+    dirtyRef.current.delete(key)
+    if (v === exerciseValue(exerciseRef.current, key)) return
+    let patch: Partial<Exercise>
+    if (key === 'name') {
+      patch = { name: v }
     } else if (col.numeric) {
       const num = v === '' ? null : Number(v)
       if (num !== null && Number.isNaN(num)) return
-      onSave({ weight: num })
+      patch = { weight: num }
     } else {
-      onSave({ [col.key]: v || null } as Partial<Exercise>)
+      patch = { [key]: v || null } as Partial<Exercise>
     }
+    pendingRef.current.set(key, v)
+    void Promise.resolve(onSaveRef.current(patch)).then((saved) => {
+      // A failed save stays pending: the cell keeps what was typed (and is
+      // marked unsaved) instead of snapping back to the stored value.
+      if (!saved || pendingRef.current.get(key) !== v) return
+      pendingRef.current.delete(key)
+      setAnswered((n) => n + 1)
+    })
   }
+
+  // Closing the day (Esc, the ×, paging to another day) unmounts the row with
+  // the cursor possibly still in a cell. Save whatever is in hand on the way out.
+  useEffect(() => {
+    return () => {
+      if (discardRef.current) return
+      for (const key of [...dirtyRef.current]) {
+        const col = columnsRef.current.find((c) => c.key === key)
+        if (col) commit(col)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reads refs only
+  }, [])
 
   const inputCls = "w-full bg-transparent px-2 py-1.5 text-sm outline-none focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary"
   const textareaStyle: React.CSSProperties = { fieldSizing: 'content' } as React.CSSProperties
@@ -139,7 +216,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                       ref={nameInputRef}
                       rows={1}
                       value={draft[c.key] ?? ''}
-                      onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
+                      onChange={(e) => edit(c.key, e.target.value)}
                       onFocus={() => setNameFocused(true)}
                       onBlur={() => { commit(c); setNameFocused(false) }}
                       placeholder={c.placeholder}
@@ -166,8 +243,9 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                               // mousedown fires before the textarea blur, so the pick lands.
                               onMouseDown={(e) => {
                                 e.preventDefault()
-                                setDraft((d) => ({ ...d, name }))
-                                if (name !== exercise.name) onSave({ name })
+                                edit(c.key, name)
+                                draftRef.current = { ...draftRef.current, [c.key]: name }
+                                commit(c)
                                 setNameFocused(false)
                               }}
                               className="block w-full px-3 py-1.5 text-left hover:bg-accent"
@@ -192,7 +270,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
             min="0"
             step="0.5"
             value={draft[c.key] ?? ''}
-            onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
+            onChange={(e) => edit(c.key, e.target.value)}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
             title={unsavedTitle}
@@ -202,7 +280,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
           <textarea
             rows={1}
             value={draft[c.key] ?? ''}
-            onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
+            onChange={(e) => edit(c.key, e.target.value)}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
             title={unsavedTitle}
@@ -238,7 +316,11 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
       <td className="border-b border-border p-0 text-center align-middle">
         <button
           type="button"
-          onClick={onDelete}
+          onClick={() => {
+            // Nothing typed in this row should be saved on its way out.
+            discardRef.current = true
+            void onDelete().then((gone) => { if (!gone) discardRef.current = false })
+          }}
           className="p-1 text-muted-foreground hover:text-destructive"
           aria-label="Delete exercise"
         >
