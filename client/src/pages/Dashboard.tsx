@@ -3,15 +3,28 @@ import { Link } from 'react-router-dom'
 import type { PaymentAlert } from 'coachboard-shared'
 import { getJson, getList, errorMessage } from '../lib/api'
 import LoadError from '../components/LoadError'
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
-import { Users, Dumbbell, Plus, AlertTriangle, HardDrive } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
+import { Plus, AlertTriangle, ArrowUpRight } from 'lucide-react'
 import MyStyleCard from '../components/MyStyleCard'
 import Onboarding, { isOnboardingComplete } from '../components/Onboarding'
 import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
 import { humanBytes } from '../lib/formatBytes'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
+
+function StatFigure({ to, label, value, note }: { to: string; label: string; value: string | number; note: string }) {
+  return (
+    <Link to={to} className="group relative block px-6 py-5 transition-colors duration-150 ease-smooth hover:bg-foreground/[0.03]">
+      <div className="flex items-center justify-between text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+        <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+      </div>
+      <div className="num mt-3 text-[40px] font-medium leading-none tracking-tight">{value}</div>
+      <div className="mt-2 text-xs text-muted-foreground">{note}</div>
+    </Link>
+  )
+}
 
 interface Stats {
   athletes: number
@@ -62,82 +75,75 @@ export default function Dashboard() {
     return () => { cancelled = true }
   }, [discordConfigured])
 
+  const today = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <Link to="/athletes/new">
-          <Button><Plus className="h-4 w-4 mr-2" />Add Athlete</Button>
-        </Link>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-8">
+      <PageHeader
+        eyebrow={today}
+        title="Dashboard"
+        actions={
+          <Link to="/athletes/new">
+            <Button><Plus className="h-4 w-4" />Add Athlete</Button>
+          </Link>
+        }
+      />
+
       {paymentAlerts.length > 0 && (
-        <Card className="border-destructive/40">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
+        <section className="relative overflow-hidden rounded-lg border border-destructive/30 bg-card">
+          <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-destructive" />
+          <div className="flex items-center justify-between gap-4 px-5 pb-2 pt-4">
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
               <AlertTriangle className="h-4 w-4 text-destructive" />
-              Payment reminders ({paymentAlerts.length})
-            </CardTitle>
-            <Link to="/payments" className="text-xs text-muted-foreground underline">View all</Link>
-          </CardHeader>
-          <CardContent className="space-y-1">
+              Payment reminders
+              <span className="num rounded-full bg-destructive/10 px-1.5 text-[11px] text-destructive">{paymentAlerts.length}</span>
+            </h2>
+            <Link to="/payments" className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
+              View all →
+            </Link>
+          </div>
+          <ul className="divide-y px-5 pb-2">
             {paymentAlerts.map((a) => {
               const meta = PAYMENT_STATUS_META[a.status]
               return (
-                <div key={a.payment.id} className="flex items-center gap-2 flex-wrap text-sm">
-                  <Link to={`/athletes/${a.athleteId}`} className="font-medium hover:underline">{a.athleteName}</Link>
+                <li key={a.payment.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
+                  <Link to={`/athletes/${a.athleteId}`} className="font-medium hover:text-primary">{a.athleteName}</Link>
                   <Badge variant={meta.variant}>{meta.label}</Badge>
-                  <span className="text-muted-foreground">
-                    {formatAmount(a.payment.amount, a.payment.currency)} ·{' '}
-                    {a.status === 'expiring_soon' ? 'paid through' : 'due by'} {a.payment.paid_through}
+                  <span className="ml-auto text-muted-foreground">
+                    <span className="num text-foreground">{formatAmount(a.payment.amount, a.payment.currency)}</span>
+                    {' · '}
+                    {a.status === 'expiring_soon' ? 'paid through' : 'due by'} <span className="num">{a.payment.paid_through}</span>
                   </span>
-                </div>
+                </li>
               )
             })}
-          </CardContent>
-        </Card>
+          </ul>
+        </section>
       )}
 
-      {/* Replaces the tiles rather than sitting above them. Showing "Total
-          Athletes 0" next to an error message is still telling the coach their
-          roster is empty — the number has to go, not just be explained. */}
+      {/* Replaces the figures rather than sitting above them. Showing "Athletes
+          0" next to an error message is still telling the coach their roster
+          is empty — the number has to go, not just be explained. */}
       {error ? (
         <LoadError what="your dashboard" message={error} onRetry={() => void load()} />
       ) : (
       <>
-      <div className={`grid grid-cols-1 gap-4 ${storage ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Athletes</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.athletes}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Training Programs</CardTitle>
-            <Dumbbell className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.programs}</div>
-          </CardContent>
-        </Card>
+      {/* One strip of figures, split by hairlines, instead of a row of
+          identical icon tiles. Each figure links to the screen it counts. */}
+      <section
+        className={`grid grid-cols-1 overflow-hidden rounded-xl border bg-card bg-glow-hero divide-y sm:divide-x sm:divide-y-0 ${storage ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}
+      >
+        <StatFigure to="/athletes" label="Athletes" value={stats.athletes} note="on your roster" />
+        <StatFigure to="/programs" label="Training programs" value={stats.programs} note="across all athletes" />
         {storage && (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Video storage used</CardTitle>
-              <HardDrive className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{humanBytes(storage.bytes)}</div>
-              <p className="text-xs text-muted-foreground">
-                {storage.files} file{storage.files === 1 ? '' : 's'} from Discord
-              </p>
-            </CardContent>
-          </Card>
+          <StatFigure
+            to="/discord-inbox"
+            label="Video storage"
+            value={humanBytes(storage.bytes)}
+            note={`${storage.files} file${storage.files === 1 ? '' : 's'} from Discord`}
+          />
         )}
-      </div>
+      </section>
       {/* Guided onboarding until the coach finishes (or skips) it; the style card
           after. Inside the non-error branch because it keys off athleteCount:
           a failed load would otherwise show an established coach the

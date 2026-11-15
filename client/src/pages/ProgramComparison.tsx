@@ -2,9 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { getList, errorMessage } from '../lib/api'
 import LoadError from '../components/LoadError'
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { Badge } from '../components/ui/badge'
+import PageHeader from '../components/PageHeader'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
@@ -23,6 +22,25 @@ interface Program { id: string; name: string; status: string; athlete_id: string
 const STATUSES = ['active', 'completed', 'archived'] as const
 // Sentinel for the athlete filter's "unassigned" option (Select values must be strings).
 const UNASSIGNED = '__unassigned__'
+
+// Shared by the column headings and every row so they line up.
+const ROW_GRID = 'sm:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_120px_110px]'
+
+const STATUS_DOT: Record<string, string> = {
+  active: 'bg-primary',
+  completed: 'bg-info',
+  archived: 'bg-muted-foreground/50',
+}
+
+/** A status as a dot + word: quieter than a filled pill in a dense table. */
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs capitalize text-muted-foreground">
+      <span aria-hidden className={cn('h-1.5 w-1.5 rounded-full', STATUS_DOT[status] ?? 'bg-muted-foreground/50')} />
+      <span className={status === 'active' ? 'text-foreground' : undefined}>{status}</span>
+    </span>
+  )
+}
 
 export default function ProgramComparison() {
   const navigate = useNavigate()
@@ -47,7 +65,7 @@ export default function ProgramComparison() {
   const [assigning, setAssigning] = useState<Program | null>(null)
   const [assignTo, setAssignTo] = useState<string>('')
   const [savingAssign, setSavingAssign] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLLIElement>(null)
   const newMenuRef = useRef<HTMLDivElement>(null)
 
   const loadData = useCallback(async () => {
@@ -212,10 +230,12 @@ export default function ProgramComparison() {
   const filteredOut = programs.length > 0 && filtered.length === 0
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Programs</h1>
-        <div className="flex items-center gap-2">
+    <div className="mx-auto max-w-6xl space-y-6">
+      <PageHeader
+        title="Programs"
+        description={programs.length > 0 ? `${programs.length} program${programs.length === 1 ? '' : 's'}` : undefined}
+        actions={
+        <>
           <Button variant="outline" onClick={() => setImportOpen(true)}>
             <FileUp className="h-4 w-4 mr-2" />Import programs
           </Button>
@@ -224,7 +244,7 @@ export default function ProgramComparison() {
               <Plus className="h-4 w-4 mr-2" />New Program<ChevronDown className="h-4 w-4 ml-2" />
             </Button>
             {newMenuOpen && (
-              <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-md border bg-card shadow-lg py-1" onClick={(e) => e.stopPropagation()}>
+              <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-lg border bg-popover py-1 shadow-xl shadow-black/20" onClick={(e) => e.stopPropagation()}>
                 <Link to="/programs/new" onClick={() => setNewMenuOpen(false)}>
                   <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent">
                     <Plus className="h-4 w-4" />New program
@@ -240,9 +260,10 @@ export default function ProgramComparison() {
               </div>
             )}
           </div>
-        </div>
-      </div>
-      <div className="flex gap-3 flex-wrap">
+        </>
+        }
+      />
+      <div className="flex flex-wrap gap-2">
         <div className="relative w-64">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
@@ -290,21 +311,29 @@ export default function ProgramComparison() {
           No programs match {query.trim() ? `“${query.trim()}” and ` : ''}the filters above.
         </p>
       ) : filtered.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <Dumbbell className="h-12 w-12 text-muted-foreground mb-4" />
-            <h2 className="text-lg font-semibold mb-2">No programs yet</h2>
-            <p className="text-muted-foreground mb-4">Create a training program for an athlete.</p>
-            <Link to="/programs/new"><Button>New Program</Button></Link>
-          </CardContent>
-        </Card>
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-card/50 bg-glow-hero py-14 text-center">
+          <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/15 text-primary">
+            <Dumbbell className="h-6 w-6" />
+          </span>
+          <h2 className="mb-1 text-lg font-semibold">No programs yet</h2>
+          <p className="mb-5 text-sm text-muted-foreground">Create a training program for an athlete.</p>
+          <Link to="/programs/new"><Button>New Program</Button></Link>
+        </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        // No overflow-hidden on the list: it would clip each row's options menu.
+        <div className="rounded-xl border bg-card">
+          <div className={cn(ROW_GRID, 'hidden gap-4 border-b py-2.5 pl-4 pr-24 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground sm:grid')}>
+            <span>Program</span>
+            <span>Athlete</span>
+            <span>Status</span>
+            <span>Started</span>
+          </div>
+          <ul className="divide-y">
           {filtered.map((program) => (
-            <div key={program.id} className="relative group" ref={menuOpen === program.id ? menuRef : null}>
+            <li key={program.id} className="group relative" ref={menuOpen === program.id ? menuRef : null}>
               {renamingId === program.id ? (
-                <Card className="h-full">
-                  <CardHeader className="pr-4">
+                <div className="px-4 py-3">
+                  <div>
                     <div className="flex items-center gap-2">
                       <input
                         autoFocus
@@ -336,25 +365,21 @@ export default function ProgramComparison() {
                         <X className="h-4 w-4" />
                       </button>
                     </div>
-                    <div className="text-sm text-muted-foreground">{ownerLabel(program)}</div>
-                  </CardHeader>
-                  <CardContent>
-                    <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
-                    {program.start_date && <div className="text-sm text-muted-foreground mt-2">Started: {program.start_date}</div>}
-                  </CardContent>
-                </Card>
+                    <div className="mt-1 text-sm text-muted-foreground">{ownerLabel(program)}</div>
+                  </div>
+                </div>
               ) : (
-                <Link to={`/programs/${program.id}`}>
-                  <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
-                    <CardHeader className="pr-10">
-                      <CardTitle className="text-base">{program.name}</CardTitle>
-                      <div className="text-sm text-muted-foreground">{ownerLabel(program)}</div>
-                    </CardHeader>
-                    <CardContent>
-                      <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
-                      {program.start_date && <div className="text-sm text-muted-foreground mt-2">Started: {program.start_date}</div>}
-                    </CardContent>
-                  </Card>
+                <Link
+                  to={`/programs/${program.id}`}
+                  className={cn(
+                    ROW_GRID,
+                    'flex flex-col gap-1 px-4 py-3 pr-24 transition-colors duration-150 ease-smooth hover:bg-foreground/[0.03] group-last:rounded-b-xl sm:grid sm:items-center sm:gap-4',
+                  )}
+                >
+                  <span className="truncate font-medium">{program.name}</span>
+                  <span className="truncate text-sm text-muted-foreground">{ownerLabel(program)}</span>
+                  <span><StatusBadge status={program.status} /></span>
+                  <span className="num text-xs text-muted-foreground">{program.start_date ?? '—'}</span>
                 </Link>
               )}
 
@@ -362,7 +387,7 @@ export default function ProgramComparison() {
               {renamingId !== program.id && (
                 <div
                   className={cn(
-                    'absolute top-2.5 right-10 transition-opacity',
+                    'absolute right-11 top-1/2 -translate-y-1/2 transition-opacity',
                     program.bookmarked === 1 ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
                   )}
                 >
@@ -382,7 +407,7 @@ export default function ProgramComparison() {
                     e.stopPropagation()
                     setMenuOpen(menuOpen === program.id ? null : program.id)
                   }}
-                  className={`absolute top-3 right-3 p-1.5 rounded-md text-muted-foreground transition-opacity hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary ${menuOpen === program.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground transition-opacity hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary ${menuOpen === program.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                   aria-label="Program options"
                 >
                   <MoreHorizontal className="h-4 w-4" />
@@ -392,7 +417,7 @@ export default function ProgramComparison() {
               {/* Dropdown menu */}
               {menuOpen === program.id && (
                 <div
-                  className="absolute top-10 right-3 z-20 min-w-[160px] rounded-md border border-border bg-card shadow-lg py-1"
+                  className="absolute right-3 top-[calc(50%+18px)] z-20 min-w-[160px] rounded-lg border border-border bg-popover py-1 shadow-xl shadow-black/20"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <p className="px-3 py-1 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Status</p>
@@ -438,8 +463,9 @@ export default function ProgramComparison() {
                   </button>
                 </div>
               )}
-            </div>
+            </li>
           ))}
+          </ul>
         </div>
       )}
       <SuggestProgramDialog

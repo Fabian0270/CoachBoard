@@ -582,7 +582,7 @@ async function createWindow(): Promise<void> {
     ...(app.isPackaged ? {} : { icon: path.join(__dirname, '../build/icon.png') }),
     // Match the app's light/dark background during load to avoid a white flash.
     // Approximates the renderer's "system" default; values mirror --background in index.css.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0c0d0f' : '#f7f6f1',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
