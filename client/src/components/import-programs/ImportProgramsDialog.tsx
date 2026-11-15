@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Button } from '../ui/button'
 import { FolderUp, Upload, Loader2, XCircle, Check } from 'lucide-react'
 import { parseArchiveFilename } from '../../lib/bulkImport'
+import { errorMessage, getList } from '../../lib/api'
 import type { ExternalImportPreview, ExternalParseOverrides } from 'coachboard-shared'
 import type { Athlete, Assignment, CommitSummary, Entry, Props, Step } from './types'
 import { isImportable, overrideParams, todayIso } from './helpers'
@@ -38,10 +39,17 @@ export default function ImportProgramsDialog({ open, onOpenChange, onCreated, on
     if (!open) return
     setAthleteId(defaultAthleteId ?? '')
     // Include archived so they can be assigned an additional historical program.
-    fetch('/api/athletes?include_archived=1')
-      .then((r) => r.json())
-      .then((data) => setAthletes(Array.isArray(data) ? data : []))
-      .catch(() => setAthletes([]))
+    // A failed load used to look like a coach with no athletes, leaving nobody
+    // to assign the import to and no reason why.
+    let cancelled = false
+    getList<Athlete>('/api/athletes?include_archived=1')
+      .then((data) => { if (!cancelled) setAthletes(data) })
+      .catch((err) => {
+        if (cancelled) return
+        setAthletes([])
+        setError(`Could not load your athletes. ${errorMessage(err)}`)
+      })
+    return () => { cancelled = true }
   }, [open, defaultAthleteId])
 
   function reset() {

@@ -5,8 +5,15 @@ import type {
   ExternalParseOverrides,
 } from 'coachboard-shared'
 import { isNumericLike, classifySectionHeader } from '../cellParsing.js'
-import { resolveHeaderRow, type ResolvedHeader } from '../headerDetection.js'
-import { normalizeReps, normalizeLoad, normalizeRpe } from '../valueNormalizers.js'
+import { isResultHeader, resolveHeaderRow, type ResolvedHeader } from '../headerDetection.js'
+import {
+  normalizeReps,
+  normalizeLoad,
+  normalizeRpe,
+  normalizeSets,
+  isWeekdayLabel,
+  weekdayOffset,
+} from '../valueNormalizers.js'
 import { emptyMapping, hasParseOverride, type ParseResult, type ReadRow } from '../shared.js'
 
 const HEADER_SCAN_ROWS = 10
@@ -71,6 +78,12 @@ export function parseVertical(readRow: ReadRow, maxRow: number, overrides?: Exte
     warnings.push({ message: 'No RPE/RIR column found — no effort analysis will be available for this program.' })
   }
 
+  // Whose columns are these? A plain "Load"/"RPE" is the coach's prescription;
+  // only a header like "Load used" / "Last set RPE" is the athlete's.
+  const headerText = headerRow > 0 ? readRow(headerRow) : []
+  const loadIsResult = mapping.load !== null && isResultHeader(headerText[mapping.load - 1] ?? '')
+  const rpeIsResult = mapping.rpe !== null && isResultHeader(headerText[mapping.rpe - 1] ?? '')
+
   // 2 + 3. Walk rows, tracking week/day sections and collecting exercise rows.
   const exercises: ExternalExerciseRow[] = []
   let weekIdx = -1
@@ -87,10 +100,22 @@ export function parseVertical(readRow: ReadRow, maxRow: number, overrides?: Exte
     const nonEmpty = cells.filter((c) => c !== '')
     if (nonEmpty.length === 0) continue // blank separator
 
-    const setsText = col(cells, mapping.sets)
+    const setsText = normalizeSets(col(cells, mapping.sets))
     const nameText = col(cells, mapping.exercise)
+    const repsText = col(cells, mapping.reps)
 
-    if (setsText && isNumericLike(setsText)) {
+    // An exercise row has numeric sets — or, now, non-numeric sets ("3x",
+    // "AMRAP") on a named row whose reps ARE readable. Those used to be skipped
+    // without a word, and a date-mangled "3-4" with them; now the row is kept
+    // with its sets as written, and the coach is told.
+    const oddSets =
+      !!setsText && !isNumericLike(setsText) && !!(nameText || carryName) &&
+      isNumericLike(normalizeReps(repsText, r, []) ?? '')
+    if (oddSets) {
+      warnings.push({ sheetRow: r, message: `Row ${r}: sets "${setsText}" kept as written — check it.` })
+    }
+
+    if (setsText && (isNumericLike(setsText) || oddSets)) {
       let name = nameText
       if (!name) {
         if (carryName) {
@@ -112,9 +137,11 @@ export function parseVertical(readRow: ReadRow, maxRow: number, overrides?: Exte
         dayLabel: dayIdx < 0 ? 'Day 1' : (dayLabel || `Day ${effDay + 1}`),
         name,
         sets: setsText,
-        reps: normalizeReps(col(cells, mapping.reps), r, warnings),
-        load: normalizeLoad(col(cells, mapping.load), r, warnings),
+        reps: normalizeReps(repsText, r, warnings),
+        load: normalizeLoad(col(cells, mapping.load), r, warnings, !loadIsResult),
         rpe: normalizeRpe(col(cells, mapping.rpe), mapping.rpeFromRir, r, warnings),
+        loadIsResult,
+        rpeIsResult,
         sheetRow: r,
         refillCols: { name: mapping.exercise, sets: mapping.sets, reps: mapping.reps, load: mapping.load, rpe: mapping.rpe, erpe: null },
       })
@@ -136,7 +163,12 @@ export function parseVertical(readRow: ReadRow, maxRow: number, overrides?: Exte
         dayLabel = ''
         carryName = ''
       } else if (cls === 'day') {
-        dayIdx++
+        // A weekday label places the day ON that weekday. Days were numbered in
+        // order of appearance, so Monday/Wednesday/Friday came in as days 0, 1,
+        // 2 — and landed on Monday, Tuesday, Wednesday. "Day n" and split names
+        // ("Upper") still count in order, as before.
+        const named = isWeekdayLabel(joined) ? weekdayOffset(joined) : null
+        dayIdx = named ?? dayIdx + 1
         dayLabel = joined
         carryName = ''
       } else if (/[a-z]/i.test(joined)) {

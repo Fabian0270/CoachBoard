@@ -10,6 +10,7 @@ import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { useToast } from '../components/ui/toast'
+import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
 import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, Eye, Film } from 'lucide-react'
 import DayAttachments from '../components/discord/DayAttachments'
@@ -26,14 +27,17 @@ import {
   DAY_LABELS,
   weeksBetween,
   dayName,
+  type Program,
 } from '../lib/programUtils'
+import { errorMessage, getJson } from '../lib/api'
+import LoadError from '../components/LoadError'
 
 export default function ProgramDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const toast = useToast()
   const confirm = useConfirm()
-  const { program, setProgram, notFound } = useProgramData(id)
+  const { program, setProgram, notFound, loadError, reload } = useProgramData(id)
   const [setupForm, setSetupForm] = useState({ start_date: '', weeks: '4' })
   const [savingDuration, setSavingDuration] = useState(false)
   const [openDate, setOpenDate] = useState<string | null>(null)
@@ -96,9 +100,36 @@ export default function ProgramDetail() {
     }
   }
 
-  const { addExercise, saveExerciseField, deleteExercise, deleteWorkout, addSet, reorderExercises } = useWorkoutActions(
+  const {
+    addExercise, saveExerciseField, deleteExercise, deleteWorkout, addSet, reorderExercises,
+    failedEdits, retryFailedEdits,
+  } = useWorkoutActions(
     id, workoutByDate, setProgram, flashCell,
+    // One toast per failure. The 2.5-second cell flash on its own was easy to
+    // miss and cleared itself, which is how edits went missing unnoticed.
+    (message) => toast.error(message),
   )
+
+  const unsavedCount = Object.keys(failedEdits).length
+  // Edits that did not save live only in this page; closing the window loses them.
+  useUnsavedWork('program-edits', unsavedCount > 0)
+  const [retrying, setRetrying] = useState(false)
+
+  const retryUnsaved = async () => {
+    setRetrying(true)
+    try {
+      const { recovered, stillFailing } = await retryFailedEdits()
+      if (stillFailing === 0) {
+        toast.success(`Saved ${recovered} change${recovered === 1 ? '' : 's'}.`)
+      } else if (recovered > 0) {
+        toast.error(`Saved ${recovered}, but ${stillFailing} still could not be saved.`)
+      } else {
+        toast.error('Still could not save. Your changes are kept here until they do.')
+      }
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   // Dates for the same day-of-week across all weeks (excluding openDate itself)
   const sameDayDates = useMemo<{ date: string; weekIndex: number }[]>(() => {
@@ -114,10 +145,15 @@ export default function ProgramDetail() {
       .map((row) => ({ date: row.days[colIndex].date, weekIndex: row.weekIndex }))
   }, [grid, openDate])
 
+  // A failed reload used to put a 500's error object in place of the program.
+  // Now the page keeps what it had and says the view may be out of date.
   const reloadProgram = async () => {
     if (!id) return
-    const data = await fetch(`/api/programs/${id}`).then((r) => r.json()).catch(() => null)
-    if (data) setProgram(data)
+    try {
+      setProgram(await getJson<Program>(`/api/programs/${encodeURIComponent(id)}`))
+    } catch (err) {
+      toast.error(`The change was saved, but the program could not be refreshed. ${errorMessage(err)}`)
+    }
   }
 
   const handleDayDrop = async (targetDate: string) => {
@@ -206,6 +242,7 @@ export default function ProgramDetail() {
       </div>
     )
   }
+  if (!program && loadError) return <LoadError what="this program" message={loadError} onRetry={reload} />
   if (!program) return <div className="text-muted-foreground">Loading...</div>
 
   const openWorkout = openDate ? workoutByDate.get(openDate) ?? null : null
@@ -310,6 +347,27 @@ export default function ProgramDetail() {
         </div>
       </div>
       {program.description && <p className="text-muted-foreground">{program.description}</p>}
+
+      {/* Stays until the edits actually land. The old 2.5-second cell flash was
+          the only signal a save had failed, and it cleared itself while the
+          typed value stayed on screen — so a lost edit looked exactly like a
+          saved one. This cannot be missed and cannot time out. */}
+      {unsavedCount > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+          <X className="h-4 w-4 shrink-0 text-destructive" />
+          <span>
+            <span className="font-medium">
+              {unsavedCount} change{unsavedCount === 1 ? '' : 's'} could not be saved.
+            </span>{' '}
+            What you typed is still here, but it is not stored yet — don&apos;t close this program
+            until it is.
+          </span>
+          <Button size="sm" variant="outline" onClick={retryUnsaved} disabled={retrying}>
+            {retrying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {retrying ? 'Trying…' : 'Try again'}
+          </Button>
+        </div>
+      )}
 
       {!grid ? (
         <Card className="max-w-md">
@@ -474,6 +532,9 @@ export default function ProgramDetail() {
               enabledColumns={enabledColumns}
               programId={id ?? ''}
               sameDayDates={sameDayDates}
+              // Marks the exact cells that did not save, so the banner's count
+              // maps to something the coach can actually find on the page.
+              unsavedKeys={new Set(Object.keys(failedEdits))}
               onAdd={() => addExercise(openDate)}
               onSaveField={(exerciseId, patch) => {
                 if (openWorkout) saveExerciseField(openDate, openWorkout.id, exerciseId, patch)
@@ -491,13 +552,25 @@ export default function ProgramDetail() {
                 if (openWorkout) reorderExercises(openDate, openWorkout.id, exerciseIds)
               }}
               onCopyDay={async (targetDates) => {
-                if (!id || !openDate) return
-                await fetch(`/api/programs/${id}/copy-day`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ sourceDate: openDate, targetDates }),
-                })
+                if (!id || !openDate) return false
+                // A refused copy used to close the dialog exactly as a successful
+                // one did, so the coach believed days had been filled that were not.
+                try {
+                  const res = await fetch(`/api/programs/${id}/copy-day`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sourceDate: openDate, targetDates }),
+                  })
+                  if (!res.ok) {
+                    toast.error(`Could not copy the day (the server said ${res.status}). Nothing was changed.`)
+                    return false
+                  }
+                } catch {
+                  toast.error('CoachBoard could not reach its own server, so the day was not copied.')
+                  return false
+                }
                 await reloadProgram()
+                return true
               }}
             />
           )}
@@ -545,12 +618,7 @@ export default function ProgramDetail() {
           open={importOpen}
           onOpenChange={setImportOpen}
           programId={program.id}
-          onImported={() => {
-            fetch(`/api/programs/${program.id}`)
-              .then((r) => r.json())
-              .then((data) => setProgram(data))
-              .catch(() => {})
-          }}
+          onImported={() => { void reloadProgram() }}
         />
       )}
 

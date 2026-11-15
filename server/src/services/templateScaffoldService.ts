@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs'
 import { parseExternalFile } from './externalImportService.js'
-import { weekdayOffset } from './external-import/valueNormalizers.js'
+import { WEEK_BANNER, isWeekdayLabel, weekdayOffset } from './external-import/valueNormalizers.js'
+import { MAX_SHEET_COLS, sheetBounds, valueAt } from '../lib/sheetBounds.js'
 import type { ExternalExerciseRow } from 'coachboard-shared'
 
 // ---------------------------------------------------------------------------
@@ -37,10 +38,51 @@ type ExerciseRow = {
 type WorkoutRow = { id: string; scheduled_date: string | null }
 type ProgramRow = { start_date: string | null }
 
-const WEEK_BANNER = /^week\s*\d+$/i
+// WEEK_BANNER and isWeekdayLabel are shared with the importer, so both read the
+// same banners and day labels.
+/** A banner renumbered for week w, keeping the coach's own wording (Vecka 3 stays Vecka). */
+const renumberBanner = (text: string, w: number): string => text.replace(/\d+/, String(w + 1))
 // English + Swedish weekday day-section labels (incl. ASCII-stripped forms).
-const WEEKDAY = /^(mon|tue|wed|thu|fri|sat|sun|mån|man|tis|ons|tor|fre|lör|lor|sön|son)/i
 const DAY_N = /^day\s*\d+/i
+
+/**
+ * The program has content the imported template has no place for.
+ *
+ * The styled export used to drop it without a word. Measured against the six
+ * fixture templates: a training day the template has no section for vanished
+ * from 5 of them, and one exported only 3 of a program's 7 exercises. Thrown
+ * BEFORE anything is written, so the caller can use the built-in look instead
+ * and say why.
+ */
+export class ScaffoldDoesNotFitError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ScaffoldDoesNotFitError'
+  }
+}
+
+const WEEKDAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+/** Throws ScaffoldDoesNotFitError naming what would be left out, or returns quietly. */
+function assertEverythingPlaced(
+  prog: { byWeekday: Array<Map<number, ExerciseRow[]>> },
+  placed: Set<ExerciseRow>,
+): void {
+  const missingByDay = new Map<number, number>()
+  for (const week of prog.byWeekday) {
+    for (const [weekday, list] of week) {
+      const lost = list.filter((ex) => !placed.has(ex)).length
+      if (lost) missingByDay.set(weekday, (missingByDay.get(weekday) ?? 0) + lost)
+    }
+  }
+  if (missingByDay.size === 0) return
+  const total = [...missingByDay.values()].reduce((a, b) => a + b, 0)
+  const days = [...missingByDay.keys()].sort((a, b) => a - b).map((d) => WEEKDAY_LABELS[d])
+  throw new ScaffoldDoesNotFitError(
+    `Your imported Excel style has no room for ${total} exercise${total === 1 ? '' : 's'} on ` +
+      `${days.join(', ')}, so this export uses CoachBoard's own layout to keep everything in it.`,
+  )
+}
 
 function daysBetween(a: string, b: string): number {
   const [ay, am, ad] = a.split('-').map(Number)
@@ -54,10 +96,23 @@ function mondayIso(iso: string): string {
   date.setUTCDate(date.getUTCDate() + (dow === 0 ? -6 : 1 - dow))
   return date.toISOString().slice(0, 10)
 }
-function loadValue(ex: ExerciseRow): number | string | null {
+/**
+ * The value for a template's single load column: the coach's Load Cap, else
+ * the athlete's Load Used, else — when the template has no target column of
+ * its own to carry it — the load part of the target ("75%" out of "75% @8").
+ * An imported coach sheet's "Load" column is stored as the prescription, so
+ * without that last step a "75%" the coach wrote would export as a blank.
+ */
+function loadValue(ex: ExerciseRow, targetHasNoColumn: boolean): number | string | null {
   if (ex.weight !== null && ex.weight !== undefined) return ex.weight
-  return usedLoad(ex)
+  const used = usedLoad(ex)
+  if (used !== null || !targetHasNoColumn || !ex.intensity) return used
+  const text = ex.intensity.replace(EFFORT, '').trim()
+  if (!text) return null
+  return /^\d+(?:[.,]\d+)?$/.test(text) ? parseFloat(text.replace(',', '.')) : text
 }
+/** "@8", "@ 7-8", "RPE 8" inside a target. */
+const EFFORT = /(?:@|\brpe\b)\s*(\d+(?:[.,]\d+)?(?:\s*[-–]\s*\d+(?:[.,]\d+)?)?)/i
 /** The athlete's actual "Load Used" value (string load_used → number when numeric). */
 function usedLoad(ex: ExerciseRow): number | string | null {
   if (!ex.load_used) return null
@@ -78,11 +133,10 @@ function clearBold(cell: ExcelJS.Cell): void {
 }
 function rpeValue(ex: ExerciseRow): string | null {
   if (ex.rpe !== null && ex.rpe !== '') return String(ex.rpe)
-  if (ex.intensity && /rpe|^@/i.test(ex.intensity.trim())) {
-    const m = ex.intensity.match(/(\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?)/)
-    if (m) return m[1].replace(/\s+/g, '')
-  }
-  return null
+  // The target RPE, wherever it sits in the target: "@8", "RPE 7-8", or after
+  // a load in "75% @8" (how an imported coach sheet's RPE column is stored).
+  const m = ex.intensity?.match(EFFORT)
+  return m ? m[1].replace(/\s+/g, '').replace('–', '-') : null
 }
 
 /** A1 column letters → 1-based column number. */
@@ -206,12 +260,14 @@ function deriveRowGeometry(tEx: ExternalExerciseRow[], ws: ExcelJS.Worksheet): R
   }
   if (weeks.length >= 2 && !(rowOf(weeks[1]) > rowOf(weeks[0]))) return null // must advance by row
 
-  const maxRow = ws.rowCount || 0
-  const maxCol = ws.columnCount || 1
+  // Content extent and non-creating reads — see lib/sheetBounds.ts.
+  const bounds = sheetBounds(ws)
+  const maxRow = bounds.rows
+  const maxCol = Math.max(bounds.cols, 1)
   const bannerRows: number[] = []
   for (let r = 1; r <= maxRow; r++) {
     for (let c = 1; c <= maxCol; c++) {
-      const v = ws.getCell(r, c).value
+      const v = valueAt(ws, r, c)
       if (typeof v === 'string' && WEEK_BANNER.test(v)) { bannerRows.push(r); break }
     }
   }
@@ -249,7 +305,10 @@ async function renderRowAxis(
   if (!geom) return null
   const { top, rowStride, templateWeeks } = geom
   const newWeeks = prog.weekCount
-  const maxCol = ws.columnCount || 1
+  // Styled-but-empty columns count here — this copies a week's formatting, not
+  // just its values — but capped, so a stray far-right cell cannot make every
+  // copied row thousands of cells wide.
+  const maxCol = Math.min(ws.columnCount || 1, MAX_SHEET_COLS)
 
   // Fit the week count by stacking/removing week row-blocks.
   if (newWeeks < templateWeeks) {
@@ -270,6 +329,18 @@ async function renderRowAxis(
       }
     }
   }
+
+  // Stacked-week templates never grow a day, and take the program's days in
+  // order — so a day with more exercises than slots, or more training days than
+  // sections, would lose the overflow. Checked before anything is written.
+  const placed = new Set<ExerciseRow>()
+  for (let w = 0; w < newWeeks; w++) {
+    geom.days.forEach((day, dSeq) => {
+      const dayExs = prog.byWeekday[w]?.get(prog.seqWeekdays[dSeq]) ?? []
+      for (const ex of dayExs.slice(0, day.slots.length)) placed.add(ex)
+    })
+  }
+  assertEverythingPlaced(prog, placed)
 
   const rpeSlot = geom.days.flatMap((d) => d.slots).find((s) => s.cols.rpe !== null)
   const rpeAt = rpeSlot
@@ -304,7 +375,7 @@ async function renderRowAxis(
           set(slot.cols.loadCap, ex ? (ex.weight ?? null) : null)
           set(slot.cols.load, ex ? (usedLoad(ex) ?? null) : null)
         } else {
-          set(slot.cols.load, ex ? (loadValue(ex) ?? null) : null)
+          set(slot.cols.load, ex ? (loadValue(ex, slot.cols.intensity === null) ?? null) : null)
         }
         set(slot.cols.rpe, ex ? fmtRpe(rpeValue(ex)) : null)
         set(slot.cols.erpe, null)
@@ -314,7 +385,7 @@ async function renderRowAxis(
     for (let r = blockTop; r < blockTop + rowStride; r++) {
       for (let c = 1; c <= maxCol; c++) {
         const cell = ws.getCell(r, c)
-        if (typeof cell.value === 'string' && WEEK_BANNER.test(cell.value)) { cell.value = `Week ${w + 1}`; break }
+        if (typeof cell.value === 'string' && WEEK_BANNER.test(cell.value)) { cell.value = renumberBanner(cell.value, w); break }
       }
     }
   }
@@ -430,13 +501,14 @@ function injectEmptyTrainedSections(ws: ExcelJS.Worksheet, geom: ColumnGeometry,
   // denotes — a real weekday word (Monday/Tisdag) OR "DAY n" (→ weekday n-1, the
   // Monday..Sunday = DAY 1..7 convention).
   const labelRows: Array<{ row: number; weekday: number }> = []
-  for (let r = 1; r <= ws.rowCount; r++) {
+  const lastContentRow = sheetBounds(ws).rows
+  for (let r = 1; r <= lastContentRow; r++) {
     for (let c = 1; c <= geom.blockStart0; c++) {
-      const v = ws.getCell(r, c).value
+      const v = valueAt(ws, r, c)
       if (typeof v !== 'string') continue
       const t = v.trim()
       let wd: number | null = null
-      if (t.length <= 10 && !/\d/.test(t) && WEEKDAY.test(t)) wd = weekdayOffset(t)
+      if (isWeekdayLabel(t)) wd = weekdayOffset(t)
       else { const m = t.match(/^day\s*(\d+)/i); if (m) wd = parseInt(m[1], 10) - 1 }
       if (wd !== null && wd >= 0 && wd <= 6) { labelRows.push({ row: r, weekday: wd }); break }
     }
@@ -531,7 +603,7 @@ export async function renderScaffold(
   // weekday when the template spans the whole week (DAY 7 present); otherwise it
   // falls back to the program's days in order, like a non-weekday/non-"DAY n"
   // template. The coach's labels are never renamed.
-  const hasWeekdayLabel = tEx.some((e) => WEEKDAY.test((e.dayLabel ?? '').trim()))
+  const hasWeekdayLabel = tEx.some((e) => isWeekdayLabel(e.dayLabel ?? ''))
   const hasDayN = tEx.some((e) => DAY_N.test((e.dayLabel ?? '').trim()))
   const maxTemplateDay = Math.max(...geom.days.map((d) => d.dayIndex))
   const weekdayMode = hasWeekdayLabel || (hasDayN && maxTemplateDay >= 6)
@@ -555,6 +627,19 @@ export async function renderScaffold(
   // fill (e.g. a session moved onto the coach's blank Thursday row).
   if (weekdayMode) {
     injectEmptyTrainedSections(ws, geom, new Set(prog.byWeekday.flatMap((m) => [...m.keys()])))
+  }
+
+  // Every day grows to fit (row insertion below), so what can be lost here is a
+  // whole training day: a weekday the template has no section for, or — for a
+  // "Day n" template — more training days than it has sections.
+  {
+    const placed = new Set<ExerciseRow>()
+    for (let w = 0; w < newWeeks; w++) {
+      geom.days.forEach((day, dSeq) => {
+        for (const ex of dayExsFor(w, dSeq, day.dayIndex)) placed.add(ex)
+      })
+    }
+    assertEverythingPlaced(prog, placed)
   }
 
   const { blockStart0, stride, templateWeeks } = geom
@@ -656,7 +741,7 @@ export async function renderScaffold(
       const t = v.trim()
       if (WEEK_BANNER.test(t) || DAY_N.test(t)) return true
       // Weekday day-section label (e.g. "Torsdag") in a non-movement row.
-      if (WEEKDAY.test(t) && t.length <= 10 && !/\d/.test(t)) return true
+      if (isWeekdayLabel(t)) return true
       const lower = t.toLowerCase()
       if (/\bsets?\b/.test(lower)) hasSet = true
       if (/\breps?\b/.test(lower)) hasRep = true
@@ -674,7 +759,7 @@ export async function renderScaffold(
   const isDayLabel = (v: ExcelJS.CellValue): boolean => {
     if (typeof v !== 'string') return false
     const t = v.trim()
-    return DAY_N.test(t) || (WEEKDAY.test(t) && t.length <= 10 && !/\d/.test(t))
+    return DAY_N.test(t) || isWeekdayLabel(t)
   }
   const leadLabelRows: number[] = []
   for (let r = regionTop; r <= lastRow; r++) {
@@ -734,7 +819,7 @@ export async function renderScaffold(
           set(slot.rel.loadCap, ex ? (ex.weight ?? null) : null)
           set(slot.rel.load, ex ? (usedLoad(ex) ?? null) : null)
         } else {
-          set(slot.rel.load, ex ? (loadValue(ex) ?? null) : null)
+          set(slot.rel.load, ex ? (loadValue(ex, slot.rel.intensity === null) ?? null) : null)
         }
         set(slot.rel.rpe, ex ? fmtRpe(rpeValue(ex)) : null)
         set(slot.rel.erpe, null) // executed RPE always blank in a fresh block
@@ -746,7 +831,7 @@ export async function renderScaffold(
       for (let c = base; c < base + stride; c++) {
         const cell = ws.getCell(r, c)
         if (typeof cell.value === 'string' && WEEK_BANNER.test(cell.value)) {
-          cell.value = `Week ${w + 1}`
+          cell.value = renumberBanner(cell.value, w)
         }
       }
     }

@@ -43,6 +43,28 @@ describe('updateService', () => {
     expect(installed).toBe(true)
   })
 
+  it('stays installable through a later periodic check', () => {
+    // Reproduced in the audit: ready -> checking wiped the version and the
+    // install request answered 409 while the update sat staged on disk.
+    let installed = false
+    configureUpdates({ install: () => { installed = true } })
+
+    setUpdateState({ status: 'ready', version: '1.17.0' })
+    setUpdateState({ status: 'checking' })
+    setUpdateState({ status: 'error', message: 'offline' })
+    setUpdateState({ status: 'idle' })
+
+    expect(getUpdateState()).toEqual({ status: 'ready', version: '1.17.0', message: null })
+    expect(installUpdate()).toBe(true)
+    expect(installed).toBe(true)
+  })
+
+  it('moves on to a newer update once that one is ready', () => {
+    setUpdateState({ status: 'ready', version: '1.17.0' })
+    setUpdateState({ status: 'ready', version: '1.17.1' })
+    expect(getUpdateState().version).toBe('1.17.1')
+  })
+
   it('refuses to install with no installer wired, rather than pretending', () => {
     // This is the non-Electron case: the route turns it into a 409.
     setUpdateState({ status: 'ready', version: '1.14.1' })

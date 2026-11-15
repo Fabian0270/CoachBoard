@@ -7,6 +7,7 @@ import { useConfirm } from '../ui/confirm-dialog'
 import { LineChart, MessageSquareReply, Send, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { DiscordMediaItem, SentMessageDto } from 'coachboard-shared/discord'
+import { errorMessage, getList } from '../../lib/api'
 
 /**
  * The only place a <video> element is ever mounted (one at a time). The file
@@ -40,7 +41,13 @@ export default function MediaPlayerDialog({
       confirmLabel: 'Delete',
     })
     if (!ok) return
-    const res = await fetch(`/api/discord/media/${item.id}`, { method: 'DELETE' })
+    let res: Response
+    try {
+      res = await fetch(`/api/discord/media/${item.id}`, { method: 'DELETE' })
+    } catch {
+      toast.error('CoachBoard could not reach its own server, so the video was not deleted.')
+      return
+    }
     if (res.ok) {
       toast.success('Video deleted')
       onClose()
@@ -55,16 +62,19 @@ export default function MediaPlayerDialog({
     setSent([])
     if (!item) return
     let cancelled = false
-    fetch(`/api/discord/media/${item.id}/sent`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((rows: SentMessageDto[]) => {
+    // The reply history is context, not the point of the dialog, so a failure
+    // is noted rather than blocking the player.
+    getList<SentMessageDto>(`/api/discord/media/${encodeURIComponent(item.id)}/sent`)
+      .then((rows) => {
         if (!cancelled) setSent(rows)
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (!cancelled) toast.error(`Could not load the replies already sent. ${errorMessage(err)}`)
+      })
     return () => {
       cancelled = true
     }
-  }, [item])
+  }, [item]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendReply = async (via: 'channel' | 'dm') => {
     if (!item || !reply.trim()) {
@@ -91,6 +101,10 @@ export default function MediaPlayerDialog({
       } else {
         toast.error(dto.error ?? 'Discord rejected the message')
       }
+    } catch {
+      // The request itself failed. Without this the rejection went unhandled
+      // and replaced the whole app with the error screen.
+      toast.error('CoachBoard could not reach its own server, so the reply was not sent. Your text is kept.')
     } finally {
       setSending(false)
     }

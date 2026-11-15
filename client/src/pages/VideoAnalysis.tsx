@@ -36,6 +36,7 @@ import { savePose, putCorrection } from '../components/analysis/poseApi'
 import {
   applyCorrections,
   correctionsAtTimes,
+  smooth,
   type PoseFrame,
   type TimedCorrection,
 } from 'coachboard-shared/pose'
@@ -68,6 +69,7 @@ import { useConfirm } from '../components/ui/confirm-dialog'
 import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import { num } from '../lib/num'
 import { uploadVideo } from '../lib/uploadAnalysisVideo'
+import { useUnsavedWork } from '../lib/unsavedWork'
 
 type Phase = 'idle' | 'capturing' | 'tracking' | 'done'
 
@@ -80,6 +82,9 @@ type Phase = 'idle' | 'capturing' | 'tracking' | 'done'
  * gate is here to catch genuinely unusable captures, not normal ones.
  */
 const MIN_EFFECTIVE_FPS = 12
+
+/** The tracker's own floor (tracker.core DEFAULTS.minPoints): fewer and it gives up. */
+const MIN_SEED_POINTS = 6
 const MIN_SURVIVAL = 0.4
 
 /**
@@ -118,6 +123,20 @@ export default function VideoAnalysis() {
   const confirm = useConfirm()
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  /**
+   * Which tracking run is current. Bumped whenever the clip is left or cleared.
+   *
+   * Aborting a run deliberately KEEPS what it tracked ("stop and keep"), so an
+   * abort alone cannot tell "I have seen enough" from "I left this clip". A run
+   * cancelled by choosing another video used to finish anyway and draw its path,
+   * and offer to save it, over the NEXT video. Each awaited step checks this.
+   */
+  const runGenRef = useRef(0)
+  /** Ends the current run and makes anything it still produces be discarded. */
+  const abandonRun = () => {
+    runGenRef.current++
+    abortRef.current?.abort()
+  }
   /** The path as it is being tracked — see the note where it is filled. */
   const livePathRef = useRef<Sample[]>([])
   /**
@@ -170,7 +189,12 @@ export default function VideoAnalysis() {
   /** Shown once a track finishes, so nothing is stored without being asked for. */
   const [offerSave, setOfferSave] = useState(false)
   const [savedId, setSavedId] = useState<string | null>(null)
+  /** contextNow() as of the last save or update — see contextNow. */
+  const [savedContext, setSavedContext] = useState<string | null>(null)
+  const [updatingSaved, setUpdatingSaved] = useState(false)
   const [saving, setSaving] = useState(false)
+  // Saving a local clip uploads it in chunks; closing midway loses the save.
+  useUnsavedWork('analysis-save', saving)
   /**
    * Who this set belongs to.
    *
@@ -199,6 +223,7 @@ export default function VideoAnalysis() {
    * drawn over it, with its calibration and rep numbers still on screen.
    */
   useEffect(() => {
+    abandonRun()
     // A different clip shares nothing with the last one's skeleton, corrections
     // included — those are statements about a body in a particular video.
     poseMeasuredRef.current = []
@@ -301,6 +326,12 @@ export default function VideoAnalysis() {
   const placeSeed = (point: { x: number; y: number }) => {
     const video = videoRef.current
     if (!video) return
+    // The click starts a tracking run, and before the analyser has compiled
+    // that run plays the clip with nothing consuming its frames.
+    if (cvStatus !== 'ready') {
+      toast.info('The analyser is still loading — click the bar again in a moment.')
+      return
+    }
     const next: SeedPoint = {
       x: point.x,
       y: point.y,
@@ -393,6 +424,21 @@ export default function VideoAnalysis() {
     [trackedReps, excludedReps],
   )
 
+  /**
+   * What the set was, as it would be saved right now. Compared against what
+   * WAS saved, so a change after pressing Save is noticed rather than lost —
+   * the fields stay editable, and a load typed after saving used to go nowhere
+   * while the page still said "Saved."
+   */
+  const contextNow = () =>
+    JSON.stringify({
+      athleteId,
+      lift: reps.length > 0 ? setContext.lift : null,
+      loadKg,
+      calledRpe: setContext.calledRpe,
+      metric: reps.length > 0 ? metric : null,
+    })
+
   const toggleRep = (index: number) =>
     setExcludedReps((prev) => {
       const next = new Set(prev)
@@ -459,7 +505,9 @@ export default function VideoAnalysis() {
     const video = videoRef.current
     if (!video) return
 
-    abortRef.current?.abort()
+    abandonRun()
+    const gen = runGenRef.current
+    const stale = () => gen !== runGenRef.current
     const controller = new AbortController()
     abortRef.current = controller
 
@@ -504,8 +552,13 @@ export default function VideoAnalysis() {
           mode: 'VIDEO',
         })
       } catch {
-        toast.error('Could not start pose estimation — tracking the bar path only.')
+        if (!stale()) toast.error('Could not start pose estimation — tracking the bar path only.')
       }
+    }
+    // Loading the model can take long enough for the coach to have moved on.
+    if (stale()) {
+      poseStream?.close()
+      return
     }
 
     try {
@@ -558,6 +611,12 @@ export default function VideoAnalysis() {
         },
       )
 
+      // The coach left this clip mid-run: nothing below belongs on screen now.
+      if (stale()) {
+        streamRef.current?.cancel()
+        return
+      }
+
       if (!streamRef.current) {
         toast.error('No frames could be read from that range.')
         setPhase('idle')
@@ -567,10 +626,24 @@ export default function VideoAnalysis() {
       // Note: an aborted run is NOT discarded. Capture stops early but the
       // frames already tracked are perfectly good, so stopping is "I have seen
       // enough reps" rather than "throw it away" — which matters on a long clip
-      // where the coach only cares about the first set.
+      // where the coach only cares about the first set. Leaving the clip is
+      // different, and is caught by `stale` above and below.
       const result = await streamRef.current.finish()
+      if (stale()) return
 
       const q = result.quality
+      // Too few corners under the circle to follow. The track is lost on its
+      // first frame, so capture stops almost at once — and this used to be
+      // reported as "not enough frames, widen the range", which sends the coach
+      // to fix the wrong thing.
+      if (q.seededPoints < MIN_SEED_POINTS) {
+        toast.error(
+          'There is nothing to follow at that spot. Click the middle of a plate, where the edge and lettering give the tracker detail, or enlarge the circle with +.',
+        )
+        setSamples(null)
+        setPhase('idle')
+        return
+      }
       if (handle.framesRead < 5) {
         toast.error('Not enough frames in that range — widen it and try again.')
         setSamples(null)
@@ -597,10 +670,11 @@ export default function VideoAnalysis() {
       setOfferSave(true)
       video.currentTime = from
     } catch (err) {
+      streamRef.current?.cancel()
+      if (stale()) return
       if (!controller.signal.aborted) {
         toast.error(err instanceof Error ? err.message : 'Tracking failed')
       }
-      streamRef.current?.cancel()
       setSamples(null)
       setPhase('idle')
     } finally {
@@ -651,6 +725,7 @@ export default function VideoAnalysis() {
       if (!res.ok) throw new Error('Save failed')
       const saved = (await res.json()) as { id: string }
       setSavedId(saved.id)
+      setSavedContext(contextNow())
       setOfferSave(false)
       setSavedCount((n) => n + 1)
       toast.success('Analysis saved')
@@ -726,8 +801,32 @@ export default function VideoAnalysis() {
     }
   }
 
+  /** Writes a post-save change to the lift, load, RPE or athlete onto the saved set. */
+  const updateSavedContext = async () => {
+    if (!savedId) return
+    setUpdatingSaved(true)
+    try {
+      const res = await fetch(`/api/analysis/${savedId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: contextNow(),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? `the server said ${res.status}`)
+      }
+      setSavedContext(contextNow())
+      setSavedCount((n) => n + 1)
+      toast.success('Saved set updated')
+    } catch (err) {
+      toast.error(`Could not update the saved set — ${err instanceof Error ? err.message : 'unknown error'}.`)
+    } finally {
+      setUpdatingSaved(false)
+    }
+  }
+
   const reset = () => {
-    abortRef.current?.abort()
+    abandonRun()
     livePathRef.current = []
     // Clear is "start this clip over", so the corrections go too.
     poseMeasuredRef.current = []
@@ -765,6 +864,32 @@ export default function VideoAnalysis() {
   // picking a video did.
   // ------------------------------------------------------------------
   const busy = phase === 'capturing' || phase === 'tracking'
+  // redrawPose reads this from a ref rather than a dep, so it stays a stable
+  // callback across the thirty-a-second calls it takes during tracking.
+  const busyRef = useRef(busy)
+  busyRef.current = busy
+
+  /**
+   * Jitter-filtered copy of a finished track, memoised on the source array.
+   *
+   * `smooth` costs 19 ms for a 300-frame track and 55 ms for 900 — measured —
+   * so running it per redraw would eat most of a core at thirty redraws a
+   * second, which is exactly the rebuild the note on redrawPose warns about.
+   * The source array is replaced wholesale rather than mutated, so identity is a
+   * sound cache key.
+   *
+   * Skipped while frames are still arriving, and not only to save the work: a
+   * median window needs neighbours on BOTH sides, so the newest frame — the one
+   * being drawn during live tracking — is the one it can do least for.
+   */
+  const poseSmoothCache = useRef<{ source: PoseFrame[]; result: PoseFrame[] } | null>(null)
+  const smoothedPose = (measured: PoseFrame[]): PoseFrame[] => {
+    if (busyRef.current || measured.length < 3) return measured
+    if (poseSmoothCache.current?.source === measured) return poseSmoothCache.current.result
+    const result = smooth(measured)
+    poseSmoothCache.current = { source: measured, result }
+    return result
+  }
 
   /**
    * Re-layers the corrections over the measurement.
@@ -773,13 +898,20 @@ export default function VideoAnalysis() {
    * the same array straight back when there is nothing to apply, so the common
    * case — no corrections at all — costs one comparison rather than rebuilding
    * three hundred frames thirty times a second.
+   *
+   * Smoothing happens HERE rather than before saving, because the stored track
+   * is the measurement and a median filter is a reconstruction — the same reason
+   * the corrected copy is never what gets stored. Corrections are applied AFTER
+   * the filter so a joint the coach placed by hand wins outright instead of
+   * being median-ed back toward where the model had it.
    */
   const redrawPose = useCallback(() => {
-    const measured = poseMeasuredRef.current
+    const measured = smoothedPose(poseMeasuredRef.current)
     const timed = poseCorrectionsRef.current
     poseRef.current = timed.length
       ? applyCorrections(measured, correctionsAtTimes(measured, timed))
       : measured
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   /** Records a joint the coach has moved, against the moment it belongs to. */
@@ -1307,11 +1439,20 @@ export default function VideoAnalysis() {
               </div>
             )}
 
-            {savedId && (
-              <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Check className="h-4 w-4 text-emerald-500" /> Saved.
-              </p>
-            )}
+            {savedId &&
+              (savedContext !== null && savedContext !== contextNow() ? (
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-2 text-sm">
+                  <span>The lift, load, RPE or athlete changed since you saved.</span>
+                  <Button size="sm" variant="outline" onClick={updateSavedContext} disabled={updatingSaved}>
+                    {updatingSaved ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Update saved set
+                  </Button>
+                </div>
+              ) : (
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Check className="h-4 w-4 text-emerald-500" /> Saved.
+                </p>
+              ))}
 
             {samples && trackedReps.length > 0 && (
               <div className="space-y-2">

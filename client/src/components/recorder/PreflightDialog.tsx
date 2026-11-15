@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, CameraOff, Mic, MicOff, Monitor, Volume2, VolumeX } from 'lucide-react'
 import { Button } from '../ui/button'
 import type { RecorderOptions } from './useRecorderEngine'
+import { errorMessage, getList } from '../../lib/api'
 
 // ---------------------------------------------------------------------------
 // The "check yourself before you go live" step, in the shape people already
@@ -18,6 +19,8 @@ export interface CaptureSource {
   name: string
   kind: 'screen' | 'window' | 'self'
   thumbnailDataUrl: string | null
+  /** Minimised: Windows cannot show or record it until it is opened, which starting the recording does. */
+  minimized?: boolean
 }
 
 interface Props {
@@ -27,6 +30,7 @@ interface Props {
 
 export default function PreflightDialog({ onStart, onCancel }: Props) {
   const [sources, setSources] = useState<CaptureSource[] | null>(null)
+  const [sourcesError, setSourcesError] = useState<string | null>(null)
   const [sourceId, setSourceId] = useState<string | null>(null)
   const [camera, setCamera] = useState(true)
   const [microphone, setMicrophone] = useState(true)
@@ -41,14 +45,18 @@ export default function PreflightDialog({ onStart, onCancel }: Props) {
   const rafRef = useRef<number | null>(null)
 
   useEffect(() => {
-    fetch('/api/recorder/sources')
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Could not list sources'))))
-      .then((list: CaptureSource[]) => {
+    getList<CaptureSource>('/api/recorder/sources')
+      .then((list) => {
         setSources(list)
         // CoachBoard is first and is the common case, so it is preselected.
         setSourceId(list[0]?.id ?? null)
       })
-      .catch(() => setSources([]))
+      // A failure used to read as "only available in the desktop app", inside
+      // the desktop app.
+      .catch((err) => {
+        setSources([])
+        setSourcesError(`Could not list the windows to record. ${errorMessage(err)}`)
+      })
   }, [])
 
   const stopPreview = useCallback(() => {
@@ -159,7 +167,7 @@ export default function PreflightDialog({ onStart, onCancel }: Props) {
           <p className="mt-2 text-sm text-muted-foreground">Looking for windows…</p>
         ) : sources.length === 0 ? (
           <p className="mt-2 text-sm text-destructive">
-            Screen recording is only available in the desktop app.
+            {sourcesError ?? 'Screen recording is only available in the desktop app.'}
           </p>
         ) : (
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -184,15 +192,20 @@ export default function PreflightDialog({ onStart, onCancel }: Props) {
                     className="mb-2 aspect-video w-full rounded bg-black object-contain"
                   />
                 ) : (
-                  <div className="mb-2 flex aspect-video w-full items-center justify-center rounded bg-muted">
+                  <div className="mb-2 flex aspect-video w-full flex-col items-center justify-center gap-1 rounded bg-muted px-2 text-center">
                     <Monitor className="h-6 w-6 text-muted-foreground" />
+                    {source.minimized && (
+                      <span className="text-[10px] leading-tight text-muted-foreground">
+                        Minimized — opens when you start recording
+                      </span>
+                    )}
                   </div>
                 )}
                 <div className="truncate text-xs" title={source.name}>
                   {source.name}
                 </div>
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {source.kind === 'self' ? 'this app' : source.kind}
+                  {source.kind === 'self' ? 'this app' : source.minimized ? 'window · minimized' : source.kind}
                 </div>
               </button>
             ))}

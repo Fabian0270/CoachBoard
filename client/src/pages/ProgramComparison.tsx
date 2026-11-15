@@ -1,12 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { getList, errorMessage } from '../lib/api'
+import LoadError from '../components/LoadError'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus, Star } from 'lucide-react'
+import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus, Star, Search } from 'lucide-react'
+import { Input } from '../components/ui/input'
+import { matchesSearch } from '../lib/search'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
@@ -14,7 +18,7 @@ import BookmarkStar from '../components/BookmarkStar'
 import { cn } from '../lib/utils'
 
 interface Athlete { id: string; name: string }
-interface Program { id: string; name: string; status: string; athlete_id: string | null; start_date: string | null; bookmarked?: number }
+interface Program { id: string; name: string; status: string; athlete_id: string | null; start_date: string | null; focus?: string | null; bookmarked?: number }
 
 const STATUSES = ['active', 'completed', 'archived'] as const
 // Sentinel for the athlete filter's "unassigned" option (Select values must be strings).
@@ -30,6 +34,7 @@ export default function ProgramComparison() {
   const [selectedAthlete, setSelectedAthlete] = useState<string>('all')
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
   const [bookmarkedOnly, setBookmarkedOnly] = useState(false)
+  const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -38,23 +43,31 @@ export default function ProgramComparison() {
   const [suggestOpen, setSuggestOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   // The unassigned program being reassigned to an athlete, and the picked target.
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [assigning, setAssigning] = useState<Program | null>(null)
   const [assignTo, setAssignTo] = useState<string>('')
   const [savingAssign, setSavingAssign] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const newMenuRef = useRef<HTMLDivElement>(null)
 
-  const loadData = () => {
-    Promise.all([
-      fetch('/api/athletes').then((r) => r.json()).catch(() => []),
-      fetch('/api/programs').then((r) => r.json()).catch(() => []),
-    ]).then(([fetchedAthletes, fetchedPrograms]) => {
-      setAthletes(Array.isArray(fetchedAthletes) ? fetchedAthletes : [])
-      setPrograms(Array.isArray(fetchedPrograms) ? fetchedPrograms : [])
-    }).catch(() => {})
-  }
+  const loadData = useCallback(async () => {
+    setLoadError(null)
+    try {
+      const [fetchedAthletes, fetchedPrograms] = await Promise.all([
+        getList<Athlete>('/api/athletes'),
+        getList<Program>('/api/programs'),
+      ])
+      setAthletes(fetchedAthletes)
+      setPrograms(fetchedPrograms)
+    } catch (err) {
+      // Otherwise a failed load renders "No programs yet — create a training
+      // program for an athlete" to a coach whose library is the whole reason
+      // they bought this.
+      setLoadError(errorMessage(err))
+    }
+  }, [])
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => { void loadData() }, [loadData])
 
   // Deep link from onboarding: /programs?import=1 opens the bulk-import dialog
   // straight away, then drops the param so a refresh doesn't reopen it.
@@ -178,6 +191,10 @@ export default function ProgramComparison() {
     }
   }
 
+  const athleteMap = Object.fromEntries(athletes.map((athlete) => [athlete.id, athlete.name]))
+  // Resolve a program's owner label: its athlete, "Unassigned" when detached, or
+  // "Unknown" if the id no longer resolves (shouldn't happen in normal use).
+  const ownerLabel = (p: Program) => (p.athlete_id === null ? 'Unassigned' : athleteMap[p.athlete_id] ?? 'Unknown')
   const filtered = programs
     .filter((p) =>
       selectedAthlete === 'all'
@@ -188,11 +205,11 @@ export default function ProgramComparison() {
     )
     .filter((p) => selectedStatus === 'all' || p.status === selectedStatus)
     .filter((p) => !bookmarkedOnly || p.bookmarked === 1)
-  const athleteMap = Object.fromEntries(athletes.map((athlete) => [athlete.id, athlete.name]))
+    .filter((p) => matchesSearch(query, [p.name, ownerLabel(p), p.focus]))
   const hasUnassigned = programs.some((p) => p.athlete_id === null)
-  // Resolve a program's owner label: its athlete, "Unassigned" when detached, or
-  // "Unknown" if the id no longer resolves (shouldn't happen in normal use).
-  const ownerLabel = (p: Program) => (p.athlete_id === null ? 'Unassigned' : athleteMap[p.athlete_id] ?? 'Unknown')
+  // Programs exist but the search or filters hide them all. Saying "No programs
+  // yet — create one" then would read as the programs being gone.
+  const filteredOut = programs.length > 0 && filtered.length === 0
 
   return (
     <div className="space-y-6">
@@ -226,6 +243,17 @@ export default function ProgramComparison() {
         </div>
       </div>
       <div className="flex gap-3 flex-wrap">
+        <div className="relative w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search programs or athletes"
+            aria-label="Search programs"
+            className="pl-8"
+          />
+        </div>
         {(athletes.length > 0 || hasUnassigned) && (
           <Select value={selectedAthlete} onValueChange={setSelectedAthlete}>
             <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
@@ -255,7 +283,13 @@ export default function ProgramComparison() {
           Bookmarked
         </Button>
       </div>
-      {filtered.length === 0 ? (
+      {loadError ? (
+        <LoadError what="your programs" message={loadError} onRetry={() => void loadData()} />
+      ) : filteredOut ? (
+        <p className="text-sm text-muted-foreground">
+          No programs match {query.trim() ? `“${query.trim()}” and ` : ''}the filters above.
+        </p>
+      ) : filtered.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <Dumbbell className="h-12 w-12 text-muted-foreground mb-4" />

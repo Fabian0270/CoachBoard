@@ -19,6 +19,10 @@ import {
   stickingPoint,
   insertFrame,
   correctionsAtTimes,
+  FLOATS_PER_LANDMARK,
+  PoseWireError,
+  decodePoseTrack,
+  encodePoseTrack,
   type AngleVsBar,
   type Landmark,
   type PoseFrame,
@@ -236,6 +240,48 @@ describe('frameAngles', () => {
   })
 
   /**
+   * Torso lean is the one reading that depends on which way y points.
+   *
+   * A joint angle sits between two segments, so flipping the y axis leaves it
+   * unchanged — which is why every other angle here is safe either way, and why
+   * the front-on test below passes whatever convention its fixture uses. Torso
+   * lean is measured against a FIXED axis, so a flip turns θ into 180 − θ: an
+   * upright lifter would read 90+ instead of 0, silently and on every clip.
+   *
+   * MediaPipe's world landmarks keep the image convention (y down, metres from
+   * the hip midpoint). Every torso-lean test used to run on the pixel fallback,
+   * so nothing pinned that — and the comment in the source asserted the
+   * opposite. This is the test that would have caught it.
+   */
+  it('reads torso lean the same from world landmarks as from pixels', () => {
+    const upright = {
+      t: 0,
+      landmarks: frame(0, {
+        [LM.LEFT_SHOULDER]: at(100, 100),
+        [LM.LEFT_HIP]: at(100, 200),
+      }).landmarks,
+      // Metres, hip-centred, y DOWN: the shoulder is above the hip, so its y is
+      // the more negative of the two.
+      world: frame(0, {
+        [LM.LEFT_SHOULDER]: { x: 0, y: -0.5, z: 0, visibility: 1 },
+        [LM.LEFT_HIP]: { x: 0, y: 0, z: 0, visibility: 1 },
+      }).landmarks,
+    }
+    expect(frameAngles([upright], 'left')[0].torsoLean).toBeCloseTo(0, 4)
+
+    // ...and a torso folded 45 degrees forward reads 45, not 135.
+    const folded = {
+      t: 0,
+      landmarks: upright.landmarks,
+      world: frame(0, {
+        [LM.LEFT_SHOULDER]: { x: -0.5, y: -0.5, z: 0, visibility: 1 },
+        [LM.LEFT_HIP]: { x: 0, y: 0, z: 0, visibility: 1 },
+      }).landmarks,
+    }
+    expect(frameAngles([folded], 'left')[0].torsoLean).toBeCloseTo(45, 4)
+  })
+
+  /**
    * The one the first real clip caught.
    *
    * A squat filmed FROM THE FRONT bends the knee almost straight toward the
@@ -294,11 +340,16 @@ describe('frameAngles', () => {
 })
 
 describe('smooth', () => {
+  // Frames 1/30 s apart, as a real track is. smooth() only lets neighbours
+  // within SMOOTH_MAX_GAP_S vote, so spacing them a second apart would test
+  // a sparse preview instead — which has its own case at the end.
+  const dense = (i: number, put: Record<number, Landmark>) => frame(i / 30, put)
+
   it('removes a single-frame snap without moving the good frames', () => {
     // Four frames at x=100 and one that jumped to 900 — the failure mode pose
     // actually has. A mean would drag the whole window; a median ignores it.
     const frames = [100, 100, 900, 100, 100].map((x, i) =>
-      frame(i, { [LM.LEFT_KNEE]: at(x, 300) }),
+      dense(i, { [LM.LEFT_KNEE]: at(x, 300) }),
     )
     const out = smooth(frames, 5)
     expect(out[2].landmarks[LM.LEFT_KNEE].x).toBeCloseTo(100, 6)
@@ -308,36 +359,106 @@ describe('smooth', () => {
     // The invisible frames sit at 900. They must not get a vote, or a joint the
     // model was guessing at drags the frames where it was sure.
     const frames = [
-      frame(0, { [LM.LEFT_KNEE]: at(900, 0, 0.1) }),
-      frame(1, { [LM.LEFT_KNEE]: at(100, 0, 0.9) }),
-      frame(2, { [LM.LEFT_KNEE]: at(900, 0, 0.1) }),
+      dense(0, { [LM.LEFT_KNEE]: at(900, 0, 0.1) }),
+      dense(1, { [LM.LEFT_KNEE]: at(100, 0, 0.9) }),
+      dense(2, { [LM.LEFT_KNEE]: at(900, 0, 0.1) }),
     ]
     expect(smooth(frames, 3)[1].landmarks[LM.LEFT_KNEE].x).toBeCloseTo(100, 6)
   })
 
   it('never invents confidence the model did not report', () => {
-    const frames = [0, 1, 2].map((i) => frame(i, { [LM.LEFT_KNEE]: at(100, 0, 0.42) }))
+    const frames = [0, 1, 2].map((i) => dense(i, { [LM.LEFT_KNEE]: at(100, 0, 0.42) }))
     expect(smooth(frames, 3)[1].landmarks[LM.LEFT_KNEE].visibility).toBeCloseTo(0.42, 6)
   })
 
   it('leaves a landmark alone when nothing in the window was visible', () => {
-    const frames = [0, 1, 2].map((i) => frame(i, { [LM.LEFT_KNEE]: at(55, 66, 0.1) }))
+    const frames = [0, 1, 2].map((i) => dense(i, { [LM.LEFT_KNEE]: at(55, 66, 0.1) }))
     const l = smooth(frames, 3)[1].landmarks[LM.LEFT_KNEE]
     expect(l.x).toBeCloseTo(55, 6)
     expect(l.y).toBeCloseTo(66, 6)
   })
 
   it('is a no-op for a window of one', () => {
-    const frames = [frame(0, { [LM.LEFT_KNEE]: at(1, 2) })]
+    const frames = [dense(0, { [LM.LEFT_KNEE]: at(1, 2) })]
     expect(smooth(frames, 1)).toBe(frames)
   })
 
   it('widens an even window so there is a true middle', () => {
     // Window 4 becomes 5, so the single 900 is outvoted 4-1 rather than 2-2.
     const frames = [100, 100, 900, 100, 100].map((x, i) =>
-      frame(i, { [LM.LEFT_KNEE]: at(x, 0) }),
+      dense(i, { [LM.LEFT_KNEE]: at(x, 0) }),
     )
     expect(smooth(frames, 4)[2].landmarks[LM.LEFT_KNEE].x).toBeCloseTo(100, 6)
+  })
+
+  /**
+   * The world set has to survive the filter.
+   *
+   * It used to be dropped, which looked harmless — the skeleton still drew —
+   * but frameAngles measures from `world` when it is there and silently falls
+   * back to image space when it is not. That basis is the one the header calls
+   * confidently wrong on front-on footage, where a deep squat reads as nearly
+   * straight legs. So smoothing a track would have quietly corrupted every
+   * joint angle while visibly improving the drawing, which is why nothing could
+   * safely call this until now.
+   */
+  const withWorld = (i: number, imgX: number, worldX: number, visibility = 1) => {
+    const f = dense(i, { [LM.LEFT_KNEE]: at(imgX, 300, visibility) })
+    const world = Array.from({ length: LANDMARK_COUNT }, () => ({ x: 0, y: 0, z: 0, visibility: 1 }))
+    world[LM.LEFT_KNEE] = { x: worldX, y: -0.4, z: 0.1, visibility: 1 }
+    return { ...f, world }
+  }
+
+  it('carries the world landmarks through, so angles keep their metric basis', () => {
+    const out = smooth([0, 1, 2].map((i) => withWorld(i, 100, 0.3)), 3)
+    expect(out[1].world).toBeDefined()
+    expect(out[1].world![LM.LEFT_KNEE].x).toBeCloseTo(0.3, 6)
+    expect(out[1].world![LM.LEFT_KNEE].z).toBeCloseTo(0.1, 6)
+    // metric stays true, which is what the chart reads to decide whether it may
+    // trust the angle it is drawing.
+    expect(frameAngles(out, 'left')[1].metric).toBe(true)
+  })
+
+  it('filters a snap out of the world set too, not just the pixels', () => {
+    const frames = [
+      withWorld(0, 100, 0.3),
+      withWorld(1, 100, 9.9),
+      withWorld(2, 100, 0.3),
+    ]
+    expect(smooth(frames, 3)[1].world![LM.LEFT_KNEE].x).toBeCloseTo(0.3, 6)
+  })
+
+  it('judges world-set occlusion on what the camera saw', () => {
+    // Visibility lives only on the image landmarks, so the world vote has to be
+    // gated on those — the same rule frameAngles follows.
+    const frames = [
+      withWorld(0, 900, 9.9, 0.1),
+      withWorld(1, 100, 0.3, 0.9),
+      withWorld(2, 900, 9.9, 0.1),
+    ]
+    expect(smooth(frames, 3)[1].world![LM.LEFT_KNEE].x).toBeCloseTo(0.3, 6)
+  })
+
+  it('leaves a frame without a world set without one', () => {
+    // A partial world set is worse than none — packPose refuses to store one —
+    // so the filter must not conjure a world set for a frame that had none.
+    const frames = [0, 1, 2].map((i) => dense(i, { [LM.LEFT_KNEE]: at(100, 300) }))
+    expect(smooth(frames, 3)[1].world).toBeUndefined()
+  })
+
+  it('does not vote across a sparse preview, where neighbours are other moments', () => {
+    // Five frames a coach scrubbed to across one squat. Reproduced in the audit:
+    // the window spanned the whole rep and every frame was drawn at 1150, so the
+    // bottom of the lift showed 250 px too high.
+    const hips = [900, 1150, 1400, 1150, 900]
+    const times = [0.5, 1.6, 2.4, 3.5, 4.8]
+    const frames = hips.map((y, i) => frame(times[i], { [LM.LEFT_HIP]: at(500, y) }))
+    expect(smooth(frames).map((f) => f.landmarks[LM.LEFT_HIP].y)).toEqual(hips)
+  })
+
+  it('still smooths a track thinned to 10 fps, as tracking under load produces', () => {
+    const frames = [100, 100, 900, 100, 100].map((x, i) => frame(i / 10, { [LM.LEFT_KNEE]: at(x, 0) }))
+    expect(smooth(frames, 5)[2].landmarks[LM.LEFT_KNEE].x).toBeCloseTo(100, 6)
   })
 })
 
@@ -652,5 +773,54 @@ describe('POSE_BONES', () => {
       ([a, b]) => a === LM.LEFT_FOOT_INDEX || b === LM.LEFT_FOOT_INDEX,
     )
     expect(hasFoot).toBe(true)
+  })
+})
+
+describe('pose track wire format', () => {
+  const track = (frames: number, withWorld: boolean) => {
+    const floats = frames * 33 * FLOATS_PER_LANDMARK
+    return {
+      frameCount: frames,
+      landmarkCount: 33,
+      keypoints: Float32Array.from({ length: floats }, (_, i) => i * 0.5),
+      world: withWorld ? Float32Array.from({ length: floats }, (_, i) => -i / 7) : null,
+      times: Float64Array.from({ length: frames }, (_, i) => i / 59.94),
+    }
+  }
+  const limits = { maxFrames: 36_000, maxLandmarks: 64 }
+
+  it('round-trips every array exactly, with and without world landmarks', () => {
+    for (const withWorld of [true, false]) {
+      const original = track(12, withWorld)
+      const { packed, meta } = decodePoseTrack(encodePoseTrack(original, { model: 'm1' }), limits)
+      expect(packed).toEqual(original)
+      expect(meta).toEqual({ model: 'm1' })
+    }
+  })
+
+  it('keeps timestamps at double precision', () => {
+    const original = track(3, false)
+    original.times[2] = 1 / 3
+    expect(decodePoseTrack(encodePoseTrack(original), limits).packed.times[2]).toBe(1 / 3)
+  })
+
+  it('reads bytes that sit at an odd offset inside a larger buffer', () => {
+    // A Node Buffer from a request body lives inside a shared pool at an
+    // arbitrary offset; reading through its .buffer misaligned every array.
+    // A Buffer specifically: its slice() is a view, not a copy.
+    const bytes = encodePoseTrack(track(5, true))
+    const host = Buffer.alloc(bytes.length + 3)
+    host.set(bytes, 3)
+    expect(decodePoseTrack(host.subarray(3), limits).packed).toEqual(track(5, true))
+  })
+
+  it('refuses anything that does not match its own header', () => {
+    const bytes = encodePoseTrack(track(5, true))
+    expect(() => decodePoseTrack(bytes.subarray(0, bytes.length - 1), limits)).toThrow(PoseWireError)
+    expect(() => decodePoseTrack(new Uint8Array(10), limits)).toThrow(PoseWireError)
+    const wrongMagic = bytes.slice()
+    wrongMagic[0] = 0
+    expect(() => decodePoseTrack(wrongMagic, limits)).toThrow(/Not pose data/)
+    expect(() => decodePoseTrack(bytes, { maxFrames: 4, maxLandmarks: 64 })).toThrow(/Frame count/)
   })
 })

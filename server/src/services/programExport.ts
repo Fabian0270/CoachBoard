@@ -1,6 +1,8 @@
 import { findProgramForExport } from './programService.js'
 import { renderProgramWorkbook } from './exportService.js'
-import { renderScaffold } from './templateScaffoldService.js'
+import { renderScaffold, ScaffoldDoesNotFitError } from './templateScaffoldService.js'
+import { logError } from '../lib/logger.js'
+import { loadTemplate } from './templateBlobStore.js'
 import { latestE1RMByLift } from './analysisService.js'
 import { MINIMAL_DESCRIPTOR } from 'coachboard-shared/exportLayout'
 
@@ -24,6 +26,12 @@ export interface BuiltWorkbook {
   safeName: string
   /** The program's display name, for email subjects/bodies. */
   programName: string
+  /**
+   * Set when the coach's imported style could not be used for this export and
+   * the built-in look was used instead — said in the preview, so the switch is
+   * never a surprise when the athlete opens the file.
+   */
+  notice: string | null
 }
 
 /**
@@ -44,20 +52,36 @@ export async function buildProgramWorkbook(programId: string): Promise<BuiltWork
   }
 
   let buffer: Buffer | null = null
-  if (program.export_template_xlsx) {
+  let notice: string | null = null
+  const templateXlsx = await loadTemplate(program.export_template_sha)
+  if (program.export_template_sha && !templateXlsx) {
+    // A key with nothing behind it. Should not happen — the import stores both
+    // in one transaction — but if it does the coach is told, not handed a
+    // different look without a word.
+    notice = "Your imported Excel style could not be found, so CoachBoard's own layout was used."
+    logError(`Program ${programId} points at a missing Excel template`, `no stored workbook for ${program.export_template_sha}`)
+  }
+  if (templateXlsx) {
     try {
-      buffer = await renderScaffold(program.export_template_xlsx, program, workouts, exercises)
+      buffer = await renderScaffold(templateXlsx, program, workouts, exercises)
+      // Null means the template's layout is one the styled export cannot
+      // reproduce. Same outcome as a failure, and it was just as silent.
+      if (!buffer) {
+        notice = "Your imported Excel style's layout can't be reproduced for this program, so CoachBoard's own layout is used."
+      }
     } catch (err) {
-      // Any scaffold failure → fall back to the generic renderer below. This used
-      // to be swallowed silently, which let a broken styled export (lost form
-      // link, merges, per-movement layout) masquerade as a normal one. Surface it
-      // so the degradation is visible in the logs instead of going unnoticed.
+      // Any scaffold failure → fall back to the generic renderer below, which
+      // always carries every exercise. A program that simply outgrew its
+      // template is an expected case with its own explanation; anything else is
+      // a fault, and goes to the real log file — this used console.error, which
+      // a packaged app writes nowhere a coach or a bug report can reach.
       buffer = null
-      console.error(
-        `[programExport] scaffold render failed for program ${programId} ("${program.name ?? ''}"); ` +
-          `falling back to the generic renderer. Reason:`,
-        err instanceof Error ? err.message : err,
-      )
+      if (err instanceof ScaffoldDoesNotFitError) {
+        notice = err.message
+      } else {
+        notice = "Your imported Excel style could not be used for this export, so CoachBoard's own layout was used."
+        logError(`Styled export failed for program ${programId} ("${program.name ?? ''}")`, err)
+      }
     }
   }
   if (!buffer) {
@@ -77,5 +101,5 @@ export async function buildProgramWorkbook(programId: string): Promise<BuiltWork
   const programName = program.name || 'program'
   const safeName =
     programName.replace(/[^\w\s-]/g, '_').replace(/\s+/g, '_').slice(0, 60) || 'program'
-  return { buffer, safeName, programName }
+  return { buffer, safeName, programName, notice }
 }

@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, FileVideo, LineChart, PersonStanding } from 'lucide-react'
+import { ArrowLeft, FileVideo, LineChart, Pencil, PersonStanding } from 'lucide-react'
+import { RPE_VALUES } from 'coachboard-shared/rpe'
+import { num } from '../lib/num'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
 import { pixelsPerMetreFromPlate } from 'coachboard-shared/videoAnalysis'
 import {
+  VBT_LIFTS,
   defaultVelocityMetric,
   e1RMFromVelocity,
   isVbtLift,
@@ -186,6 +189,36 @@ export default function SavedAnalysis() {
       : velocities.map((v) => ({ t: v.t, vy: v.vy }))
     return anglesAgainstBar(frameAngles(pose.frames), inUnits)
   }, [analysis, pose])
+
+  /**
+   * Correcting what the set was — lift, load, called RPE — after it was saved.
+   * The path and per-rep metrics stay as tracked; only the context changes.
+   */
+  const [editing, setEditing] = useState(false)
+  const [savingContext, setSavingContext] = useState(false)
+  const startEditing = () => setEditing(true)
+  const saveContext = async (change: { lift: string | null; loadKg: number | null; calledRpe: number | null }) => {
+    if (!analysis) return
+    setSavingContext(true)
+    try {
+      const res = await fetch(`/api/analysis/${analysis.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        // A changed lift resets the metric to that lift's default, the same
+        // rule the live panel follows.
+        body: JSON.stringify({ ...change, ...(change.lift !== analysis.lift ? { metric: null } : {}) }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error ?? `the server said ${res.status}`)
+      setAnalysis(body as VideoAnalysisDto)
+      setEditing(false)
+      toast.success('Set updated')
+    } catch (err) {
+      toast.error(`Could not update the set — ${err instanceof Error ? err.message : 'unknown error'}.`)
+    } finally {
+      setSavingContext(false)
+    }
+  }
 
   if (missing) {
     return (
@@ -385,13 +418,31 @@ export default function SavedAnalysis() {
         </div>
 
         <div className="space-y-1 text-sm">
-          <h2 className="mb-2 text-sm font-medium">Velocity-based readouts</h2>
-          <Row label="Lift" value={isVbtLift(analysis.lift) ? liftLabel(lift) : 'not recorded'} />
-          <Row
-            label="Load"
-            value={analysis.loadKg != null ? `${analysis.loadKg} kg` : 'not recorded'}
-          />
-          <Row label="RPE called" value={analysis.calledRpe != null ? `${analysis.calledRpe}` : '—'} />
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-medium">Velocity-based readouts</h2>
+            {!editing && (
+              <Button size="sm" variant="ghost" onClick={startEditing}>
+                <Pencil className="h-3.5 w-3.5" /> Edit set
+              </Button>
+            )}
+          </div>
+          {editing ? (
+            <SetContextEditor
+              initial={{ lift: analysis.lift, loadKg: analysis.loadKg, calledRpe: analysis.calledRpe }}
+              saving={savingContext}
+              onCancel={() => setEditing(false)}
+              onSave={saveContext}
+            />
+          ) : (
+            <>
+              <Row label="Lift" value={isVbtLift(analysis.lift) ? liftLabel(lift) : 'not recorded'} />
+              <Row
+                label="Load"
+                value={analysis.loadKg != null ? `${analysis.loadKg} kg` : 'not recorded'}
+              />
+              <Row label="RPE called" value={analysis.calledRpe != null ? `${analysis.calledRpe}` : '—'} />
+            </>
+          )}
           <Row
             label="Last rep"
             value={lastV != null ? `${lastV.toFixed(2)} m/s` : 'no scale was set'}
@@ -411,6 +462,67 @@ export default function SavedAnalysis() {
             the athlete&rsquo;s own sets; this view shows what was measured.
           </p>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function SetContextEditor({
+  initial,
+  saving,
+  onCancel,
+  onSave,
+}: {
+  initial: { lift: string | null; loadKg: number | null; calledRpe: number | null }
+  saving: boolean
+  onCancel: () => void
+  onSave: (change: { lift: string | null; loadKg: number | null; calledRpe: number | null }) => void
+}) {
+  const [lift, setLift] = useState(initial.lift ?? '')
+  const [loadText, setLoadText] = useState(initial.loadKg != null ? String(initial.loadKg) : '')
+  const [rpe, setRpe] = useState(initial.calledRpe != null ? String(initial.calledRpe) : '')
+  const parsedLoad = loadText.trim() ? num(loadText) : null
+  const loadValid = parsedLoad === null || (Number.isFinite(parsedLoad) && parsedLoad > 0 && parsedLoad <= 1000)
+
+  return (
+    <div className="space-y-2">
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground">Lift</span>
+        <select value={lift} onChange={(e) => setLift(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-sm">
+          <option value="">not recorded</option>
+          {VBT_LIFTS.map((l) => (
+            <option key={l.id} value={l.id}>{l.label}</option>
+          ))}
+        </select>
+      </label>
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground">Load (kg)</span>
+        <input
+          value={loadText}
+          onChange={(e) => setLoadText(e.target.value)}
+          inputMode="decimal"
+          className="w-24 rounded-md border bg-background px-2 py-1 text-right text-sm"
+        />
+      </label>
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground">RPE called</span>
+        <select value={rpe} onChange={(e) => setRpe(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-sm">
+          <option value="">—</option>
+          {RPE_VALUES.map((r) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+        </select>
+      </label>
+      {!loadValid && <p className="text-xs text-destructive">Load must be a number of kilograms up to 1000.</p>}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+        <Button
+          size="sm"
+          disabled={saving || !loadValid}
+          onClick={() => onSave({ lift: lift || null, loadKg: parsedLoad, calledRpe: rpe ? Number(rpe) : null })}
+        >
+          Save
+        </Button>
       </div>
     </div>
   )

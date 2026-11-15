@@ -5,6 +5,7 @@ import type {
   ExternalParseOverrides,
 } from 'coachboard-shared'
 import { cellToString } from './cellParsing.js'
+import { valueAt } from '../../lib/sheetBounds.js'
 
 // ---------------------------------------------------------------------------
 // Shared parser primitives — the row reader, the internal parse-result shape,
@@ -31,7 +32,8 @@ export const emptyMapping = (): ExternalColumnMapping =>
 export function makeReadRow(ws: ExcelJS.Worksheet, maxCol: number): ReadRow {
   return (r) => {
     const out: string[] = []
-    for (let c = 1; c <= maxCol; c++) out.push(cellToString(ws.getCell(r, c).value))
+    // findCell, not getCell: reading must never create cells. See lib/sheetBounds.ts.
+    for (let c = 1; c <= maxCol; c++) out.push(cellToString(valueAt(ws, r, c)))
     return out
   }
 }

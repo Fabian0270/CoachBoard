@@ -22,7 +22,7 @@ A desktop application for strength coaches to manage athletes, build and analyze
 - **Program bookmarking** — star programs to favorite them for reuse, with a filter to show bookmarked-only.
 - **Calculators** — RPE cheat sheet, 1RM estimates, and warm-up set suggestions.
 - **Payments** — track athlete payments and balances.
-- **Backup & restore** — save a copy of the database from Settings and restore it later; automatic backups are kept alongside it.
+- **Backup & restore** — save a `.zip` backup from Settings and restore it later. It holds your athletes, programs, payments and Excel styles along with your email and Discord settings; saved video clips and synced media are not included, because they run to many gigabytes. Rolling automatic backups of the database are kept alongside it, and older `.sqlite` backups still restore.
 - **Auto-update** (Windows) — new versions download quietly in the background and install on restart or on quit. macOS updates stay off until the app is code-signed.
 - **Dark mode** — Light / Dark / System theme toggle.
 
@@ -44,7 +44,7 @@ Go to the [Releases page](https://github.com/Fabian0270/CoachBoard/releases) and
 
 > Intel Macs aren't supported yet — GitHub's free Intel build runners have been retired, so a native x64 build needs a paid runner or a self-hosted Intel Mac (tracked as a follow-up).
 
-The app stores all data locally in a single folder named `coachboard-electron` inside your user profile — `%APPDATA%\coachboard-electron` on Windows, `~/Library/Application Support/coachboard-electron` on macOS. That folder holds the database, the log, automatic backups, any synced Discord media, and the clips kept with saved analyses and screen recordings. **Settings → Your data** shows the exact path, opens the folder, and lets you save or restore a copy of the database. No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
+The app stores all data locally in a single folder named `coachboard-electron` inside your user profile — `%APPDATA%\coachboard-electron` on Windows, `~/Library/Application Support/coachboard-electron` on macOS. That folder holds the database, the log, automatic backups, any synced Discord media, and the clips kept with saved analyses and screen recordings. **Settings → Your data** shows the exact path, opens the folder, and lets you save or restore a backup. A backup covers the database and your email/Discord settings — the clips and synced media in that folder are not in it, so copy the folder itself if you need those. No account required and it runs fully offline — emailing a program to an athlete and syncing with Discord are the only optional features that use your internet connection.
 
 ---
 
@@ -90,7 +90,7 @@ cd CoachBoard
 npm install
 ```
 
-This also runs `electron-rebuild` automatically (via `postinstall`) to compile the native `better-sqlite3` module for your Electron version.
+Nothing is compiled: `better-sqlite3` ships a prebuilt Node-API binary for each platform that loads under both Electron and plain Node. Electron (45+) downloads its own binary the first time it is run (`npm run dev`), or via `npm exec -w electron -- install-electron`; the package scripts do the latter.
 
 ### 3. Start in development mode
 
@@ -110,14 +110,11 @@ The Electron window connects to the Vite dev server, so React hot-reload works n
 ```bash
 npm run typecheck     # tsc --noEmit across client, server and electron
 npm test              # Vitest suites for client + server
-npm run sqlite:repair # rebuild the native better-sqlite3 binding if it breaks
 ```
 
-`better-sqlite3` is a native addon built for one ABI: the app runs it under
-Electron, the tests under plain Node. The server suite goes through
-[`server/scripts/run-tests.cjs`](server/scripts/run-tests.cjs), which builds a
-Node-ABI copy into `node_modules/.cache` once and points the tests at it —
-`node_modules` keeps its Electron build and is never written to during a run.
+The server suite runs under plain Node against the same prebuilt `better-sqlite3`
+binary the app uses under Electron (it is Node-API, so ABI-stable). Until 1.17.0
+this needed a per-ABI rebuild and a test runner that swapped binaries; both are gone.
 
 ---
 
@@ -146,9 +143,11 @@ the lockfile, commits (`Bump version to 1.16.0`), pushes, then tags `v1.16.0` an
 tag. It refuses to run (before changing anything) if the tree is dirty, you're not on `main`,
 the version is unchanged, or the tag already exists.
 
-Pushing the tag triggers the [`Release` workflow](.github/workflows/release.yml), which builds
+Pushing the tag triggers the [`Release` workflow](.github/workflows/release.yml). It first runs
+a `verify` job — typecheck plus both test suites, on the tagged commit — and only then builds
 the Windows `.exe` (`windows-latest`) and the Apple Silicon `.dmg` (`macos-14`) in parallel and
-publishes a single `v1.16.0` Release with both attached. Because the script derives the tag,
+publishes a single `v1.16.0` Release with both attached. A tag whose commit fails verification
+produces no installers and no release, so a red build can never reach the auto-updater. Because the script derives the tag,
 commit, and installer filenames from the same version, they always stay in sync. Intel (x64)
 Macs aren't built — GitHub's free Intel runners were retired; see the header note in
 [`release.yml`](.github/workflows/release.yml) for how to add them back. Builds are unsigned:

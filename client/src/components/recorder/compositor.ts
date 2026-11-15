@@ -102,6 +102,15 @@ export function createCompositor({
   const ctx = canvas.getContext('2d', { alpha: false })
   if (!ctx) throw new Error('Could not get a 2d context for the recorder')
 
+  // The canvas must be part of the page, like the hidden videos below. Left
+  // detached, Chromium stops emitting frames from captureStream about a second
+  // in: the recording keeps its audio and camera but the picture freezes, and
+  // MediaRecorder has nothing to flush so no data arrives until frames return.
+  // Measured in the packaged app; attaching the canvas revived the stream.
+  canvas.style.cssText =
+    'position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none'
+  document.body.appendChild(canvas)
+
   const displayVideo = createHiddenVideo(display)
   const webcamVideo = webcam ? createHiddenVideo(webcam) : null
 
@@ -220,6 +229,7 @@ export function createCompositor({
       if (raf !== null) cancelAnimationFrame(raf)
       raf = null
       for (const track of stream.getTracks()) track.stop()
+      canvas.remove()
       for (const video of [displayVideo, webcamVideo]) {
         if (!video) continue
         video.pause()

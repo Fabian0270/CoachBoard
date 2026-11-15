@@ -11,15 +11,19 @@ name: Release
 # version to match the tag before tagging — otherwise a v1.14.0 release ends up
 # with a CoachBoard-1.13.1 file on it.
 #
-# Native note: better-sqlite3 is a native module compiled per-OS/per-arch and
-# copied straight into the app, so each installer must be built ON its target
-# platform — the macOS DMG on a Mac runner, the Windows EXE on a Windows runner.
-# It cannot be cross-built. macOS is Apple Silicon (arm64) only; GitHub's free
-# Intel (macos-13) runners were retired. To add Intel back, build x64 on a
-# billable macos-13-large runner or a self-hosted Intel Mac.
+# Native note: until 1.17.0 better-sqlite3 was compiled per-OS/per-arch, so each
+# installer had to be built on its own platform. better-sqlite3 13 ships prebuilt
+# Node-API binaries for every platform, so that constraint is gone, but the
+# builds still run on matching runners (unchanged and known to work). macOS is
+# Apple Silicon (arm64) only; an Intel build could now come from the same runner
+# by adding the x64 arch, untried so far.
 #
 # You can also run this manually from the Actions tab (workflow_dispatch) to get
 # the installers as downloadable artifacts without publishing a release.
+#
+# Every path through this workflow runs `verify` first — see the note on that job.
+# A tag whose commit fails typecheck or either test suite produces no installers
+# and no release.
 
 on:
   push:
@@ -31,7 +35,44 @@ permissions:
   contents: write   # needed to create/update the GitHub Release on a tag
 
 jobs:
+  # Gate. Nothing gets packaged until typecheck and both suites pass ON THE
+  # TAGGED COMMIT.
+  #
+  # Previously this workflow went straight from `npm ci` to `npm run package`,
+  # and the CI workflow only ran on push/PR to main. scripts/release.mjs pushes
+  # the branch and then the tag seconds apart, so the two workflows raced: the
+  # tag build could package, publish the Release and attach latest.yml while CI
+  # was still installing — and if CI then went red, the broken build was already
+  # live. Windows auto-update is on, so electron-updater hands that to every
+  # installed coach quietly and they restart into it.
+  #
+  # Kept in step with .github/workflows/ci.yml — same steps, same order.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # better-sqlite3 13 ships a prebuilt Node-API binary that loads under Node
+      # and Electron alike, so nothing is compiled or rebuilt for the tests.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Server tests
+        run: npm run test -w server
+
+      - name: Client tests
+        run: npm run test -w client
+
   build-mac:
+    needs: verify
     runs-on: macos-14   # Apple Silicon (arm64)
     steps:
       - uses: actions/checkout@v4
@@ -41,8 +82,9 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      # npm ci's postinstall runs electron-rebuild for the host arch, which is
-      # exactly the arch this runner builds for.
+      # Nothing native is compiled: better-sqlite3 ships prebuilt binaries, and the
+      # package script fetches the Electron binary with install-electron (Electron
+      # 42+ no longer downloads itself on npm install).
       - name: Install dependencies
         run: npm ci
 
@@ -66,6 +108,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
+    needs: verify
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

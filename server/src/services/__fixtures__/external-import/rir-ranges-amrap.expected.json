@@ -25,8 +25,10 @@
       "name": "Squat",
       "sets": "4",
       "reps": "6-10",
-      "load": "100",
-      "rpe": "8"
+      "loadCap": 100,
+      "intensity": "@8",
+      "load": null,
+      "rpe": null
     },
     {
       "weekIndex": 0,
@@ -36,8 +38,10 @@
       "name": "Bench",
       "sets": "3",
       "reps": "AMRAP",
-      "load": "60",
-      "rpe": "7"
+      "loadCap": 60,
+      "intensity": "@7",
+      "load": null,
+      "rpe": null
     },
     {
       "weekIndex": 0,
@@ -47,8 +51,10 @@
       "name": "Deadlift",
       "sets": "1",
       "reps": "3",
-      "load": "140",
-      "rpe": "10"
+      "loadCap": 140,
+      "intensity": "@10",
+      "load": null,
+      "rpe": null
     }
   ]
 }

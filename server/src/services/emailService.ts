@@ -77,6 +77,15 @@ async function buildTransport() {
     port: cfg.port,
     secure: cfg.secure,
     auth: { user: cfg.user, pass: cfg.password },
+    // Nodemailer waits 2 minutes to connect and 10 minutes of silence on the
+    // socket by default, so an unreachable or stalled server left the coach
+    // looking at "Sending…" for that long. The socket limit is idle time, not
+    // total time, so a large attachment on a slow line still goes through.
+    // A timeout surfaces as ETIMEDOUT, which mapSendError reports as "could
+    // not reach the mail server".
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 60_000,
   })
   const from = cfg.fromName ? `"${cfg.fromName}" <${cfg.user}>` : cfg.user
   return { transport, from, user: cfg.user }

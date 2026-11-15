@@ -67,6 +67,10 @@ export default function AthleteMessagesSection({ athleteId }: { athleteId: strin
         setDraft('')
       }
       await load()
+    } catch {
+      // The request itself failed. Without this the rejection went unhandled
+      // and replaced the whole app with the error screen.
+      toast.error('CoachBoard could not reach its own server, so the message was not sent. Your draft is kept.')
     } finally {
       setSending(false)
     }

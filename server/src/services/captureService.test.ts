@@ -39,7 +39,7 @@ const SOURCES = [
 ]
 
 beforeEach(() => {
-  configureCapture({ desktopCapturer: fakeCapturer(SOURCES) })
+  configureCapture({ desktopCapturer: fakeCapturer(SOURCES), ownSourceIds: () => [], windowTools: null })
   setPendingSource(null)
 })
 
@@ -62,12 +62,22 @@ describe('listSources', () => {
     expect(list[0].id).toBe(SELF_SOURCE_ID)
   })
 
-  it('always offers CoachBoard, which Electron never enumerates', async () => {
+  it('always offers CoachBoard, which Electron 33 never enumerated', async () => {
     // The regression this guards: our own window is absent from getSources, so
     // the one thing a coach most wants to record was unofferable.
     configureCapture({ desktopCapturer: fakeCapturer([fakeSource('screen:0:0', 'Screen')]) })
     const list = await listSources()
     expect(list.some((s) => s.id === SELF_SOURCE_ID)).toBe(true)
+  })
+
+  it("leaves the app's own window out, since it is already offered first", async () => {
+    // Electron 45 started listing our own window; offering it as a second
+    // "CoachBoard" next to the frame-captured one would only confuse.
+    configureCapture({ desktopCapturer: fakeCapturer(SOURCES), ownSourceIds: () => ['window:12:0'] })
+    const list = await listSources()
+    expect(list.find((s) => s.id === 'window:12:0')).toBeUndefined()
+    expect(list.filter((s) => s.name === 'CoachBoard')).toHaveLength(1)
+    expect(list[0].id).toBe(SELF_SOURCE_ID)
   })
 
   it('classifies screens and windows by Electron s id prefix', async () => {
@@ -164,4 +174,82 @@ describe('pending source', () => {
     await resolvePendingSource()
     expect(takePendingSource()).toBeNull()
   })
+})
+
+describe('minimised windows', () => {
+  // Electron leaves minimised windows out; the window tools (Windows only) list
+  // them under the same "window:<HWND>:0" id and restore one on demand.
+  function tools(minimized: Array<{ id: string; name: string }>, onRestore: (id: string) => boolean = () => true) {
+    const restored: string[] = []
+    return {
+      restored,
+      listMinimized: () => minimized,
+      restore: (id: string) => {
+        restored.push(id)
+        return onRestore(id)
+      },
+    }
+  }
+
+  it('lists them after the visible windows, marked minimised, without a thumbnail', async () => {
+    configureCapture({ windowTools: tools([{ id: 'window:99:0', name: 'Training log.xlsx - Excel' }]) })
+    const list = await listSources()
+    const last = list[list.length - 1]
+    expect(last).toEqual({ id: 'window:99:0', name: 'Training log.xlsx - Excel', kind: 'window', thumbnailDataUrl: null, minimized: true })
+    expect(list.findIndex((s) => s.id === 'window:12:0')).toBeLessThan(list.length - 1)
+  })
+
+  it("never duplicates a window Electron already lists, or the app's own", async () => {
+    configureCapture({
+      ownSourceIds: () => ['window:77:0'],
+      windowTools: tools([
+        { id: 'window:12:0', name: 'CoachBoard' },
+        { id: 'window:77:0', name: 'CoachBoard' },
+        { id: 'window:55:0', name: 'Program Manager' },
+      ]),
+    })
+    const list = await listSources()
+    expect(list.filter((s) => s.id === 'window:12:0')).toHaveLength(1)
+    expect(list.some((s) => s.minimized)).toBe(false)
+  })
+
+  it('still lists everything else when the window tools fail', async () => {
+    configureCapture({ windowTools: { listMinimized: () => { throw new Error('user32 unavailable') }, restore: () => false } })
+    expect((await listSources()).map((s) => s.id)).toContain('window:12:0')
+  })
+
+  it('restores a chosen minimised window and captures it once Electron sees it', async () => {
+    let visible = false
+    const restoredWindow = fakeSource('window:99:0', 'Training log.xlsx - Excel')
+    configureCapture({
+      desktopCapturer: { getSources: async () => (visible ? [...SOURCES, restoredWindow] : SOURCES) },
+      windowTools: tools([], () => {
+        setTimeout(() => { visible = true }, 200) // Windows takes a moment to draw it
+        return true
+      }),
+    })
+    setPendingSource('window:99:0')
+    const resolved = await resolvePendingSource()
+    expect(resolved).toEqual({ kind: 'source', source: restoredWindow })
+  })
+
+  it('does not restore anything for a window that is already listed', async () => {
+    const t = tools([])
+    configureCapture({ windowTools: t })
+    setPendingSource('window:12:0')
+    expect(await resolvePendingSource()).toMatchObject({ kind: 'source' })
+    expect(t.restored).toEqual([])
+  })
+
+  it('refuses rather than recording something else when the window is gone', async () => {
+    configureCapture({ windowTools: tools([], () => false) })
+    setPendingSource('window:99:0')
+    expect(await resolvePendingSource()).toBeNull()
+  })
+
+  it('gives up if a restored window never becomes capturable', async () => {
+    configureCapture({ windowTools: tools([]) }) // restores, but never appears
+    setPendingSource('window:99:0')
+    expect(await resolvePendingSource()).toBeNull()
+  }, 10_000)
 })

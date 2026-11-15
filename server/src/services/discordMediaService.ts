@@ -303,6 +303,48 @@ export async function deleteMediaBefore(cutoffIso: string): Promise<number> {
   return expired.length
 }
 
+/**
+ * What a retention window of `days` would remove right now, without removing it.
+ *
+ * Shares deleteMediaBefore's exemption for videos with a saved analysis, so the
+ * number the coach is asked to confirm is the number that will actually go.
+ */
+export async function countExpiring(days: number): Promise<{ videos: number; messages: number }> {
+  if (!days || days <= 0) return { videos: 0, messages: 0 }
+  const cutoff = daysAgoIso(days)
+  const db = getDb()
+  const [videos, inbound, outbound] = await Promise.all([
+    db
+      .selectFrom('discord_media')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('posted_at', '<', cutoff)
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom('video_analyses')
+              .select('video_analyses.id')
+              .whereRef('video_analyses.media_id', '=', 'discord_media.id'),
+          ),
+        ),
+      )
+      .executeTakeFirst(),
+    db
+      .selectFrom('discord_inbound_messages')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('posted_at', '<', cutoff)
+      .executeTakeFirst(),
+    db
+      .selectFrom('discord_sent_messages')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('created_at', '<', cutoff)
+      .executeTakeFirst(),
+  ])
+  return {
+    videos: Number(videos?.n ?? 0),
+    messages: Number(inbound?.n ?? 0) + Number(outbound?.n ?? 0),
+  }
+}
+
 /** Deletes DM messages (inbound + outbound) posted before the cutoff. */
 export async function deleteMessagesBefore(cutoffIso: string): Promise<number> {
   const db = getDb()

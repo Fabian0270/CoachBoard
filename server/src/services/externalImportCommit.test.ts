@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs'
 import { initializeDatabase } from '../db.js'
 import { createAthlete } from './athleteService.js'
 import { findProgramById } from './programService.js'
+import { loadTemplate } from './templateBlobStore.js'
 import { getProgramReport } from './analysisService.js'
 import { parseExternalFile, commitExternalProgram } from './externalImportService.js'
 
@@ -66,7 +67,7 @@ describe('commitExternalProgram', () => {
     expect(program!.export_layout).not.toBeNull()
     expect(program!.export_layout!.orientation).toBe('vertical')
     expect(program!.export_layout!.columns.map((c) => c.key)).toContain('name')
-    expect(program!.export_template_xlsx).toBe('T0JJR0lOQUw=')
+    expect(await loadTemplate(program!.export_template_sha)).toBe('T0JJR0lOQUw=')
   })
 
   it('leaves export_layout null when none is provided', async () => {
@@ -110,26 +111,57 @@ describe('commitExternalProgram', () => {
     expect(bench.group_id).toBeNull()
   })
 
-  it('maps load/rpe and persists status, name and athlete', async () => {
+  it("stores a coach sheet's Load and RPE as the prescription, never as the athlete's results", async () => {
     const { programId } = await commitGrid(GRID, 'completed')
     const program = await findProgramById(programId)
     expect(program!.status).toBe('completed')
     expect(program!.name).toBe('Imported Block')
     expect(program!.athlete_id).toBe(athleteId)
     const squat = program!.workouts[0].exercises[0]
-    expect(squat.load_used).toBe('100')
-    expect(squat.rpe).toBe('8')
+    // Load Cap is the coach's fixed weight; the target carries the RPE.
+    expect(squat.weight).toBe(100)
+    expect(squat.intensity).toBe('@8')
+    // Load Used and Last Set RPE are only ever what the athlete wrote.
+    expect(squat.load_used).toBeNull()
+    expect(squat.rpe).toBeNull()
   })
 
-  it('produces an analysis report for a completed import', async () => {
-    const { programId } = await commitGrid(GRID, 'completed')
+  it('does not report a freshly imported plan as trained', async () => {
+    // Used to read 100% complete with 1RM estimates from weights nobody had
+    // lifted, because the plan's loads were stored as Load Used.
+    const { programId } = await commitGrid(GRID, 'active')
     const report = await getProgramReport(programId)
     expect(report).toBeTruthy()
-    expect(report!.e1rmTrends.length).toBeGreaterThan(0)
-    expect(report!.e1rmTrends.some((t) => t.latestE1RM !== null)).toBe(true)
-    // Every imported row carries a load → the program reads as fully completed.
+    expect(report!.exercisesCompleted).toBe(0)
+    expect(report!.completionRate).toBe(0)
+    expect(report!.e1rmTrends.every((t) => t.latestE1RM === null)).toBe(true)
+  })
+
+  it("still reports results from a sheet whose columns are the athlete's", async () => {
+    const LOGGED: Cell[][] = GRID.map((row, i) =>
+      i === 0 ? ['Exercise', 'Sets', 'Reps', 'Load used', 'Last set RPE'] : row,
+    )
+    const { programId } = await commitGrid(LOGGED, 'completed')
+    const program = await findProgramById(programId)
+    const squat = program!.workouts[0].exercises[0]
+    expect(squat.load_used).toBe('100')
+    expect(squat.rpe).toBe('8')
+    expect(squat.weight).toBeNull()
+
+    const report = await getProgramReport(programId)
     expect(report!.completionRate).toBe(1)
-    expect(report!.exercisesCompleted).toBe(report!.exercisesTotal)
+    expect(report!.e1rmTrends.some((t) => t.latestE1RM !== null)).toBe(true)
+  })
+
+  it('keeps a text target the coach wrote in the Load column', async () => {
+    const PCT: Cell[][] = [HEADER, ['Week 1'], ['Day 1'], ['Squat', 3, 5, '75%', 8], ['Bench Press', 3, 5, '140-145', null]]
+    const { programId } = await commitGrid(PCT)
+    const program = await findProgramById(programId)
+    const [squat, bench] = program!.workouts[0].exercises
+    expect(squat.intensity).toBe('75% @8')
+    expect(squat.weight).toBeNull()
+    expect(bench.intensity).toBe('140-145')
+    expect(squat.load_used).toBeNull()
   })
 
   it('persists the chosen training focus on commit', async () => {

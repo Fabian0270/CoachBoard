@@ -16,10 +16,10 @@ describe('parseExternalFile (week-grid layout)', () => {
   it('reads each field from the correct week block', async () => {
     const res = await parseExternalFile(await buildWeekGridSheet(2, WG_PROGRAM))
     const w0 = res.exercises.find((e) => e.weekIndex === 0 && e.name === 'Competition Deadlift')!
-    expect(w0).toMatchObject({ sets: '1', reps: '1', load: '240', rpe: '5-6', dayLabel: 'Tisdag' })
+    expect(w0).toMatchObject({ sets: '1', reps: '1', loadCap: 240, intensity: '@5-6', load: null, rpe: null, dayLabel: 'Tisdag' })
     const w1 = res.exercises.find((e) => e.weekIndex === 1 && e.name === 'Competition Deadlift' && e.sheetRow === w0.sheetRow)!
-    expect(w1.load).toBe('255') // week 2's load, not week 1's
-    expect(w1.rpe).toBe('7')
+    expect(w1.loadCap).toBe(255) // week 2's load, not week 1's
+    expect(w1.intensity).toBe('@7')
   })
 
   it('maps Swedish weekday section labels to real weekday offsets', async () => {
@@ -38,6 +38,6 @@ describe('parseExternalFile (week-grid layout)', () => {
     const res = await parseExternalFile(await buildWeekGridSheet(2, WG_PROGRAM))
     expect(res.exercises.find((e) => e.weekIndex === 0)!.weekLabel).toBe('Week 1')
     // rpe comes from the prescribed RPE column ("@5-6"), never from eRpe (5).
-    expect(res.exercises.find((e) => e.weekIndex === 0 && e.name === 'Competition Deadlift')!.rpe).toBe('5-6')
+    expect(res.exercises.find((e) => e.weekIndex === 0 && e.name === 'Competition Deadlift')!.intensity).toBe('@5-6')
   })
 })

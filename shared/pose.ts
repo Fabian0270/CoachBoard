@@ -327,8 +327,20 @@ export function frameAngles(frames: PoseFrame[], side: Side = cameraSide(frames)
         shoulder && hip
           ? // atan2 of the horizontal run over the vertical rise, so the answer
             // is lean from vertical regardless of which way the lifter faces.
-            // In world space y is up rather than down, which the sign of the
-            // rise absorbs — the absolute value is the same either way.
+            //
+            // This one depends on y pointing DOWN, and unlike the joint angles
+            // above it cannot absorb the difference. A joint angle is measured
+            // between two segments, so flipping the y axis leaves it unchanged;
+            // this is measured against a fixed axis, so a flip turns θ into
+            // 180 − θ and an upright lifter would read 90+ instead of 0.
+            //
+            // MediaPipe's WORLD landmarks keep the image convention — x right,
+            // y down, z toward the camera, in metres from the hip midpoint — so
+            // both bases agree and one expression serves them. An earlier
+            // comment here claimed world space was y-up and that the absolute
+            // value made it moot; both halves were wrong, and only the fact that
+            // the premise was false kept the result correct. See the
+            // world-space test in pose.test.ts, which pins it.
             Math.abs((Math.atan2(hip.x - shoulder.x, hip.y - shoulder.y) * 180) / Math.PI)
           : null,
       metric: frame.world != null,
@@ -347,15 +359,51 @@ export function frameAngles(frames: PoseFrame[], side: Side = cameraSide(frames)
  * An even window is widened by one so there is always a true middle element.
  * Visibility is carried from the centre frame untouched: smoothing a confidence
  * would invent confidence the model never reported.
+ *
+ * The WORLD landmarks are filtered alongside the image ones and, critically, are
+ * carried through. Dropping them (which this used to do) would look harmless and
+ * silently switch every joint angle to the image-space basis — the one the
+ * header explains is confidently wrong on front-on footage, where a deep squat
+ * reads as nearly straight legs. Visibility still gates the vote in BOTH sets,
+ * judged on the image-space confidence, because that is the only place the model
+ * reports what it could actually see.
+ *
+ * Note x and y are filtered independently, so an output point may be a pair that
+ * appeared in no single frame. That is ordinary for a separable median filter
+ * and is what makes it reject a snap, but it does mean the result is a
+ * reconstruction rather than a measurement — which is why the caller smooths for
+ * DISPLAY and stores the raw track.
  */
-export function smooth(frames: PoseFrame[], window = 5): PoseFrame[] {
+/**
+ * How far in time a neighbour may be from the frame it votes on, in seconds.
+ *
+ * The window is counted in FRAMES, which is only a time window when frames are
+ * dense. The live preview reads whichever frames the coach scrubbed to, often
+ * seconds apart, and five of those span a whole rep: measured, a squat's hip
+ * at 900/1150/1400/1150/900 px was drawn at 1150 in every frame, so the bottom
+ * of the lift showed 250 px too high. A quarter second keeps every neighbour of
+ * any real track — ±2 frames is ±0.2 s even at 10 fps — and drops only the
+ * ones that belong to a different moment.
+ */
+export const SMOOTH_MAX_GAP_S = 0.25
+
+export function smooth(frames: PoseFrame[], window = 5, maxGapS = SMOOTH_MAX_GAP_S): PoseFrame[] {
   if (window <= 1 || frames.length === 0) return frames
   const span = window % 2 === 0 ? window + 1 : window
   const half = Math.floor(span / 2)
 
+  const medianOf = (values: number[]): number => {
+    values.sort((a, b) => a - b)
+    return values[Math.floor(values.length / 2)]
+  }
+
   return frames.map((frame, i) => {
-    const from = Math.max(0, i - half)
-    const to = Math.min(frames.length - 1, i + half)
+    // The frame-count window, narrowed to neighbours close in TIME.
+    let from = Math.max(0, i - half)
+    let to = Math.min(frames.length - 1, i + half)
+    while (from < i && frame.t - frames[from].t > maxGapS) from++
+    while (to > i && frames[to].t - frame.t > maxGapS) to--
+
     const landmarks = frame.landmarks.map((centre, lm) => {
       const xs: number[] = []
       const ys: number[] = []
@@ -370,12 +418,31 @@ export function smooth(frames: PoseFrame[], window = 5): PoseFrame[] {
         }
       }
       if (xs.length === 0) return centre
-      xs.sort((a, b) => a - b)
-      ys.sort((a, b) => a - b)
-      const mid = Math.floor(xs.length / 2)
-      return { x: xs[mid], y: ys[mid], visibility: centre.visibility }
+      return { x: medianOf(xs), y: medianOf(ys), visibility: centre.visibility }
     })
-    return { t: frame.t, landmarks }
+
+    // Only when this frame has them. A partial world set is worse than none —
+    // see packPose — so a frame without one stays without one.
+    const world = frame.world?.map((centre, lm) => {
+      const xs: number[] = []
+      const ys: number[] = []
+      const zs: number[] = []
+      for (let f = from; f <= to; f++) {
+        const w = frames[f].world?.[lm]
+        // Gated on the IMAGE landmark's visibility, matching frameAngles: the
+        // world set carries the model's estimate whether or not it could see the
+        // joint, so occlusion is only knowable from the image side.
+        if (w && isVisible(frames[f].landmarks[lm])) {
+          xs.push(w.x)
+          ys.push(w.y)
+          zs.push(w.z ?? 0)
+        }
+      }
+      if (xs.length === 0) return centre
+      return { x: medianOf(xs), y: medianOf(ys), z: medianOf(zs), visibility: centre.visibility }
+    })
+
+    return world ? { t: frame.t, landmarks, world } : { t: frame.t, landmarks }
   })
 }
 
@@ -436,25 +503,71 @@ export function anglesAgainstBar(
 }
 
 /**
- * Where the bar was slowest during the concentric — the sticking point.
+ * A dip has to be at least this deep, as a fraction of the ascent's top speed,
+ * to be a sticking point rather than tracking noise.
+ */
+const STICKING_MIN_DIP = 0.1
+
+/**
+ * An upward run only counts as an ascent if its top speed reaches this fraction
+ * of the fastest ascent in the clip — standing still, the tracked point still
+ * jitters up and down by a pixel.
+ */
+const ASCENT_MIN_SPEED = 0.2
+
+/**
+ * The sticking point: where the bar slowed most in the MIDDLE of an ascent.
  *
  * Returned as an index into the joined series so a caller can read every angle
  * at that instant, which is the whole question: what was the knee doing when the
  * bar stopped moving.
  *
- * Concentric only, hence the negative-velocity filter — `vy` is image space, so
- * up is negative. The slowest moment of a descent is not a sticking point, it is
- * the turnaround, and reporting that as one would be worse than saying nothing.
+ * This used to be the slowest upward sample anywhere in the clip — and the
+ * slowest "upward" sample is always a moment of near-rest: the first pixel of
+ * movement off the bottom, the last into lockout, or jitter while standing.
+ * Measured on a squat with a clear mid-ascent slow-down at 3.23 s, it marked
+ * 0.37 s, before the lift had started.
+ *
+ * A sticking point is a dip between two faster moments: the bar accelerates off
+ * the bottom, slows, then speeds up again. So within each ascent (a run of
+ * upward motion — `vy` is image space, up is negative), this finds the sample
+ * whose speed is furthest below the fastest point on BOTH sides of it. An
+ * ascent that only speeds up and then slows down has no such dip, and gets no
+ * marker: nothing is the honest answer for a lift that never stuck. Across
+ * several reps, the deepest dip wins — the hardest moment of the set.
  */
 export function stickingPoint(series: AngleVsBar[]): number | null {
-  let best: number | null = null
-  for (let i = 0; i < series.length; i++) {
-    const v = series[i].barVelocity
-    // Strictly rising: a bar at rest is not in a sticking point either.
-    if (v == null || v >= 0) continue
-    if (best === null || v > series[best].barVelocity!) best = i
+  const up = series.map((s) => (s.barVelocity != null && s.barVelocity < 0 ? -s.barVelocity : 0))
+  const fastest = Math.max(0, ...up)
+  if (fastest === 0) return null
+
+  let best: { index: number; depth: number } | null = null
+  let i = 0
+  while (i < up.length) {
+    if (up[i] === 0) {
+      i++
+      continue
+    }
+    let end = i
+    while (end + 1 < up.length && up[end + 1] > 0) end++
+
+    const run = up.slice(i, end + 1)
+    const top = Math.max(...run)
+    if (top >= fastest * ASCENT_MIN_SPEED && run.length >= 3) {
+      const before: number[] = []
+      for (let k = 0, m = 0; k < run.length; k++) before.push((m = Math.max(m, run[k])))
+      const after: number[] = new Array(run.length)
+      for (let k = run.length - 1, m = 0; k >= 0; k--) after[k] = m = Math.max(m, run[k])
+      for (let k = 1; k < run.length - 1; k++) {
+        const depth = Math.min(before[k], after[k]) - run[k]
+        if (depth >= top * STICKING_MIN_DIP && (!best || depth > best.depth)) {
+          best = { index: i + k, depth }
+        }
+      }
+    }
+    i = end + 1
   }
-  return best
+  return best?.index ?? null
 }
 
 // ---------------------------------------------------------------------------
@@ -542,6 +655,110 @@ export function unpackPose(packed: PackedPose): PoseFrame[] {
     frames.push({ t: times[f], landmarks, ...(world ? { world: worldLandmarks } : {}) })
   }
   return frames
+}
+
+// ---------------------------------------------------------------------------
+// The pose track on the wire.
+//
+// It used to travel as JSON: millions of numbers turned into text in the
+// renderer, then parsed back in the server — which runs inside Electron's main
+// process, so the whole app stalled while it did. Measured: ~35 ms for a 20 s
+// lift, ~240 ms for 3 minutes, over a second at the ten-minute cap. The arrays
+// were packed into Float32/Float64 on arrival anyway, so they now travel packed:
+// no parse at all, and about a quarter of the bytes.
+//
+// Layout, little-endian:
+//   0  u32  magic "CBP1"
+//   4  u32  frameCount
+//   8  u32  landmarkCount
+//  12  u32  flags (bit 0: has world landmarks)
+//  16  u32  meta byte length
+//  20  u32  reserved (0)
+//  24  f64  times[frameCount]
+//      f32  keypoints[frameCount * landmarkCount * 3]
+//      f32  world[same]            (only when flagged)
+//      utf8 meta JSON              (model, corrections — small)
+// ---------------------------------------------------------------------------
+
+const POSE_WIRE_MAGIC = 0x31504243 // "CBP1" read as a little-endian u32
+const POSE_WIRE_HEADER = 24
+
+export const POSE_WIRE_TYPE = 'application/vnd.coachboard.pose'
+
+export function encodePoseTrack(packed: PackedPose, meta: object = {}): Uint8Array {
+  const metaBytes = new TextEncoder().encode(JSON.stringify(meta))
+  const floats = packed.keypoints.length
+  const size =
+    POSE_WIRE_HEADER + packed.times.length * 8 + floats * 4 + (packed.world ? floats * 4 : 0) + metaBytes.length
+  const out = new Uint8Array(size)
+  const view = new DataView(out.buffer)
+  view.setUint32(0, POSE_WIRE_MAGIC, true)
+  view.setUint32(4, packed.frameCount, true)
+  view.setUint32(8, packed.landmarkCount, true)
+  view.setUint32(12, packed.world ? 1 : 0, true)
+  view.setUint32(16, metaBytes.length, true)
+  view.setUint32(20, 0, true)
+  let at = POSE_WIRE_HEADER
+  const put = (arr: Float32Array | Float64Array) => {
+    // Byte-copied rather than written through a typed view: a little-endian
+    // platform (every machine this runs on) stores them exactly as the layout says.
+    out.set(new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength), at)
+    at += arr.byteLength
+  }
+  put(packed.times)
+  put(packed.keypoints)
+  if (packed.world) put(packed.world)
+  out.set(metaBytes, at)
+  return out
+}
+
+export class PoseWireError extends Error {}
+
+/**
+ * Reads a track written by encodePoseTrack. Every length is checked against the
+ * header before anything is read, so a truncated or hostile body is refused
+ * rather than read past its end.
+ */
+export function decodePoseTrack(
+  bytes: Uint8Array,
+  limits: { maxFrames: number; maxLandmarks: number },
+): { packed: PackedPose; meta: unknown } {
+  if (bytes.byteLength < POSE_WIRE_HEADER) throw new PoseWireError('Pose data is too short')
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  if (view.getUint32(0, true) !== POSE_WIRE_MAGIC) throw new PoseWireError('Not pose data')
+  const frameCount = view.getUint32(4, true)
+  const landmarkCount = view.getUint32(8, true)
+  const hasWorld = (view.getUint32(12, true) & 1) === 1
+  const metaLength = view.getUint32(16, true)
+  if (frameCount < 1 || frameCount > limits.maxFrames) throw new PoseWireError('Frame count out of range')
+  if (landmarkCount < 1 || landmarkCount > limits.maxLandmarks) throw new PoseWireError('Landmark count out of range')
+
+  const floats = frameCount * landmarkCount * FLOATS_PER_LANDMARK
+  const expected = POSE_WIRE_HEADER + frameCount * 8 + floats * 4 * (hasWorld ? 2 : 1) + metaLength
+  if (bytes.byteLength !== expected) throw new PoseWireError('Pose data does not match its own header')
+
+  let at = POSE_WIRE_HEADER
+  // Copied into a fresh buffer so each array starts aligned, whatever offset
+  // the incoming bytes sit at. NOT bytes.slice(): on a Node Buffer that returns
+  // a view into the shared allocation pool, whose .buffer is the whole pool.
+  const take = (length: number) => {
+    const chunk = new Uint8Array(length)
+    chunk.set(bytes.subarray(at, at + length))
+    at += length
+    return chunk.buffer
+  }
+  const times = new Float64Array(take(frameCount * 8))
+  const keypoints = new Float32Array(take(floats * 4))
+  const world = hasWorld ? new Float32Array(take(floats * 4)) : null
+  let meta: unknown = {}
+  if (metaLength > 0) {
+    try {
+      meta = JSON.parse(new TextDecoder().decode(bytes.subarray(at, at + metaLength)))
+    } catch {
+      throw new PoseWireError('Pose metadata is not readable')
+    }
+  }
+  return { packed: { frameCount, landmarkCount, keypoints, world, times }, meta }
 }
 
 /**

@@ -27,7 +27,7 @@ describe('parseExternalFile', () => {
 
     const first = res.exercises[0]
     expect(first).toMatchObject({
-      name: 'Squat', sets: '3', reps: '5', load: '100', rpe: '8',
+      name: 'Squat', sets: '3', reps: '5', loadCap: 100, intensity: '@8', load: null, rpe: null,
       weekLabel: 'Week 1', dayLabel: 'Day 1', weekIndex: 0, dayIndex: 0,
     })
   })
@@ -49,8 +49,8 @@ describe('parseExternalFile', () => {
     ])
     const res = await parseExternalFile(buf)
     expect(res.columnMapping.rpeFromRir).toBe(true)
-    expect(res.exercises[0].rpe).toBe('8') // 10 - 2
-    expect(res.exercises[0].load).toBe('100')
+    expect(res.exercises[0].intensity).toBe('@8') // 10 - 2
+    expect(res.exercises[0].loadCap).toBe(100)
   })
 
   it('does not read a merged week banner as an exercise row', async () => {
@@ -114,10 +114,10 @@ describe('parseExternalFile', () => {
     ])
     const res = await parseExternalFile(buf)
     expect(res.exercises[0].reps).toBe('3-5')
-    expect(res.exercises[0].load).toBe('82.5')
+    expect(res.exercises[0].loadCap).toBe(82.5)
     expect(res.exercises[1].reps).toBe('AMRAP')
-    expect(res.exercises[1].load).toBeNull()
-    expect(res.exercises[2].load).toBe('100')
+    expect(res.exercises[1].loadCap).toBeNull()
+    expect(res.exercises[2].loadCap).toBe(100)
     expect(res.warnings.some((w) => /variable reps/i.test(w.message))).toBe(true)
   })
 

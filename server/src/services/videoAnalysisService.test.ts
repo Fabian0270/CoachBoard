@@ -148,3 +148,24 @@ describe('setAnalysisAthlete', () => {
     expect(await setAnalysisAthlete('does-not-exist', null)).toBeNull()
   })
 })
+
+describe('updateAnalysisContext', () => {
+  it('corrects what the set was and leaves the measurement alone', async () => {
+    // A load typed after pressing Save used to go nowhere, and it is the load
+    // that builds the athlete's velocity profile.
+    const { updateAnalysisContext } = await import('./videoAnalysisService.js')
+    const saved = await saveAnalysis(input({ lift: 'back-squat', loadKg: null, calledRpe: null }))
+    const updated = await updateAnalysisContext(saved.id, { loadKg: 180, calledRpe: 8.5 })
+    expect(updated).toMatchObject({ lift: 'back-squat', loadKg: 180, calledRpe: 8.5 })
+    expect(updated?.track).toEqual(saved.track)
+
+    const cleared = await updateAnalysisContext(saved.id, { lift: null })
+    expect(cleared?.lift).toBeNull()
+    expect(cleared?.loadKg).toBe(180)
+  })
+
+  it('reports a miss', async () => {
+    const { updateAnalysisContext } = await import('./videoAnalysisService.js')
+    expect(await updateAnalysisContext('does-not-exist', { loadKg: 100 })).toBeNull()
+  })
+})

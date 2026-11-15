@@ -43,6 +43,7 @@ import {
   listWorkoutCandidates,
   disconnect,
   clearCache,
+  countExpiring,
   getAthleteConversation,
   markConversationRead,
   listUnreadThreads,
@@ -56,6 +57,15 @@ const router = Router()
 
 // All Discord API calls stay server-side; the bot token never leaves this
 // process. The ONLY route that ever receives it is PUT /settings/token.
+
+/**
+ * A Discord id: a snowflake, which is only ever digits.
+ *
+ * Ids taken from a request are spliced into Discord API PATHS that carry the
+ * bot token. URL parsing resolves `..`, so an unchecked id of `../../x` would
+ * send an authenticated request to an endpoint this app never meant to call.
+ */
+const snowflake = z.string().regex(/^\d{1,25}$/, 'Not a Discord id')
 
 async function requireClient() {
   const token = await getToken()
@@ -82,7 +92,13 @@ router.get('/settings', async (_req, res) => {
   res.json(await getPublicSettings())
 })
 
-const tokenSchema = z.object({ token: z.string().trim().min(20, 'Paste the full bot token') })
+const tokenSchema = z.object({
+  token: z.string().trim().min(20, 'Paste the full bot token'),
+  // Check with Discord without keeping it. The wizard validates on paste and
+  // saves only on Continue: saving on paste replaced a WORKING connection the
+  // moment a coach pasted a token, even if they then cancelled the wizard.
+  checkOnly: z.boolean().optional(),
+})
 
 router.put('/settings/token', async (req, res) => {
   const parsed = tokenSchema.safeParse(req.body)
@@ -93,6 +109,16 @@ router.put('/settings/token', async (req, res) => {
   try {
     const client = createDiscordClient(parsed.data.token)
     const [me, app] = [await client.getCurrentUser(), await client.getCurrentApplication()]
+    if (parsed.data.checkOnly) {
+      res.json({
+        ...(await getPublicSettings()),
+        botUsername: me.username,
+        applicationId: app.id,
+        messageContentIntent: hasMessageContentIntent(app.flags),
+        checked: true,
+      })
+      return
+    }
     const saved = await saveToken(parsed.data.token, {
       applicationId: app.id,
       botUserId: me.id,
@@ -154,6 +180,17 @@ router.put('/settings/message-retention', async (req, res) => {
   res.json(await setMessageRetentionDays(parsed.data.days))
 })
 
+// What a retention window would delete, so the setting can be confirmed with a
+// real number before it quietly deletes at the next sync.
+router.get('/settings/retention/preview', async (req, res) => {
+  const parsed = retentionSchema.safeParse({ days: req.query.days })
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid retention setting' })
+    return
+  }
+  res.json(await countExpiring(parsed.data.days))
+})
+
 // Manual "free up space" purge — deletes videos + messages older than N days.
 router.post('/clear-cache', async (req, res) => {
   const parsed = retentionSchema.safeParse(req.body)
@@ -181,6 +218,10 @@ router.get('/guilds', async (_req, res) => {
 })
 
 router.get('/guilds/:guildId/channels', async (req, res) => {
+  if (!snowflake.safeParse(req.params.guildId).success) {
+    res.status(400).json({ error: 'Not a Discord server id' })
+    return
+  }
   const client = await requireClient()
   if (!client) {
     res.status(400).json({ error: 'Discord is not configured' })
@@ -206,6 +247,10 @@ router.get('/guilds/:guildId/channels', async (req, res) => {
 })
 
 router.get('/guilds/:guildId/members/search', async (req, res) => {
+  if (!snowflake.safeParse(req.params.guildId).success) {
+    res.status(400).json({ error: 'Not a Discord server id' })
+    return
+  }
   const client = await requireClient()
   if (!client) {
     res.status(400).json({ error: 'Discord is not configured' })
@@ -266,10 +311,11 @@ router.get('/channels', async (_req, res) => {
 })
 
 const addChannelSchema = z.object({
-  channelId: z.string().min(1),
-  guildId: z.string().min(1),
-  name: z.string().min(1),
-  guildName: z.string().optional().default(''),
+  // Stored, then used as a path segment on every sync — see `snowflake`.
+  channelId: snowflake,
+  guildId: snowflake,
+  name: z.string().min(1).max(200),
+  guildName: z.string().max(200).optional().default(''),
   historyDays: z.union([z.literal(30), z.literal(90), z.null()]),
 })
 

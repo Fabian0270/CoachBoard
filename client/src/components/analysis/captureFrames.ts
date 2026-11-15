@@ -39,6 +39,9 @@ const ANALYSIS_WIDTH = 320
  */
 const STALL_TIMEOUT_MS = 5_000
 
+/** Frames allowed to wait for the tracker before playback pauses. About 2 MB. */
+const MAX_QUEUED = 4
+
 export interface CaptureOptions {
   from: number
   to: number
@@ -102,7 +105,17 @@ export async function captureInto(
 
   const wasMuted = video.muted
   const wasTime = video.currentTime
+  const wasRate = video.playbackRate
   video.muted = true
+  // Normal speed, held there. The video's own controls can change the rate,
+  // and at 2x the tracker sees half the frames per second of footage — the
+  // track was then rejected as unreliable, with advice about the seed point
+  // that had nothing to do with why.
+  video.playbackRate = 1
+  const holdRate = () => {
+    if (video.playbackRate !== 1) video.playbackRate = 1
+  }
+  video.addEventListener('ratechange', holdRate)
   video.currentTime = from
   await new Promise<void>((resolve) => {
     const done = () => resolve()
@@ -121,6 +134,16 @@ export async function captureInto(
   let alsoFrames = 0
   /** Whether the tracker still has a frame out. Pose only gets the gaps. */
   let trackerBusy = false
+  /**
+   * Frames handed to the tracker and not yet answered.
+   *
+   * Playback does not wait for tracking, so on a slow machine — or with the
+   * first click landing before the analyser had compiled — frames queued
+   * behind the worker without limit, each about half a megabyte. Past
+   * MAX_QUEUED the clip pauses until the tracker catches up.
+   */
+  let queued = 0
+  let heldBack = false
 
   await new Promise<void>((resolve) => {
     let stallTimer: number | undefined
@@ -188,11 +211,26 @@ export async function captureInto(
       }
 
       // Tracking runs in the worker while playback continues here, so capture
-      // is not gated on it. The chain keeps frames in order without buffering.
+      // is not gated on it — until the queue grows too long; see `queued`.
       trackerBusy = true
+      queued++
+      if (queued >= MAX_QUEUED && !heldBack) {
+        heldBack = true
+        window.clearTimeout(stallTimer) // a deliberate pause is not a stall
+        video.pause()
+      }
+      const settle = () => {
+        queued--
+        if (heldBack && queued <= 1 && !finished) {
+          heldBack = false
+          armStall()
+          void video.play().catch(() => stop(true))
+        }
+      }
       inFlight = inFlight
         .then(() => push(frame, isFirst))
         .then((sample) => {
+          settle()
           trackerBusy = false
           onSample?.(sample, Math.min(1, (meta.mediaTime - from) / span))
           // null means the bar was lost — there is nothing further to follow.
@@ -200,6 +238,7 @@ export async function captureInto(
           return sample
         })
         .catch(() => {
+          settle()
           // Cleared here too, or a single failed frame would leave the flag set
           // and starve pose for the rest of the run.
           trackerBusy = false
@@ -218,6 +257,8 @@ export async function captureInto(
   await inFlight.catch(() => null)
   await alsoInFlight.catch(() => undefined)
 
+  video.removeEventListener('ratechange', holdRate)
+  video.playbackRate = wasRate
   video.muted = wasMuted
   video.currentTime = wasTime
   return { scale, framesRead, stoppedEarly, alsoFrames }

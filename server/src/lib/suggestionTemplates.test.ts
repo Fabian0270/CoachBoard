@@ -44,7 +44,7 @@ describe.each(ALL_IDS)('%s', (id) => {
     const slots = template.generate(6, E1RM, NO_ADJUST)
     for (const s of slots) {
       expect(s.weight).toBeGreaterThan(0)
-      expect(s.weight % 2.5).toBeCloseTo(0)
+      expect(s.weight! % 2.5).toBeCloseTo(0)
     }
   })
 
@@ -82,13 +82,13 @@ describe.each(ALL_IDS)('%s', (id) => {
   it('positive rpeAdjustment produces lighter weights', () => {
     const base    = template.generate(4, E1RM, 0)
     const lighter = template.generate(4, E1RM, 0.025)
-    base.forEach((s, i) => expect(lighter[i].weight).toBeLessThanOrEqual(s.weight))
+    base.forEach((s, i) => expect(lighter[i].weight).toBeLessThanOrEqual(s.weight!))
   })
 
   it('negative rpeAdjustment produces heavier weights', () => {
     const base    = template.generate(4, E1RM, 0)
     const heavier = template.generate(4, E1RM, -0.025)
-    base.forEach((s, i) => expect(heavier[i].weight).toBeGreaterThanOrEqual(s.weight))
+    base.forEach((s, i) => expect(heavier[i].weight).toBeGreaterThanOrEqual(s.weight!))
   })
 })
 
@@ -220,3 +220,15 @@ describe('style adjustments (Feature 5c)', () => {
 function snapRpe(rpe: number): number {
   return Math.min(10, Math.max(5, Math.round(rpe * 2) / 2))
 }
+
+describe('reps pushed off the RPE chart', () => {
+  it('leaves the load blank instead of prescribing 0 kg', () => {
+    // hypertrophy_accumulation starts at 10 reps; a +2 rep bias makes 12, which
+    // the RPE chart does not cover. This used to come out as "0 kg".
+    const slots = findTemplate('hypertrophy_accumulation')!.generate(4, 200, 0, { repBias: 2 })
+    expect(slots[0].reps).toBe(12)
+    expect(slots[0].weight).toBeNull()
+    expect(slots[0].explanation).toMatch(/outside the RPE chart/)
+    expect(slots.every((s) => s.weight !== 0)).toBe(true)
+  })
+})

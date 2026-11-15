@@ -43,6 +43,11 @@ function extensionFor(filename: string | undefined): string {
 
 function pathsFor(id: string, ext: string): { part: string; final: string } {
   if (!ID_PATTERN.test(id)) throw new Error('Invalid video id')
+  // The extension arrives on the chunk and finish requests' query string, so it
+  // is checked against the same allowlist beginVideo chose it from. The media
+  // root guard below already stops it escaping the folder; this stops it naming
+  // a file there that no upload ever produced.
+  if (!ALLOWED_EXT.has(ext)) throw new Error('Invalid video extension')
   const rel = `analyses/${id}${ext}`
   const abs = resolveMediaAbsPath(rel)
   return { part: `${abs}.part`, final: abs }

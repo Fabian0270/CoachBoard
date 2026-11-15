@@ -738,7 +738,19 @@ export function resolveLvSlope(
   const p = opts.profile
   // A profile's slope is in m/s per kg; converting needs its own 1RM, which is
   // the load that makes 100% mean something.
-  if (p && p.oneRm != null && p.fit.slope < 0 && p.fit.n >= 2) {
+  //
+  // Only a profile the panel would itself vouch for: at least three sets, with
+  // loads spread out and a line that fits. Two points always fit a line
+  // perfectly, and one saved set plus today's used to outrank the athlete's
+  // RECORDED max — measured on a 250 kg squatter, normal day-to-day bar-speed
+  // noise swung the estimate from 206 to 365 kg, where calibrating to the
+  // recorded max stayed between 239 and 254.
+  const trustworthy =
+    p != null &&
+    p.fit.n >= MIN_PROFILE_POINTS &&
+    !p.warnings.includes('narrow-load-range') &&
+    !p.warnings.includes('poor-fit')
+  if (p && trustworthy && p.oneRm != null && p.fit.slope < 0) {
     return { slope: -(100 / p.oneRm) / p.fit.slope, source: 'profile' }
   }
   if (opts.calibration) {
@@ -805,18 +817,35 @@ export function e1RMFromVelocity(opts: {
 const LIFT_NAME_RULES: Partial<Record<VbtLift, { any: string[]; not?: string[] }>> = {
   'back-squat': {
     any: ['squat'],
-    not: ['front', 'box', 'split', 'hack', 'pin', 'safety', 'bulgarian', 'goblet', 'overhead'],
+    not: ['front', 'box', 'split', 'hack', 'pin', 'safety', 'bulgarian', 'goblet', 'overhead', 'sumo'],
   },
   'front-squat': { any: ['front squat', 'frontsquat'] },
-  'bench-press': { any: ['bench'], not: ['pull'] },
+  // 'dumbbell' excluded because a dumbbell bench max is recorded per hand, and
+  // reading it as a barbell max would understate the lift by roughly half.
+  'bench-press': { any: ['bench'], not: ['pull', 'dumbbell', 'db '] },
   'deadlift-conventional': {
     any: ['deadlift', 'dead lift'],
     not: ['sumo', 'trap', 'hex', 'romanian', 'rdl', 'stiff', 'deficit', 'rack', 'block', 'snatch'],
   },
   'deadlift-sumo': { any: ['sumo'] },
   'deadlift-trapbar': { any: ['trap bar', 'trapbar', 'hex bar', 'hexbar'] },
-  'barbell-row': { any: ['row'] },
-  'overhead-press': { any: ['overhead', 'ohp', 'military', 'strict press'] },
+  // A bare 'row' matched every row there is, and recordedMaxFor takes the
+  // HEAVIEST match — so a heavy T-bar or machine row would win over the actual
+  // barbell row and feed a wrong 1RM into the e1RM calibration.
+  'barbell-row': {
+    any: ['row'],
+    not: [
+      'upright', 'cable', 'machine', 'seal', 'inverted', 'seated',
+      'chest-supported', 'chest supported', 'dumbbell', 'db ', 't-bar', 't bar', 'tbar',
+    ],
+  },
+  // 'overhead' alone also matched "Overhead Squat", which is a different lift at
+  // a different load. Every other ambiguous entry here already carries
+  // exclusions; these two were the ones that did not.
+  'overhead-press': {
+    any: ['overhead', 'ohp', 'military', 'strict press'],
+    not: ['squat', 'carry', 'walk', 'extension', 'tricep', 'lunge'],
+  },
 }
 
 /** Whether a free-text lift name refers to this VBT lift. */
@@ -826,6 +855,68 @@ export function matchesLiftName(lift: VbtLift, liftName: string): boolean {
   const name = liftName.toLowerCase().trim()
   if (rule.not?.some((n) => name.includes(n))) return false
   return rule.any.some((a) => name.includes(a))
+}
+
+// ---------------------------------------------------------------------------
+// 5d. The three competition lifts, for programming and reports
+// ---------------------------------------------------------------------------
+// The server's suggestion engine, program report, results import and Modern
+// export badge all group exercises into squat / bench / deadlift. They each did
+// it with a bare substring test, so "Romanian Deadlift" became a main deadlift
+// prescription in a generated draft (its accessory slot vanishing), and "Front
+// Squat" and "Pin Squat" fed the squat e1RM trend. This reuses the exclusion
+// rules above instead.
+
+export type MainLiftKey = 'squat' | 'bench' | 'deadlift'
+
+/** Which competition lift a free-text exercise name is, or null for anything else. */
+export function mainLiftKey(name: string): MainLiftKey | null {
+  if (matchesLiftName('back-squat', name)) return 'squat'
+  if (matchesLiftName('bench-press', name)) return 'bench'
+  // Sumo is a competition deadlift; it is excluded from the conventional rule
+  // only because VBT numbers differ between the two.
+  const lower = name.toLowerCase()
+  if (matchesLiftName('deadlift-conventional', name)) return 'deadlift'
+  if (lower.includes('sumo') && (lower.includes('deadlift') || lower.includes('dead lift'))) {
+    return 'deadlift'
+  }
+  return null
+}
+
+/** Names that ARE the lift, rather than a variation that happens to match. */
+const CANONICAL_NAMES: Record<MainLiftKey, Set<string>> = {
+  squat: new Set(['squat', 'back squat', 'low bar squat', 'high bar squat', 'competition squat', 'comp squat']),
+  bench: new Set([
+    'bench', 'bench press', 'competition bench', 'comp bench', 'competition bench press', 'comp bench press',
+  ]),
+  deadlift: new Set([
+    'deadlift', 'conventional deadlift', 'sumo deadlift', 'competition deadlift', 'comp deadlift',
+  ]),
+}
+
+/**
+ * The recorded max to programme a competition lift from.
+ *
+ * The plain name wins over a variation ("Bench Press" over "Banded Bench"),
+ * then the most recent entry. This used to be whichever matching name sorted
+ * first alphabetically, so a banded or paused max could set a whole block's
+ * loads.
+ */
+export function bestStoredMax<T extends { lift_name: string; weight: number; recorded_at: string }>(
+  key: MainLiftKey,
+  maxes: T[],
+): T | null {
+  let best: T | null = null
+  let bestRank = Infinity
+  for (const m of maxes) {
+    if (!(m.weight > 0) || mainLiftKey(m.lift_name) !== key) continue
+    const rank = CANONICAL_NAMES[key].has(m.lift_name.toLowerCase().trim().replace(/\s+/g, ' ')) ? 0 : 1
+    if (rank < bestRank || (rank === bestRank && best && m.recorded_at > best.recorded_at)) {
+      best = m
+      bestRank = rank
+    }
+  }
+  return best
 }
 
 /**

@@ -1,5 +1,6 @@
 import { beforeAll, describe, it, expect } from 'vitest'
-import { initializeDatabase } from '../db.js'
+import { initializeDatabase, getDb } from '../db.js'
+import { loadTemplate } from './templateBlobStore.js'
 import { createAthlete } from './athleteService.js'
 import { createProgram, findProgramById } from './programService.js'
 import { createExportStyle, findAllExportStyles, renameExportStyle, deleteExportStyle } from './exportStyleService.js'
@@ -67,7 +68,20 @@ describe('export style library', () => {
     const saved = await createExportStyle('Bytes Style', TEMPLATE, 'QkFTRTY0')
     const created = await createProgram({ athlete_id: athleteId, name: 'Bytes Program', export_style_id: saved.id })
     const program = await findProgramById(created.id)
-    expect(program!.export_template_xlsx).toBe('QkFTRTY0')
+    expect(await loadTemplate(program!.export_template_sha)).toBe('QkFTRTY0')
+  })
+
+  it('shares one stored workbook between a style and every program made from it', async () => {
+    const saved = await createExportStyle('Shared Style', TEMPLATE, 'U0hBUkVE')
+    const a = await createProgram({ athlete_id: athleteId, name: 'Shared A', export_style_id: saved.id })
+    const b = await createProgram({ athlete_id: athleteId, name: 'Shared B', style_source_program_id: a.id })
+    expect(b.export_template_sha).toBe(a.export_template_sha)
+    const copies = await getDb()
+      .selectFrom('template_blobs')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('sha256', '=', a.export_template_sha!)
+      .executeTakeFirstOrThrow()
+    expect(Number(copies.n)).toBe(1)
   })
 
   it('renames a saved style', async () => {

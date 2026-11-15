@@ -5,10 +5,15 @@ import { canCapture, listSources, setPendingSource } from '../services/captureSe
 import {
   appendChunk,
   beginRecording,
+  beginTrack,
   deleteRecording,
+  discardEdit,
   finishRecording,
   recordingPath,
   statRecording,
+  trackPath,
+  writeAt,
+  type RecordingTrack,
 } from '../services/recordingStore.js'
 import { fail } from '../lib/httpError.js'
 import { dmRecordingToAthlete } from '../services/discordSendService.js'
@@ -20,6 +25,17 @@ import {
 import fsp from 'fs/promises'
 
 const router = Router()
+
+/**
+ * Which file of a recording a request is about (see recordingStore): the screen
+ * capture, the separate webcam, or the edited result. Defaults to screen, which
+ * is what every request meant before the webcam was recorded on its own.
+ */
+const trackSchema = z.enum(['screen', 'camera', 'final']).default('screen')
+const trackOf = (query: unknown): RecordingTrack | null => {
+  const parsed = trackSchema.safeParse((query as { track?: unknown } | undefined)?.track)
+  return parsed.success ? parsed.data : null
+}
 
 /** Dated, so a coach's downloads folder does not fill with `recording.webm`. */
 function recordingFilename(): string {
@@ -108,8 +124,24 @@ router.post(
       res.status(400).json({ error: 'Expected a WebM body' })
       return
     }
+    const track = trackOf(req.query)
+    if (!track) {
+      res.status(400).json({ error: 'Unknown track' })
+      return
+    }
+    // The edited result is written at positions (see recordingStore.writeAt);
+    // everything else is appended as recorded.
+    const position = req.query.position === undefined ? null : Number(req.query.position)
+    if (position !== null && track !== 'final') {
+      res.status(400).json({ error: 'Only the edited result is written at a position' })
+      return
+    }
     try {
-      res.json({ bytes: await appendChunk(req.params.id, body) })
+      res.json({
+        bytes: position === null
+          ? await appendChunk(req.params.id, body, track)
+          : await writeAt(req.params.id, position, body),
+      })
     } catch (err) {
       // A rejected chunk is the renderer's problem to know about immediately —
       // it is still recording, and every later chunk would fail the same way.
@@ -118,9 +150,39 @@ router.post(
   },
 )
 
-router.post('/recordings/:id/finish', async (req, res) => {
+/** Starts the webcam track, or (re)starts the edited result for a new export. */
+router.post('/recordings/:id/begin', async (req, res) => {
+  const track = trackOf(req.query)
+  if (track !== 'camera' && track !== 'final') {
+    res.status(400).json({ error: 'Only the camera and final tracks are begun separately' })
+    return
+  }
   try {
-    res.json(await finishRecording(req.params.id))
+    await beginTrack(req.params.id, track)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not start the track' })
+  }
+})
+
+/** Drops the edited result: saving and sending go back to the plain recording. */
+router.delete('/recordings/:id/final', async (req, res) => {
+  try {
+    await discardEdit(req.params.id)
+    res.json(await statRecording(req.params.id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not drop the edit' })
+  }
+})
+
+router.post('/recordings/:id/finish', async (req, res) => {
+  const track = trackOf(req.query)
+  if (!track) {
+    res.status(400).json({ error: 'Unknown track' })
+    return
+  }
+  try {
+    res.json(await finishRecording(req.params.id, track))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Could not finish' })
   }
@@ -144,8 +206,15 @@ router.get('/recordings/:id', async (req, res) => {
  */
 router.get('/recordings/:id/file', async (req, res) => {
   let abs: string | null = null
+  // No track: what would be saved or sent (the edit when there is one). With a
+  // track: that exact file — the editor plays the raw screen and webcam.
+  const wanted = req.query.track === undefined ? null : trackOf(req.query)
+  if (req.query.track !== undefined && !wanted) {
+    res.status(400).json({ error: 'Unknown track' })
+    return
+  }
   try {
-    abs = await recordingPath(req.params.id)
+    abs = wanted ? await trackPath(req.params.id, wanted) : await recordingPath(req.params.id)
   } catch {
     res.status(400).json({ error: 'Invalid recording id' })
     return
@@ -159,7 +228,10 @@ router.get('/recordings/:id/file', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="coachboard-${stamp}.webm"`)
   }
   // sendFile handles Range/206 natively — required for seeking during review.
-  res.sendFile(abs, { acceptRanges: true, headers: { 'Content-Type': 'video/webm' } })
+  // no-store: the same URL serves a different file after every export (the
+  // edited result replaces the last one), and a cached copy would play — or
+  // download — the previous edit.
+  res.sendFile(abs, { acceptRanges: true, headers: { 'Content-Type': 'video/webm', 'Cache-Control': 'no-store' } })
 })
 
 const discordSchema = z.object({

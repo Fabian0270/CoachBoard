@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { GripVertical, Plus, Trash2 } from 'lucide-react'
 import { EXERCISE_NAMES } from 'coachboard-shared/exercises'
 import { type Exercise, type ColDef, exerciseValue } from '../../lib/programUtils'
+import { failedEditKeyForColumn } from '../../lib/failedEdits'
 
 interface ExerciseRowProps {
   exercise: Exercise
@@ -13,6 +14,8 @@ interface ExerciseRowProps {
   isSubSet?: boolean
   isInGroup?: boolean
   isDragging?: boolean
+  /** `${exerciseId}:${field}` for edits the server has not accepted yet. */
+  unsavedKeys?: Set<string>
   onGroupDragStart?: (e: React.DragEvent) => void
   onSetDragStart?: (e: React.DragEvent) => void
   onDragEnd?: () => void
@@ -21,7 +24,19 @@ interface ExerciseRowProps {
   portalContainer?: HTMLElement | null
 }
 
-export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, isSubSet, isInGroup, isDragging, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
+export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
+  /**
+   * Whether this cell holds a value the server has not accepted.
+   *
+   * The draft below is local state, so a failed save leaves the typed text
+   * sitting in the cell looking exactly like a stored one. This is what tells
+   * the two apart — the column-to-field mapping it depends on lives in
+   * lib/failedEdits.ts with the tests that pin it.
+   */
+  const isUnsaved = (key: string): boolean =>
+    !!unsavedKeys?.size && unsavedKeys.has(failedEditKeyForColumn(exercise.id, key))
+  const unsavedCls = (key: string) =>
+    isUnsaved(key) ? ' ring-1 ring-inset ring-destructive bg-destructive/10' : ''
   const initDraft = () => {
     const d: Record<string, string> = {}
     for (const c of columns) d[c.key] = exerciseValue(exercise, c.key)
@@ -129,8 +144,15 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                       onBlur={() => { commit(c); setNameFocused(false) }}
                       placeholder={c.placeholder}
                       style={textareaStyle}
-                      title={exercise.suggestion_note ?? undefined}
-                      className="w-full bg-transparent px-1 py-1.5 text-sm outline-none focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary resize-none block leading-snug"
+                      title={
+                        isUnsaved(c.key)
+                          ? 'Not saved yet — use "Try again" above'
+                          : exercise.suggestion_note ?? undefined
+                      }
+                      className={
+                        'w-full bg-transparent px-1 py-1.5 text-sm outline-none focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary resize-none block leading-snug' +
+                        unsavedCls(c.key)
+                      }
                     />
                     {nameMatches.length > 0 && menuRect && portalContainer && createPortal(
                       <ul
@@ -163,6 +185,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
             </td>,
           ]
         }
+        const unsavedTitle = isUnsaved(c.key) ? 'Not saved yet — use "Try again" above' : undefined
         const cellContent = c.numeric ? (
           <input
             type="number"
@@ -172,7 +195,8 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
             onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
-            className={inputCls}
+            title={unsavedTitle}
+            className={inputCls + unsavedCls(c.key)}
           />
         ) : (
           <textarea
@@ -181,8 +205,9 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
             onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
+            title={unsavedTitle}
             style={textareaStyle}
-            className={`${inputCls} resize-none block leading-snug`}
+            className={`${inputCls}${unsavedCls(c.key)} resize-none block leading-snug`}
           />
         )
         const mainTd = (

@@ -23,8 +23,10 @@
       "name": "Squat",
       "sets": "3",
       "reps": "5",
-      "load": "120",
-      "rpe": "8"
+      "loadCap": 120,
+      "intensity": "@8",
+      "load": null,
+      "rpe": null
     }
   ]
 }

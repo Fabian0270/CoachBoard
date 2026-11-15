@@ -12,6 +12,8 @@ import { MessageSquare, Check, RefreshCw, CalendarCheck2 } from 'lucide-react'
 import MediaThumb from '../components/discord/MediaThumb'
 import MediaPlayerDialog from '../components/discord/MediaPlayerDialog'
 import LinkUserDialog from '../components/discord/LinkUserDialog'
+import LoadError from '../components/LoadError'
+import { errorMessage, getJson, getList } from '../lib/api'
 import type {
   DiscordMediaItem, DiscordUserItem, WorkoutCandidate, PublicDiscordSettings, UnreadThread,
 } from 'coachboard-shared/discord'
@@ -32,22 +34,27 @@ export default function DiscordInbox() {
   const [linking, setLinking] = useState<DiscordUserItem | null>(null)
   const [picking, setPicking] = useState<DiscordMediaItem | null>(null)
 
+  const [loadError, setLoadError] = useState<string | null>(null)
+
   const load = useCallback(async () => {
     try {
       const [s, um, ur, us, un] = await Promise.all([
-        fetch('/api/discord/settings').then((r) => r.json() as Promise<PublicDiscordSettings>),
-        fetch('/api/discord/media?filter=unmatched').then((r) => r.json()),
-        fetch('/api/discord/media?filter=unreviewed').then((r) => r.json()),
-        fetch('/api/discord/users').then((r) => r.json() as Promise<DiscordUserItem[]>),
-        fetch('/api/discord/messages/unread').then((r) => r.json() as Promise<UnreadThread[]>),
+        getJson<PublicDiscordSettings>('/api/discord/settings'),
+        getJson<{ items?: DiscordMediaItem[] }>('/api/discord/media?filter=unmatched'),
+        getJson<{ items?: DiscordMediaItem[] }>('/api/discord/media?filter=unreviewed'),
+        getList<DiscordUserItem>('/api/discord/users'),
+        getList<UnreadThread>('/api/discord/messages/unread'),
       ])
+      setLoadError(null)
       setConfigured(s.configured)
       setUnmatched(um.items ?? [])
       setUnreviewed(ur.items ?? [])
       setUsers(us)
-      setUnread(Array.isArray(un) ? un : [])
-    } catch {
-      setConfigured(false)
+      setUnread(un)
+    } catch (err) {
+      // Any failure used to read as "Discord isn't connected yet", sending a
+      // coach with a working bot off to set it up again.
+      setLoadError(errorMessage(err))
     }
   }, [])
 
@@ -55,35 +62,48 @@ export default function DiscordInbox() {
     void load()
   }, [load])
 
-  const confirmWorkout = async (item: DiscordMediaItem, workoutId: string) => {
-    const res = await fetch(`/api/discord/media/${item.id}/workout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workoutId }),
-    })
-    if (res.ok) {
-      toast.success('Attached to the training day')
-      void load()
+  /** POSTs and reports a failure. The three actions below used to fail silently. */
+  const post = async (path: string, body: unknown, failure: string): Promise<boolean> => {
+    try {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+      if (res.ok) return true
+      const data = (await res.json().catch(() => ({}))) as { error?: string }
+      toast.error(data.error ?? failure)
+    } catch {
+      toast.error(`${failure} CoachBoard could not reach its own server.`)
     }
+    return false
+  }
+
+  const confirmWorkout = async (item: DiscordMediaItem, workoutId: string) => {
+    if (await post(`/api/discord/media/${item.id}/workout`, { workoutId }, 'Could not attach it to the training day.')) {
+      toast.success('Attached to the training day')
+    }
+    void load()
   }
 
   const markReviewed = async (item: DiscordMediaItem) => {
-    await fetch(`/api/discord/media/${item.id}/reviewed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reviewed: true }),
-    })
+    await post(`/api/discord/media/${item.id}/reviewed`, { reviewed: true }, 'Could not mark it reviewed.')
     void load()
   }
 
   const retry = async (item: DiscordMediaItem) => {
     toast.info('Retrying download…')
-    const res = await fetch(`/api/discord/media/${item.id}/retry-download`, { method: 'POST' })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      toast.error(data.error ?? 'Retry failed')
-    }
+    await post(`/api/discord/media/${item.id}/retry-download`, undefined, 'Retry failed.')
     void load()
+  }
+
+  if (loadError && configured === null) {
+    return (
+      <div className="space-y-4">
+        <Header unmatchedCount={0} unreviewedCount={0} />
+        <LoadError what="your Discord inbox" message={loadError} onRetry={() => void load()} />
+      </div>
+    )
   }
 
   if (configured === false) {
@@ -114,6 +134,12 @@ export default function DiscordInbox() {
   return (
     <div className="space-y-4">
       <Header unmatchedCount={unmatched.length} unreviewedCount={unreviewed.length} />
+      {loadError && (
+        <p className="text-sm text-destructive">
+          Could not refresh the inbox, so this may be out of date. {loadError}{' '}
+          <button type="button" className="underline" onClick={() => void load()}>Try again</button>
+        </p>
+      )}
 
       <Tabs defaultValue={unmatched.length > 0 ? 'unmatched' : 'review'}>
         <TabsList>

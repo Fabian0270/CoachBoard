@@ -41,6 +41,18 @@ export interface CaptureSourceDto {
   name: string
   kind: 'screen' | 'window' | 'self'
   thumbnailDataUrl: string | null
+  /** A minimised window: no thumbnail, and it is restored when recording starts. */
+  minimized?: boolean
+}
+
+/**
+ * Minimised windows, which Electron's list leaves out (Windows only; see
+ * electron/src/minimizedWindows.ts). Ids use desktopCapturer's own format, so a
+ * restored window is found in getSources under the same id.
+ */
+export interface WindowToolsLike {
+  listMinimized(): Array<{ id: string; name: string }>
+  restore(id: string): boolean
 }
 
 /**
@@ -73,10 +85,19 @@ const NEVER_USEFUL = new Set([
 ])
 
 let injectedCapturer: DesktopCapturerLike | null = null
+/** Capture ids of the app's own windows. See listSources. */
+let ownSourceIds: () => string[] = () => []
+let windowTools: WindowToolsLike | null = null
 
 /** Wired once at startup by the Electron main process (and by tests with fakes). */
-export function configureCapture(opts: { desktopCapturer?: DesktopCapturerLike | null }): void {
+export function configureCapture(opts: {
+  desktopCapturer?: DesktopCapturerLike | null
+  ownSourceIds?: () => string[]
+  windowTools?: WindowToolsLike | null
+}): void {
   if ('desktopCapturer' in opts) injectedCapturer = opts.desktopCapturer ?? null
+  if ('ownSourceIds' in opts) ownSourceIds = opts.ownSourceIds ?? (() => [])
+  if ('windowTools' in opts) windowTools = opts.windowTools ?? null
 }
 
 /** False outside Electron, so the UI can explain rather than offer a dead button. */
@@ -119,7 +140,12 @@ export async function listSources(): Promise<CaptureSourceDto[]> {
     thumbnailSize: THUMBNAIL,
   })
 
+  // Electron 33 left our own window out of the list; from 45 it is in it. It is
+  // already offered first as "CoachBoard" (the 'self' entry, captured by frame),
+  // so the window copy would only be a confusing duplicate.
+  const own = new Set(ownSourceIds())
   const rest: CaptureSourceDto[] = sources
+    .filter((s) => !own.has(s.id))
     .filter((s) => !NEVER_USEFUL.has(s.name.trim()))
     .map((s) => ({
       id: s.id,
@@ -141,7 +167,25 @@ export async function listSources(): Promise<CaptureSourceDto[]> {
     { id: SELF_SOURCE_ID, name: 'CoachBoard', kind: 'self', thumbnailDataUrl: null },
     ...screens,
     ...windows,
+    // Last: they cannot show a preview, and recording one first restores it.
+    ...listMinimized(new Set([...own, ...rest.map((s) => s.id)])),
   ]
+}
+
+/**
+ * Minimised windows Electron did not list. Best-effort: a failure here leaves
+ * the coach with Electron's list, which is what they had before.
+ */
+function listMinimized(skip: Set<string>): CaptureSourceDto[] {
+  if (!windowTools) return []
+  try {
+    return windowTools
+      .listMinimized()
+      .filter((w) => !skip.has(w.id) && !NEVER_USEFUL.has(w.name.trim()))
+      .map((w) => ({ id: w.id, name: w.name.trim(), kind: 'window' as const, thumbnailDataUrl: null, minimized: true }))
+  } catch {
+    return []
+  }
 }
 
 let pendingSourceId: string | null = null
@@ -184,7 +228,35 @@ export async function resolvePendingSource(): Promise<ResolvedCapture | null> {
   if (!injectedCapturer) return null
   // Re-listed rather than cached: a window that closed between the picker and
   // the capture must resolve to nothing instead of a stale handle.
-  const sources = await injectedCapturer.getSources({ types: ['screen', 'window'] })
-  const source = sources.find((s) => s.id === id)
-  return source ? { kind: 'source', source } : null
+  // No thumbnails: only the id is needed here, and drawing a preview of every
+  // open window on each check is what made starting a recording slow.
+  const find = async () =>
+    (await injectedCapturer!.getSources({ types: ['screen', 'window'], thumbnailSize: NO_THUMBNAIL })).find(
+      (s) => s.id === id,
+    ) ?? null
+  const source = await find()
+  if (source) return { kind: 'source', source }
+
+  // Not listed: a minimised window (Windows cannot capture one — it is not
+  // drawn). Restore it, then wait for Electron to see it. Same id either way.
+  if (!windowTools || !id.startsWith('window:')) return null
+  let restored = false
+  try {
+    restored = windowTools.restore(id)
+  } catch {
+    restored = false
+  }
+  if (!restored) return null
+  for (let waited = 0; waited < RESTORE_WAIT_MS; waited += RESTORE_POLL_MS) {
+    await new Promise((resolve) => setTimeout(resolve, RESTORE_POLL_MS))
+    const appeared = await find()
+    if (appeared) return { kind: 'source', source: appeared }
+  }
+  return null
 }
+
+/** How long to wait for a restored window to become capturable. Measured at well under a second. */
+const RESTORE_WAIT_MS = 2000
+const RESTORE_POLL_MS = 150
+/** Electron skips capturing previews entirely at this size. */
+const NO_THUMBNAIL = { width: 0, height: 0 }

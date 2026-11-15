@@ -2,8 +2,11 @@ import ExcelJS from 'exceljs'
 import { TOGGLEABLE_COLUMNS } from 'coachboard-shared'
 import type { ImportMatch, ImportWarning, ImportPreview, E1RMEstimate } from 'coachboard-shared'
 import { estimate1RM } from 'coachboard-shared/rpe'
+import { mainLiftKey } from 'coachboard-shared/vbt'
 import {
   DAY_NAMES,
+  MINIMAL_DESCRIPTOR,
+  parseExportLayout,
   resolveExportRenderPath,
   weekColumnStart,
 } from 'coachboard-shared/exportLayout'
@@ -12,8 +15,30 @@ import {
   cellText,
   findResultsBlocks,
   nameColForWeek,
+  resultLabelsFor,
   type ResultsBlock,
 } from './resultsSheetLayout.js'
+
+/**
+ * What this program's own export calls its result columns, when it exports
+ * through a column descriptor. Those columns are the athlete's by definition,
+ * whatever they are called — the Minimalistic look calls them just "Load" and
+ * "RPE". A coach's imported sheet does not count: its plain "Load" is the
+ * prescription (it is captured as load_cap, never load_used).
+ */
+function ownResultLabels(program: { export_layout: string | null; builtin_template?: string | null }): {
+  load: string[]
+  rpe: string[]
+} {
+  const template =
+    parseExportLayout(program.export_layout) ??
+    (!program.export_layout && program.builtin_template === 'minimal' ? MINIMAL_DESCRIPTOR : null)
+  const columns = template?.columns ?? []
+  return {
+    load: columns.filter((c) => c.key === 'load_used').map((c) => c.label),
+    rpe: columns.filter((c) => c.key === 'rpe').map((c) => c.label),
+  }
+}
 import { getDb } from '../db.js'
 
 // Accept both comma and period decimal separators (Swedish Excel uses commas).
@@ -256,7 +281,13 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
   // one exercise-name column across every week, start below a title block, or
   // word its headers differently — none of which the offset replay can follow.
   // The replay stays as the fallback for a sheet with no headers to read.
-  const blocks = findResultsBlocks(ws)
+  // An imported coach style is rebuilt from the coach's own workbook, whose
+  // plain "Load"/"RPE" columns are the prescription, so only the default
+  // athlete labels apply there.
+  const blocks = findResultsBlocks(
+    ws,
+    resultLabelsFor(renderPath.kind === 'grid' ? ownResultLabels(program) : undefined),
+  )
 
   if (blocks.length === 0 && !geometryReadable) {
     // Nothing in the program to import into — a configuration note, not a bad file.
@@ -348,7 +379,6 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
   // e1RM estimates: per main-lift keyword, use the last week that lift
   // appears with data and the heaviest set (highest e1RM) in that week.
   // -------------------------------------------------------------------------
-  const MAIN_LIFT_KEYWORDS = ['squat', 'bench', 'deadlift'] as const
   const exerciseMap = new Map(exercises.map((e) => [e.id, e]))
 
   // Group by keyword so "Squat" and "High Bar Squat" collapse into one entry.
@@ -358,8 +388,9 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
   for (const m of matched) {
     if (!m.load_used || !m.rpe) continue
 
-    const liftLower = m.exerciseName.toLowerCase()
-    const keyword = MAIN_LIFT_KEYWORDS.find((k) => liftLower.includes(k))
+    // The shared matcher, so a Romanian deadlift or a front squat cannot stand
+    // in for the competition lift's estimate. See mainLiftKey.
+    const keyword = mainLiftKey(m.exerciseName)
     if (!keyword) continue
 
     const ex = exerciseMap.get(m.exerciseId)
@@ -402,15 +433,23 @@ export async function commitImport(
   if (!data) throw new Error('Program not found')
 
   const validIds = new Set(data.exercises.map((e) => e.id))
-  const toWrite = matches.filter((m) => validIds.has(m.exerciseId))
+  const toWrite = matches.filter(
+    (m) => validIds.has(m.exerciseId) && (m.load_used !== null || m.rpe !== null),
+  )
   if (toWrite.length === 0) return { updatedCount: 0 }
 
   const db = getDb()
   await db.transaction().execute(async (trx) => {
     for (const m of toWrite) {
+      // Only the cells the sheet actually filled. A row is matched when EITHER
+      // is present, and both used to be written — so a sheet returned with
+      // loads but no RPEs blanked every RPE already recorded for those rows.
       await trx
         .updateTable('exercises')
-        .set({ load_used: m.load_used, rpe: m.rpe })
+        .set({
+          ...(m.load_used !== null ? { load_used: m.load_used } : {}),
+          ...(m.rpe !== null ? { rpe: m.rpe } : {}),
+        })
         .where('id', '=', m.exerciseId)
         .execute()
     }

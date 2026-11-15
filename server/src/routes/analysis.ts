@@ -6,7 +6,7 @@ import {
   saveAnalysis,
   listAnalyses,
   getAnalysis,
-  setAnalysisAthlete,
+  updateAnalysisContext,
   deleteAnalysis,
   ownedVideoPath,
 } from '../services/videoAnalysisService.js'
@@ -18,9 +18,47 @@ import {
   savePoseTrack,
   setPoseCorrection,
 } from '../services/poseTrackService.js'
+import { POSE_WIRE_TYPE, PoseWireError, decodePoseTrack, encodePoseTrack } from 'coachboard-shared/pose'
 import { fail } from '../lib/httpError.js'
 
 const router = Router()
+
+// ---------------------------------------------------------------------------
+// How much footage an analysis may carry.
+//
+// ONE ceiling, expressed in frames, because frames are what both payloads are
+// actually made of — minutes are not, and assuming 30 fps here is how the two
+// numbers below drifted apart from the body parser in the first place.
+// `requestVideoFrameCallback` samples at the video's NATIVE rate, so 60 fps
+// phone footage produces twice the frames per minute that 30 fps does. 36,000
+// is ten minutes either way: 10 min at 60 fps, 20 min at 30 fps.
+//
+// The caps below and the body limits are one decision, not two. Before they
+// were tied together the schema permitted ~150 MB while express.json()'s unset
+// 100 kb default rejected everything over about a second of pose — so no pose
+// track was ever stored, and the save reported "the skeleton could not be"
+// every time.
+// ---------------------------------------------------------------------------
+const MAX_FRAMES = 36_000
+
+/** Most landmarks per frame a pose track may carry. */
+const MAX_LANDMARKS = 64
+
+/**
+ * Pose tracks travel packed (see encodePoseTrack in shared/pose.ts), not as
+ * JSON. The worst case at the frame cap — 36,000 frames of 33 landmarks with
+ * world coordinates — is ~29 MB packed; it was ~130 MB as JSON text, and
+ * parsing that took over a second on the process that runs the whole app.
+ */
+export const POSE_BODY_LIMIT = '32mb'
+
+/**
+ * JSON body cap for this router, mounted in app.ts AHEAD of the global parser.
+ * With pose tracks no longer JSON, the largest JSON here is a bar path at the
+ * frame cap (~2.5 MB). Scoped rather than raising the global limit: every
+ * other route keeps the conservative default.
+ */
+export const ANALYSIS_JSON_LIMIT = '8mb'
 
 const pointSchema = z.object({ x: z.number(), y: z.number() })
 
@@ -33,11 +71,12 @@ const saveSchema = z.object({
   athleteId: z.string().nullable(),
   sourceLabel: z.string().max(300),
   // A tracked path is a few hundred points; the cap is generous but stops a
-  // malformed client filling the database with one row.
+  // malformed client filling the database with one row. Shares MAX_FRAMES with
+  // the pose track so one clip length governs both.
   track: z
     .array(z.object({ t: z.number(), x: z.number(), y: z.number() }))
     .min(2)
-    .max(20000),
+    .max(MAX_FRAMES),
   calibration: z
     .object({ a: pointSchema, b: pointSchema, plateDiameterMm: z.number().positive() })
     .nullable(),
@@ -82,9 +121,9 @@ router.get('/', async (req, res) => {
 // Registered BEFORE '/:id' so the literal path wins: Express matches in order
 // and ':id' would otherwise swallow '/video'. Same trap as routes/discord.ts.
 //
-// The upload is separate from the save because express.json() is global with a
-// 100 kb default — a video cannot ride the save body — and chunked because a
-// lift clip runs to hundreds of megabytes.
+// The upload is separate from the save because a video cannot ride a JSON body
+// at any sane limit, and chunked because a lift clip runs to hundreds of
+// megabytes — far past ANALYSIS_JSON_LIMIT, which sizes for a pose track.
 
 router.post('/video', async (req, res) => {
   const filename = typeof req.query.filename === 'string' ? req.query.filename : undefined
@@ -185,18 +224,11 @@ router.post('/', async (req, res) => {
 // ~238 KB and almost every read of an analysis does not want it — the same
 // reasoning as withTrack=0 on the list above.
 //
-// Coordinates travel as plain number arrays here and are packed into Float32
-// BLOBs at the storage boundary. JSON over localhost costs a few hundred
-// kilobytes on a save the coach explicitly asked for; a binary request body
-// would mean a second content type and a hand-rolled parser for one route.
-
-const poseSchema = z.object({
-  frameCount: z.number().int().positive().max(20000),
-  landmarkCount: z.number().int().positive().max(64),
-  keypoints: z.array(z.number()).max(4_000_000),
-  world: z.array(z.number()).max(4_000_000).nullable().optional(),
-  times: z.array(z.number()).max(20000),
-})
+// Both directions travel packed (encodePoseTrack / decodePoseTrack in
+// shared/pose.ts) — the same Float32/Float64 arrays that are stored as BLOBs.
+// They used to be JSON number arrays, and this server runs inside Electron's
+// main process: measured, parsing one stalled the whole app ~35 ms for a 20 s
+// lift, ~240 ms for three minutes and over a second at the frame cap.
 
 router.get('/:id/pose', async (req, res) => {
   const track = await getPoseTrack(req.params.id)
@@ -204,22 +236,35 @@ router.get('/:id/pose', async (req, res) => {
     res.status(404).json({ error: 'No pose track for that analysis' })
     return
   }
-  res.json({
-    model: track.model,
-    frameCount: track.frameCount,
-    landmarkCount: track.landmarkCount,
-    keypoints: Array.from(track.keypoints),
-    world: track.world ? Array.from(track.world) : null,
-    times: Array.from(track.times),
-    corrections: track.corrections,
-  })
+  // Packed, like the upload: turning millions of floats into JSON text here
+  // blocked the main process for as long as parsing them did.
+  const body = encodePoseTrack(
+    {
+      frameCount: track.frameCount,
+      landmarkCount: track.landmarkCount,
+      keypoints: track.keypoints,
+      world: track.world,
+      times: track.times,
+    },
+    { model: track.model, corrections: track.corrections },
+  )
+  res.type(POSE_WIRE_TYPE).send(Buffer.from(body.buffer, body.byteOffset, body.byteLength))
 })
 
-router.put('/:id/pose', async (req, res) => {
-  const parsed = poseSchema.safeParse(req.body)
-  if (!parsed.success) {
+router.put('/:id/pose', express.raw({ type: POSE_WIRE_TYPE, limit: POSE_BODY_LIMIT }), async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
     res.status(400).json({ error: 'Invalid pose track' })
     return
+  }
+  let decoded: ReturnType<typeof decodePoseTrack>
+  try {
+    decoded = decodePoseTrack(req.body, { maxFrames: MAX_FRAMES, maxLandmarks: MAX_LANDMARKS })
+  } catch (err) {
+    if (err instanceof PoseWireError) {
+      res.status(400).json({ error: 'Invalid pose track' })
+      return
+    }
+    throw err
   }
   // The analysis must exist first. The foreign key would refuse anyway, but as
   // an opaque constraint error rather than something a client can act on.
@@ -228,15 +273,8 @@ router.put('/:id/pose', async (req, res) => {
     res.status(404).json({ error: 'Analysis not found' })
     return
   }
-  const { frameCount, landmarkCount, keypoints, world, times } = parsed.data
   try {
-    await savePoseTrack(req.params.id, {
-      frameCount,
-      landmarkCount,
-      keypoints: Float32Array.from(keypoints),
-      world: world ? Float32Array.from(world) : null,
-      times: Float64Array.from(times),
-    })
+    await savePoseTrack(req.params.id, decoded.packed)
   } catch (err) {
     // The service checks the arrays against the counts, and a mismatch is the
     // client's bug, not a server fault.
@@ -282,18 +320,37 @@ router.delete('/:id/pose', async (req, res) => {
   res.status(204).end()
 })
 
-// Attaching an athlete after the fact. Deliberately the only mutable field: the
-// path and its metrics are a measurement, and editing those would make a saved
-// analysis something other than what was tracked.
-const attachSchema = z.object({ athleteId: z.string().nullable() })
+// What the set WAS — who lifted it, which lift, the load, the RPE called and
+// which velocity it is read by — can be corrected after saving. The path and its
+// per-rep metrics cannot: those are the measurement, and editing them would
+// make a saved analysis something other than what was tracked.
+//
+// The context used to be fixed at save time, while the page kept its fields
+// editable and said "Saved." — so a load typed after pressing Save was never
+// stored, and it is the load that builds the athlete's velocity profile.
+const contextSchema = z
+  .object({
+    athleteId: z.string().nullable().optional(),
+    lift: z.enum(VBT_LIFT_IDS).nullable().optional(),
+    loadKg: z.number().positive().max(1000).nullable().optional(),
+    calledRpe: z
+      .number()
+      .min(5)
+      .max(10)
+      .refine((v) => Number.isInteger(v * 2), 'RPE must be a half step')
+      .nullable()
+      .optional(),
+    metric: z.enum(['mean', 'peak', 'propulsive']).nullable().optional(),
+  })
+  .refine((d) => Object.values(d).some((v) => v !== undefined), 'Nothing to change')
 
 router.patch('/:id', async (req, res) => {
-  const parsed = attachSchema.safeParse(req.body)
+  const parsed = contextSchema.safeParse(req.body)
   if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid athlete' })
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid change' })
     return
   }
-  const updated = await setAnalysisAthlete(req.params.id, parsed.data.athleteId)
+  const updated = await updateAnalysisContext(req.params.id, parsed.data)
   if (!updated) {
     res.status(404).json({ error: 'Analysis not found' })
     return

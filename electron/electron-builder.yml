@@ -1,6 +1,9 @@
 appId: com.coachboard.app
 productName: CoachBoard
-electronVersion: "33.4.11"
+# Kept equal to the electron devDependency. electronDist below is filled by
+# `install-electron` (run by the package scripts): from Electron 42 the npm
+# package no longer downloads its binary on install.
+electronVersion: "45.3.2"
 electronDist: ../node_modules/electron/dist
 electronLanguages:
   - en-US
@@ -68,14 +71,29 @@ extraResources:
     filter:
       - '**/*'
       - '!vendor/mediapipe/wasm/vision_wasm_module_internal.*'
+  # better-sqlite3 13 is a Node-API addon with one prebuilt binary per platform
+  # inside the package (prebuilds/<platform>-<arch>.node), loaded by
+  # lib/binding.js. No rebuild, and no `bindings` / `file-uri-to-path` helpers
+  # any more. SQLite's C source (deps/, ~10 MB) and the bindings for other
+  # operating systems are left out; the per-platform blocks below exclude the
+  # rest.
   - from: ../node_modules/better-sqlite3
     to: node_modules/better-sqlite3
-  - from: ../node_modules/bindings
-    to: node_modules/bindings
-  - from: ../node_modules/file-uri-to-path
-    to: node_modules/file-uri-to-path
+    filter:
+      - '**/*'
+      - '!deps/**'
+      - '!src/**'
+      - '!build/**'
+      - '!binding.gyp'
+      - '!prebuilds/**'
 
 win:
+  # Windows needs only its own better-sqlite3 binary (see extraResources).
+  extraResources:
+    - from: ../node_modules/better-sqlite3/prebuilds
+      to: node_modules/better-sqlite3/prebuilds
+      filter:
+        - 'win32-x64.node'
   target:
     - target: nsis
       arch: [x64]
@@ -102,13 +120,19 @@ nsis:
   artifactName: ${productName}-Setup-${version}.${ext}
 
 mac:
+  # Both mac binaries, so either per-arch runner (see below) finds its own.
+  extraResources:
+    - from: ../node_modules/better-sqlite3/prebuilds
+      to: node_modules/better-sqlite3/prebuilds
+      filter:
+        - 'darwin-*.node'
   category: public.app-category.healthcare-fitness
   # No arch is pinned here on purpose: electron-builder defaults to the arch of
-  # the build machine. better-sqlite3 is a native module copied from node_modules
-  # (see extraResources + npmRebuild:false), so it is only ever correct for the
-  # host arch — cross-compiling would ship a broken binary. The release workflow
-  # therefore builds each arch on a matching runner (macos-13 = Intel x64,
-  # macos-14 = Apple Silicon arm64) instead of pinning [arm64, x64] here.
+  # the build machine. Until 1.17.0 better-sqlite3 had to be compiled for the
+  # host arch, which is why each arch was built on a matching runner. Since
+  # better-sqlite3 13 ships prebuilt binaries for both mac archs (copied above),
+  # that constraint is gone; building [arm64, x64] from one runner is now
+  # possible but has not been tried, so the workflow is unchanged.
   target:
     - target: dmg
     # Squirrel.Mac updates from a zip, not a dmg, and without a zip target

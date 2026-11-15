@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { getList, errorMessage } from '../lib/api'
+import LoadError from '../components/LoadError'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
-import { Plus, Users, Trash2 } from 'lucide-react'
+import { Input } from '../components/ui/input'
+import { Plus, Search, Users, Trash2 } from 'lucide-react'
+import { matchesSearch } from '../lib/search'
 
 interface Athlete {
   id: string
@@ -17,16 +21,31 @@ interface Athlete {
 export default function AthletesList() {
   const [athletes, setAthletes] = useState<Athlete[]>([])
   const [loading, setLoading] = useState(true)
+  // Separate from `loading` on purpose. With only a loading flag, a failed load
+  // is indistinguishable from an empty roster, and this screen's empty state
+  // reads "No athletes yet — add your first athlete to get started". A coach
+  // with forty athletes seeing that has every reason to think the data is gone.
+  const [error, setError] = useState<string | null>(null)
   const [toDelete, setToDelete] = useState<Athlete | null>(null)
   const [showArchived, setShowArchived] = useState(false)
+  const [query, setQuery] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      // Fetch archived too so the roster can offer a "show archived" toggle without a refetch.
+      setAthletes(await getList<Athlete>('/api/athletes?include_archived=1'))
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    // Fetch archived too so the roster can offer a "show archived" toggle without a refetch.
-    fetch('/api/athletes?include_archived=1')
-      .then((r) => r.json())
-      .then((data) => { setAthletes(Array.isArray(data) ? data : []); setLoading(false) })
-      .catch(() => setLoading(false))
-  }, [])
+    void load()
+  }, [load])
 
   const handleDelete = (e: React.MouseEvent, athlete: Athlete) => {
     e.preventDefault()
@@ -38,6 +57,10 @@ export default function AthletesList() {
 
   const active = athletes.filter((a) => !a.archived)
   const archived = athletes.filter((a) => a.archived)
+  const searching = query.trim() !== ''
+  // A search looks through archived athletes too: looking someone up by name
+  // should not depend on remembering whether they were archived.
+  const matches = athletes.filter((a) => matchesSearch(query, [a.name, a.email, a.sport]))
 
   const renderCard = (athlete: Athlete) => (
     <div key={athlete.id} className="relative group">
@@ -70,7 +93,32 @@ export default function AthletesList() {
         <h1 className="text-3xl font-bold">Athletes</h1>
         <Link to="/athletes/new"><Button><Plus className="h-4 w-4 mr-2" />New Athlete</Button></Link>
       </div>
-      {active.length === 0 ? (
+      {/* The error branch comes FIRST: an empty roster and an unreadable one look
+          the same in the data, and only one of them should say "No athletes yet". */}
+      {!error && athletes.length > 0 && (
+        <div className="relative max-w-sm">
+          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by name, email or sport"
+            aria-label="Search athletes"
+            className="pl-8"
+          />
+        </div>
+      )}
+      {error ? (
+        <LoadError what="your athletes" message={error} onRetry={() => void load()} />
+      ) : searching ? (
+        matches.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No athletes match “{query.trim()}”.</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {matches.map(renderCard)}
+          </div>
+        )
+      ) : active.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <Users className="h-12 w-12 text-muted-foreground mb-4" />
@@ -85,7 +133,7 @@ export default function AthletesList() {
         </div>
       )}
 
-      {archived.length > 0 && (
+      {archived.length > 0 && !searching && (
         <div className="space-y-4">
           <button
             type="button"

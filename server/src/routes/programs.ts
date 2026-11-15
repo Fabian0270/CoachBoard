@@ -18,6 +18,7 @@ import {
   copyWorkoutDay,
   moveWorkoutDay,
   reorderExercises,
+  withoutTemplateBlob,
 } from '../services/programService.js'
 import { parseImportFile, commitImport } from '../services/importService.js'
 import { parseExternalFile, commitExternalProgram } from '../services/externalImportService.js'
@@ -29,6 +30,7 @@ import { getProgramReport } from '../services/analysisService.js'
 import { generateDraftProgram } from '../services/suggestionService.js'
 import type { ExternalParseOverrides } from 'coachboard-shared'
 import { fail } from '../lib/httpError.js'
+import { SheetTooLargeError } from '../lib/sheetBounds.js'
 
 const router = Router()
 
@@ -81,7 +83,7 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const program = await findProgramById(String(req.params.id))
     if (!program) { res.status(404).json({ error: 'Program not found' }); return }
-    res.json(program)
+    res.json(withoutTemplateBlob(program))
   } catch (err) {
     fail(res, 'Failed to fetch program', err)
   }
@@ -91,7 +93,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   const body = validate(schemas.program.create, req.body, res)
   if (!body) return
   try {
-    res.status(201).json(await createProgram(body))
+    res.status(201).json(withoutTemplateBlob(await createProgram(body)))
   } catch (err) {
     fail(res, 'Failed to create program', err)
   }
@@ -103,7 +105,7 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const updated = await updateProgram(String(req.params.id), body)
     if (!updated) { res.status(404).json({ error: 'Program not found' }); return }
-    res.json(updated)
+    res.json(withoutTemplateBlob(updated))
   } catch (err) {
     fail(res, 'Failed to update program', err)
   }
@@ -125,7 +127,7 @@ router.put('/:programId/duration', async (req: Request, res: Response): Promise<
   try {
     const updated = await setProgramDuration(String(req.params.programId), body.start_date, body.weeks)
     if (!updated) { res.status(404).json({ error: 'Program not found' }); return }
-    res.json(updated)
+    res.json(withoutTemplateBlob(updated))
   } catch (err) {
     fail(res, 'Failed to update program duration', err)
   }
@@ -315,9 +317,12 @@ router.get('/:id/export', async (req: Request, res: Response): Promise<void> => 
 // generated buffer (see services/programPreview.ts) — never re-derives layout.
 router.get('/:id/export/preview', async (req: Request, res: Response): Promise<void> => {
   try {
-    const html = await buildProgramPreviewHtml(String(req.params.id))
-    res.json({ html })
+    res.json(await buildProgramPreviewHtml(String(req.params.id)))
   } catch (err) {
+    if (err instanceof SheetTooLargeError) {
+      res.status(err.status).json({ error: err.message })
+      return
+    }
     if (err instanceof ProgramExportError) {
       res.status(err.status).json({ error: err.message })
       return
@@ -405,6 +410,10 @@ router.post(
       const result = await commitImport(programId, preview.matched)
       res.json({ ...result, warnings: preview.warnings })
     } catch (err) {
+      if (err instanceof SheetTooLargeError) {
+        res.status(err.status).json({ error: err.message })
+        return
+      }
       const msg = err instanceof Error ? err.message : 'Import failed'
       res.status(500).json({ error: msg })
     }
@@ -468,6 +477,10 @@ router.post(
 
       res.status(201).json(result)
     } catch (err) {
+      if (err instanceof SheetTooLargeError) {
+        res.status(err.status).json({ error: err.message })
+        return
+      }
       const msg = err instanceof Error ? err.message : 'External import failed'
       res.status(msg.includes('not found') ? 400 : 500).json({ error: msg })
     }

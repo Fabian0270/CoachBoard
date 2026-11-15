@@ -45,15 +45,15 @@ describe('parseExternalFile (block-grid layout)', () => {
   it('reads each field from the correct week block', async () => {
     const res = await parseExternalFile(await buildGridSheet(2, PROGRAM))
     const w0 = res.exercises.find((e) => e.weekIndex === 0 && e.name === 'Squat')!
-    expect(w0).toMatchObject({ sets: '1', reps: '3', load: '180', rpe: '6', dayLabel: 'DAY 1', dayIndex: 0 })
+    expect(w0).toMatchObject({ sets: '1', reps: '3', loadCap: 180, intensity: '@6', load: null, rpe: null, dayLabel: 'DAY 1', dayIndex: 0 })
     const w1 = res.exercises.find((e) => e.weekIndex === 1 && e.name === 'Squat' && e.sheetRow === w0.sheetRow)!
-    expect(w1.load).toBe('190') // week 2's load, not week 1's
+    expect(w1.loadCap).toBe(190) // week 2's load, not week 1's
   })
 
   it('strips the "@" from RPE and keeps a range as-is', async () => {
     const res = await parseExternalFile(await buildGridSheet(2, PROGRAM))
     const dl = res.exercises.find((e) => e.weekIndex === 1 && e.name === 'Deadlift')!
-    expect(dl.rpe).toBe('6-7')
+    expect(dl.intensity).toBe('@6-7')
   })
 
   it('routes a load-backoff fraction in the RPE column to intensity', async () => {
@@ -69,7 +69,7 @@ describe('parseExternalFile (block-grid layout)', () => {
     expect(w0.filter((e) => e.dayIndex === 0).map((e) => e.name)).toEqual(['Squat', 'Squat', 'Bench Press'])
     expect(w0.filter((e) => e.dayIndex === 1).map((e) => e.name)).toEqual(['Deadlift'])
     // eRPE (executed) is NOT mapped — rpe comes from the prescribed RPE column.
-    expect(w0.find((e) => e.name === 'Deadlift')!.rpe).toBe('6')
+    expect(w0.find((e) => e.name === 'Deadlift')!.intensity).toBe('@6')
   })
 
   it('does not leak shared-formula / empty-object cells as exercise rows', async () => {

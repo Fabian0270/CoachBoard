@@ -167,6 +167,36 @@ export async function downloadToFile(
   return { sha256: hash.digest('hex'), bytes }
 }
 
+/**
+ * Removes every half-written `.part` file under the media folder.
+ *
+ * LAUNCH ONLY: a `.part` is an upload or download in progress, and at launch
+ * nothing can be — so every one found then was abandoned by a crash, a closed
+ * window or a pulled cable. The in-session sweeps all skip them, correctly, so
+ * nothing else ever removed them, and an analysis upload or Discord download
+ * can be up to 500 MB each.
+ */
+export async function sweepPartialMedia(): Promise<number> {
+  const root = mediaRoot()
+  let entries: string[]
+  try {
+    entries = await fsp.readdir(root, { recursive: true })
+  } catch {
+    return 0 // no media folder yet
+  }
+  let removed = 0
+  for (const entry of entries) {
+    if (!entry.endsWith('.part')) continue
+    await fsp.rm(path.join(root, entry), { force: true }).then(
+      () => removed++,
+      () => {
+        /* locked; the next launch gets it */
+      },
+    )
+  }
+  return removed
+}
+
 /** Best-effort delete (purge flow) — locked/missing files are tolerated. */
 export async function deleteMediaFile(relPath: string): Promise<boolean> {
   try {

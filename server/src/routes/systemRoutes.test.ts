@@ -140,14 +140,17 @@ describe('GET /api/backup/info', () => {
 })
 
 describe('POST /api/backup/restore', () => {
-  it('rejects a file that is not a database, with a reason the coach can act on', async () => {
+  it('rejects a file that is not a backup, with a reason the coach can act on', async () => {
     const res = await fetch(`${baseUrl}/api/backup/restore`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: Buffer.from('this is a spreadsheet, not a database'),
     })
     expect(res.status).toBe(400)
-    expect((await res.json()).error).toMatch(/not a SQLite database/i)
+    // Deliberately not "not a SQLite database" any more: a backup is a .zip
+    // archive now, so naming the internal storage engine would send a coach
+    // looking for the wrong kind of file.
+    expect((await res.json()).error).toMatch(/not a CoachBoard backup/i)
   })
 
   it('rejects an empty upload', async () => {
@@ -157,5 +160,30 @@ describe('POST /api/backup/restore', () => {
       body: Buffer.alloc(0),
     })
     expect(res.status).toBe(400)
+  })
+})
+
+describe('GET /api/system/storage', () => {
+  it('breaks the data folder down by what takes the space', async () => {
+    const { storeTemplate } = await import('../services/templateBlobStore.js')
+    const { runStartupBackup } = await import('../services/backupService.js')
+    const { sql } = await import('kysely')
+
+    await storeTemplate(Buffer.alloc(5_000, 1).toString('base64'))
+    await sql`INSERT INTO video_analyses (id, track, video_path, video_bytes) VALUES ('va1', '[]', 'va1.mp4', 1234567)`.execute(getDb())
+    await sql`INSERT INTO video_analyses (id, track, video_path, video_bytes) VALUES ('va2', '[]', NULL, NULL)`.execute(getDb())
+    await runStartupBackup()
+
+    const { status, body } = await json('/api/system/storage')
+    expect(status).toBe(200)
+    expect(body.database.bytes).toBeGreaterThan(0)
+    // Imported workbooks are counted, and they are part of the database file.
+    expect(body.excelTemplates).toEqual({ bytes: 5_000, files: 1 })
+    // Only analyses that kept their clip.
+    expect(body.analysisVideos).toEqual({ bytes: 1234567, files: 1 })
+    expect(body.backups.files).toBe(1)
+    expect(body.backups.bytes).toBeGreaterThan(0)
+    expect(body.discordMedia).toEqual({ bytes: 0, files: 0 })
+    expect(body.totalBytes).toBe(body.database.bytes + body.backups.bytes + body.analysisVideos.bytes)
   })
 })

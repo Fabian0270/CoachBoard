@@ -65,3 +65,40 @@ describe('renderWorkbookHtml', () => {
     expect(html).toContain('&lt;script&gt;')
   })
 })
+
+describe('alignment from an imported sheet', () => {
+  it('cannot break out of the style attribute', async () => {
+    // Reproduces the audit probe: an imported workbook whose styles.xml carries
+    // a horizontal alignment crafted to close the attribute and add a handler.
+    const ExcelJS = (await import('exceljs')).default
+    const JSZip = (await import('jszip')).default
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('S')
+    ws.getCell('A1').value = 'hello'
+    ws.getCell('A1').alignment = { horizontal: 'center' }
+    const zip = await JSZip.loadAsync(Buffer.from(await wb.xlsx.writeBuffer()))
+    const styles = await zip.file('xl/styles.xml')!.async('string')
+    zip.file(
+      'xl/styles.xml',
+      styles.replace('horizontal="center"', 'horizontal="center&quot; onmouseover=&quot;alert(1)"'),
+    )
+    const crafted = await zip.generateAsync({ type: 'nodebuffer' })
+
+    const html = await renderWorkbookHtml(crafted)
+    expect(html).not.toContain('onmouseover')
+    expect(html).toContain('>hello</td>')
+  })
+
+  it('still carries ordinary alignments through', async () => {
+    const ExcelJS = (await import('exceljs')).default
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('S')
+    ws.getCell('A1').value = 'r'
+    ws.getCell('A1').alignment = { horizontal: 'right' }
+    ws.getCell('B1').value = 'c'
+    ws.getCell('B1').alignment = { horizontal: 'centerContinuous' }
+    const html = await renderWorkbookHtml(Buffer.from(await wb.xlsx.writeBuffer()))
+    expect(html).toContain('text-align:right')
+    expect(html).toContain('text-align:center')
+  })
+})

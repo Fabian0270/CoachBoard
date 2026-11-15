@@ -1,6 +1,7 @@
 import { getDb } from '../db.js'
 import { findProgramForExport } from './programService.js'
 import { estimate1RM } from 'coachboard-shared/rpe'
+import { mainLiftKey } from 'coachboard-shared/vbt'
 import type {
   E1RMDataPoint,
   LiftE1RMTrend,
@@ -9,7 +10,8 @@ import type {
   AthleteMax,
 } from 'coachboard-shared'
 
-const MAIN_LIFT_KEYWORDS = ['squat', 'bench', 'deadlift'] as const
+// Grouping by competition lift uses the shared matcher: a bare substring test put
+// Front, Pin and Box Squat into the squat e1RM trend. See mainLiftKey.
 
 function mondayOf(date: Date): Date {
   const d = new Date(date)
@@ -84,8 +86,7 @@ export function computeE1RMTrends(
   for (const ex of exercises) {
     if (!ex.load_used || !ex.rpe || !ex.reps) continue
 
-    const liftLower = ex.name.toLowerCase()
-    const keyword = MAIN_LIFT_KEYWORDS.find((k) => liftLower.includes(k))
+    const keyword = mainLiftKey(ex.name)
     if (!keyword) continue
 
     const repsMatch = ex.reps.match(/\d+/)
@@ -145,7 +146,7 @@ export function latestE1RMByLift(
 // A field containing a percentage (e.g. "70%") is a load target, not an RPE, so a
 // bare percentage is ignored. The result is snapped to the nearest 0.5 within the
 // 5–10 RPE band; anything outside it (weights, reps) is rejected.
-function parseRpeFromIntensity(intensity: string | null): number | null {
+export function parseRpeFromIntensity(intensity: string | null): number | null {
   if (!intensity) return null
   const text = intensity.trim()
   if (!text) return null

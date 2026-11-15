@@ -17,6 +17,21 @@ export const ALIASES: Record<ExternalColumnKey, string[]> = {
 }
 const RIR_ALIASES = ['rir']
 
+/**
+ * Header words that mark a column as what the ATHLETE did rather than what the
+ * coach prescribed: "Load used", "Last set RPE", "Actual RPE", "Faktisk vikt".
+ *
+ * Load Used and Last Set RPE are only ever filled in by the athlete. A coach's
+ * sheet with a plain "Load" or "RPE" column is the prescription, and storing it
+ * as results made a fresh plan read as completed, with 1RM estimates computed
+ * from weights nobody had lifted yet.
+ */
+const RESULT_WORDS = ['used', 'actual', 'done', 'achieved', 'last', 'faktisk', 'faktiskt', 'gjord', 'gjort', 'senaste', 'utförd']
+
+export function isResultHeader(text: string): boolean {
+  return tokenize(text).some((t) => RESULT_WORDS.includes(t))
+}
+
 // Keys resolved in this order so a more specific header wins a shared token.
 // e.g. "Last Set RPE" tokenises to [last, set, rpe]; resolving rpe before sets
 // claims that column for rpe, leaving a plain "Sets" column free for sets.

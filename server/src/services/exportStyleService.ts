@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db.js'
+import { storeTemplate } from './templateBlobStore.js'
 import type { ExportLayoutTemplate, ExportStyle } from 'coachboard-shared'
 import { parseExportLayout } from 'coachboard-shared/exportLayout'
 
@@ -11,7 +12,7 @@ import { parseExportLayout } from 'coachboard-shared/exportLayout'
 // ---------------------------------------------------------------------------
 
 /** All saved styles, newest first; rows with unparseable descriptors are skipped.
- *  The (potentially large) template_xlsx bytes are NOT included in the list. */
+ *  The stored workbook (template_blobs) is NOT included in the list. */
 export async function findAllExportStyles(): Promise<ExportStyle[]> {
   const rows = await getDb()
     .selectFrom('export_styles')
@@ -32,10 +33,15 @@ export async function createExportStyle(
 ): Promise<ExportStyle> {
   const now = new Date().toISOString()
   const id = uuidv4()
-  await getDb()
-    .insertInto('export_styles')
-    .values({ id, name, descriptor: JSON.stringify(descriptor), template_xlsx: templateXlsx ?? null, created_at: now })
-    .execute()
+  // The same file the import just stored for its program, so this normally
+  // adds a pointer and no bytes.
+  await getDb().transaction().execute(async (trx) => {
+    const templateSha = templateXlsx ? await storeTemplate(templateXlsx, trx) : null
+    await trx
+      .insertInto('export_styles')
+      .values({ id, name, descriptor: JSON.stringify(descriptor), template_sha: templateSha, created_at: now })
+      .execute()
+  })
   return { id, name, descriptor, created_at: now }
 }
 

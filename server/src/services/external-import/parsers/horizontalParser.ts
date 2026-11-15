@@ -4,7 +4,7 @@ import type {
   ExternalImportWarning,
 } from 'coachboard-shared'
 import { tokenize } from '../cellParsing.js'
-import { ALIASES } from '../headerDetection.js'
+import { ALIASES, isResultHeader } from '../headerDetection.js'
 import {
   normalizeReps,
   normalizeIntensity,
@@ -12,6 +12,7 @@ import {
   normalizeLoadCap,
   normalizeRpe,
   weekdayOffset,
+  isWeekdayLabel,
 } from '../valueNormalizers.js'
 import { emptyMapping, type ParseResult, type ReadRow } from '../shared.js'
 
@@ -111,6 +112,8 @@ export function parseHorizontal(
     warnings.push({ message: 'No RPE/RIR column found — no effort analysis will be available for this program.' })
   }
 
+  const rpeIsResult = fields.rpe !== null && isResultHeader(headerCells[weekCols[0] - 1 + fields.rpe] ?? '')
+
   const exercises: ExternalExerciseRow[] = []
   let dayIndex = -1
   let dayLabel = ''
@@ -120,8 +123,9 @@ export function parseHorizontal(
   for (let r = labelRow; r <= maxRow; r++) {
     const cells = readRow(r)
 
-    // Weekday in column 1 starts a new day section (Mon=0 … Sun=6).
-    const wd = weekdayOffset(cells[0] ?? '')
+    // Weekday in column 1 starts a new day section (Mon=0 … Sun=6). The whole
+    // cell must BE a weekday: a prefix test read "French Press" as Fredag.
+    const wd = isWeekdayLabel(cells[0] ?? '') ? weekdayOffset(cells[0] ?? '') : null
     if (wd !== null) {
       dayIndex = wd
       dayLabel = (cells[0] ?? '').trim()
@@ -176,8 +180,13 @@ export function parseHorizontal(
         name,
         sets: setsText || null,
         reps: normalizeReps(repsText, r, warnings),
+        // This layout only ever takes load from a "Load Used" column, so the
+        // load is the athlete's by construction. RPE depends on the header:
+        // CoachBoard's own "Last Set RPE" is the athlete's, a plain "RPE" the coach's.
         load: normalizeLoad(loadUsedText, r, warnings),
         rpe: normalizeRpe(rpeText, fields.rpeFromRir, r, warnings),
+        loadIsResult: true,
+        rpeIsResult,
         sheetRow: r,
         intensity: normalizeIntensity(intensityText),
         loadCap: normalizeLoadCap(loadCapText),

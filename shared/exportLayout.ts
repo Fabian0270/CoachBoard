@@ -102,7 +102,7 @@ export function exportColumnKeysFor(
 export interface ExportRenderSource {
   enabled_columns: string | null
   export_layout: string | null
-  export_template_xlsx?: string | null
+  export_template_sha?: string | null
   builtin_template?: string | null
 }
 
@@ -114,7 +114,7 @@ export function resolveExportRenderPath(
   program: ExportRenderSource,
   enabledColumns: string[],
 ): ExportRenderPath {
-  if (program.export_template_xlsx) {
+  if (program.export_template_sha) {
     return { kind: 'opaque', renderer: 'scaffold', label: 'your own imported Excel style' }
   }
 
@@ -222,12 +222,40 @@ export function dayLabelFor(
 export function parseExportLayout(raw: string | null | undefined): ExportLayoutTemplate | null {
   if (!raw) return null
   try {
-    const parsed = JSON.parse(raw) as ExportLayoutTemplate
-    if (parsed && parsed.version === 1 && parsed.orientation && Array.isArray(parsed.columns)) {
-      return parsed
-    }
+    const parsed = JSON.parse(raw) as unknown
+    return isExportLayout(parsed) ? parsed : null
   } catch { /* fall through */ }
   return null
+}
+
+const ORIENTATIONS = new Set(['horizontal', 'vertical', 'block-grid', 'week-grid'])
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * Every field the renderer reads, checked before it reads it.
+ *
+ * Only version, orientation and `columns` being an array used to be checked,
+ * so a stored layout missing `colors`, `fonts` or `dayLabels` — or with a
+ * column whose key the renderer does not know — passed, and then threw inside
+ * the export ("Cannot read properties of undefined"). One damaged row made that
+ * program impossible to export at all. An invalid layout now reads as no
+ * layout, which falls back to the built-in look.
+ */
+function isExportLayout(v: unknown): v is ExportLayoutTemplate {
+  if (!isObject(v) || v.version !== 1) return false
+  if (typeof v.orientation !== 'string' || !ORIENTATIONS.has(v.orientation)) return false
+  if (!Array.isArray(v.columns)) return false
+  for (const c of v.columns) {
+    if (!isObject(c) || typeof c.key !== 'string' || !(c.key in COLUMN_LABELS)) return false
+    if (typeof c.label !== 'string') return false
+  }
+  if (!isObject(v.dayLabels)) return false
+  if (!['weekday', 'dayN', 'split'].includes(v.dayLabels.style as string)) return false
+  if (v.dayLabels.language !== 'en' && v.dayLabels.language !== 'sv') return false
+  if (v.dayLabels.custom !== undefined && !Array.isArray(v.dayLabels.custom)) return false
+  if (v.rpeNotation !== 'plain' && v.rpeNotation !== 'at') return false
+  if (!isObject(v.colors) || !isObject(v.fonts)) return false
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -280,10 +308,19 @@ export function isBuiltinTemplateId(value: unknown): value is BuiltinTemplateId 
 export const MINIMAL_DESCRIPTOR: ExportLayoutTemplate = {
   version: 1,
   orientation: 'horizontal',
+  // Target and Weight carry the PRESCRIPTION; Load and RPE are left for the
+  // athlete's results. The look used to have only the last two, so a program
+  // exported in it reached the athlete with no prescribed weight or target
+  // effort at all. The prescription gets its own columns rather than being
+  // pre-filled into Load: the results importer reads "Load" back, and would
+  // take an untouched prescription for a logged set. Neither "Target" nor
+  // "Weight" is a label the importer treats as a result.
   columns: [
     { key: 'name', label: 'Exercise' },
     { key: 'sets', label: 'Sets' },
     { key: 'reps', label: 'Reps' },
+    { key: 'intensity', label: 'Target' },
+    { key: 'load_cap', label: 'Weight' },
     { key: 'load_used', label: 'Load' },
     { key: 'rpe', label: 'RPE' },
   ],

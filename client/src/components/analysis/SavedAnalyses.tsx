@@ -12,6 +12,8 @@ import {
 import { Button } from '../ui/button'
 import { useToast } from '../ui/toast'
 import { useConfirm } from '../ui/confirm-dialog'
+import LoadError from '../LoadError'
+import { errorMessage, getList } from '../../lib/api'
 
 // ---------------------------------------------------------------------------
 // Saved bar-path analyses.
@@ -41,14 +43,16 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
   const toast = useToast()
   const confirm = useConfirm()
   const [rows, setRows] = useState<VideoAnalysisDto[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const load = useCallback(() => {
     // withTrack=0: a path is up to 20 000 points and none of it is shown here.
     const scope = athleteId ? `athleteId=${encodeURIComponent(athleteId)}&` : ''
-    fetch(`/api/analysis?${scope}withTrack=0`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: VideoAnalysisDto[]) => setRows(Array.isArray(data) ? data : []))
-      .catch(() => setRows([]))
+    // A failure used to read as "No saved analyses yet".
+    setLoadError(null)
+    getList<VideoAnalysisDto>(`/api/analysis?${scope}withTrack=0`)
+      .then(setRows)
+      .catch((err) => setLoadError(errorMessage(err)))
   }, [athleteId])
 
   useEffect(load, [load, refreshKey])
@@ -85,6 +89,7 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
     toast.success(`Attached to ${updated.athleteName ?? 'the athlete'}.`)
   }
 
+  if (loadError) return <LoadError what="your saved analyses" message={loadError} onRetry={load} />
   if (rows === null) return <p className="text-sm text-muted-foreground">Loading…</p>
   if (rows.length === 0) {
     return (

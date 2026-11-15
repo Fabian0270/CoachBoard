@@ -8,6 +8,8 @@ import { parseBlockGrid } from './parsers/blockGridParser.js'
 import { parseWeekGrid } from './parsers/weekGridParser.js'
 import { captureLayoutTemplate } from './layoutCapture.js'
 import { guessFocus } from './focus.js'
+import { routePrescription } from './prescription.js'
+import { sheetBounds } from '../../lib/sheetBounds.js'
 
 // ---------------------------------------------------------------------------
 // External import parser (Feature 4a)
@@ -40,8 +42,11 @@ export async function parseExternalFile(
     }
   }
 
-  const maxCol = Math.max(ws.columnCount || 0, 1)
-  const maxRow = ws.rowCount || 0
+  // Content extent, not ws.rowCount/columnCount — see lib/sheetBounds.ts for
+  // why the old bounds took the whole app down on one stray cell.
+  const bounds = sheetBounds(ws)
+  const maxCol = Math.max(bounds.cols, 1)
+  const maxRow = bounds.rows
   const readRow = makeReadRow(ws, maxCol)
 
   const banner = findWeekBannerRow(readRow, maxRow)
@@ -84,6 +89,10 @@ export async function parseExternalFile(
   void _omit
   return {
     ...preview,
+    // Focus and style capture above read the sheet as written; what is shown
+    // and stored has the coach's prescription moved out of the athlete's
+    // Load Used / Last Set RPE fields.
+    exercises: result.exercises.map(routePrescription),
     suggestedFocus: guessFocus(result.exercises),
     layoutTemplate,
     headerRowIndex,

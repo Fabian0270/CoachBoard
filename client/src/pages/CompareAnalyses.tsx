@@ -18,6 +18,8 @@ import {
   type VelocityMetric,
 } from 'coachboard-shared/vbt'
 import { Button } from '../components/ui/button'
+import { useToast } from '../components/ui/toast'
+import { errorMessage, getJson, getList } from '../lib/api'
 import AnalysisStage, { type StageMode } from '../components/analysis/AnalysisStage'
 import DrawControls from '../components/analysis/DrawControls'
 import PathPlot from '../components/analysis/PathPlot'
@@ -52,30 +54,38 @@ export default function CompareAnalyses() {
   const [saved, setSaved] = useState<VideoAnalysisDto[] | null>(null)
   const [left, setLeft] = useState<Side>({ kind: 'empty' })
   const [right, setRight] = useState<Side>({ kind: 'empty' })
+  const [savedError, setSavedError] = useState<string | null>(null)
+  const toast = useToast()
 
   // The list is fetched without tracks — the paths are only needed once a side
-  // actually picks one, and a whole history of them is megabytes.
+  // actually picks one, and a whole history of them is megabytes. A failure
+  // used to leave the picker empty, as if nothing had ever been saved.
   useEffect(() => {
-    fetch('/api/analysis?withTrack=0')
-      .then((r) => (r.ok ? r.json() : []))
+    getList<VideoAnalysisDto>('/api/analysis?withTrack=0')
       .then(setSaved)
-      .catch(() => setSaved([]))
+      .catch((err) => {
+        setSaved([])
+        setSavedError(errorMessage(err))
+      })
   }, [])
 
-  // Deep link from the saved list: /analysis/compare?left=<id>
+  // Deep link from the saved list: /analysis/compare?left=<id>. A failure used
+  // to leave that side silently empty.
   useEffect(() => {
+    let cancelled = false
     const wanted = [params.get('left'), params.get('right')] as const
     wanted.forEach((id, i) => {
       if (!id) return
-      fetch(`/api/analysis/${id}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((a: VideoAnalysisDto | null) => {
-          if (!a) return
-          ;(i === 0 ? setLeft : setRight)({ kind: 'saved', analysis: a })
+      getJson<VideoAnalysisDto>(`/api/analysis/${encodeURIComponent(id)}`)
+        .then((a) => {
+          if (!cancelled) (i === 0 ? setLeft : setRight)({ kind: 'saved', analysis: a })
         })
-        .catch(() => {})
+        .catch((err) => {
+          if (!cancelled) toast.error(`Could not open that saved analysis. ${errorMessage(err)}`)
+        })
     })
-  }, [params])
+    return () => { cancelled = true }
+  }, [params]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="space-y-4 p-6">
@@ -92,8 +102,8 @@ export default function CompareAnalyses() {
       </p>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Pane side={left} onChange={setLeft} saved={saved} color={color} label="Left" />
-        <Pane side={right} onChange={setRight} saved={saved} color={color} label="Right" />
+        <Pane side={left} onChange={setLeft} saved={saved} savedError={savedError} color={color} label="Left" />
+        <Pane side={right} onChange={setRight} saved={saved} savedError={savedError} color={color} label="Right" />
       </div>
 
       {left.kind === 'saved' && right.kind === 'saved' && (
@@ -107,15 +117,18 @@ function Pane({
   side,
   onChange,
   saved,
+  savedError,
   color,
   label,
 }: {
   side: Side
   onChange: (next: Side) => void
   saved: VideoAnalysisDto[] | null
+  savedError: string | null
   color: string
   label: string
 }) {
+  const toast = useToast()
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const emptyLivePath = useRef<never[]>([])
   // Per side, not per page: the two lifts are being contrasted, so a mark drawn
@@ -168,10 +181,9 @@ function Pane({
               if (!found) return
               // The list came back without tracks, so the full row is fetched
               // here — the path is the whole point of picking a saved one.
-              fetch(`/api/analysis/${found.id}`)
-                .then((r) => (r.ok ? r.json() : null))
-                .then((a: VideoAnalysisDto | null) => a && onChange({ kind: 'saved', analysis: a }))
-                .catch(() => {})
+              getJson<VideoAnalysisDto>(`/api/analysis/${encodeURIComponent(found.id)}`)
+                .then((a) => onChange({ kind: 'saved', analysis: a }))
+                .catch((err) => toast.error(`Could not open that saved analysis. ${errorMessage(err)}`))
             }}
             className="w-full rounded-md border bg-background px-2 py-1 text-sm"
           >
@@ -182,6 +194,11 @@ function Pane({
               </option>
             ))}
           </select>
+          {savedError && (
+            <p className="mt-1 text-xs text-destructive">
+              Could not load your saved analyses. {savedError}
+            </p>
+          )}
         </div>
       </div>
     )

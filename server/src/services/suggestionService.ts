@@ -5,10 +5,10 @@ import { findProgramById } from './programService.js'
 import { findTemplate } from '../lib/suggestionTemplates.js'
 import { SUGGESTION_TEMPLATES } from 'coachboard-shared'
 import { ACCESSORY_POOLS } from 'coachboard-shared/knowledge'
+import { bestStoredMax, mainLiftKey, type MainLiftKey } from 'coachboard-shared/vbt'
 import type { SuggestProgramBody, SuggestProgramResult, WeekSlot } from 'coachboard-shared'
 
-const MAIN_LIFT_KEYWORDS = ['squat', 'bench', 'deadlift'] as const
-type LiftKey = (typeof MAIN_LIFT_KEYWORDS)[number]
+type LiftKey = MainLiftKey
 
 // Day-of-week offsets (0 = Monday) and lift assignments per training-day count.
 const DAY_OFFSETS: Record<number, number[]> = {
@@ -31,15 +31,22 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
 }
 
-function liftKeyFor(name: string): LiftKey | null {
-  const lower = name.toLowerCase()
-  for (const k of MAIN_LIFT_KEYWORDS) {
-    if (lower.includes(k)) return k
+// The shared matcher, not a substring test — see mainLiftKey in shared/vbt.ts.
+const liftKeyFor = mainLiftKey
+
+const MAIN_LIFTS: LiftKey[] = ['squat', 'bench', 'deadlift']
+
+/** The stored max per main lift — plain lift name first, then most recent. */
+function storedMaxMap(rows: { lift_name: string; weight: number; recorded_at: string }[]): Map<LiftKey, number> {
+  const map = new Map<LiftKey, number>()
+  for (const key of MAIN_LIFTS) {
+    const best = bestStoredMax(key, rows)
+    if (best) map.set(key, best.weight)
   }
-  return null
+  return map
 }
 
-// Latest stored 1RM per main lift for an athlete, keyed by lift. Used to scale a
+// Stored 1RM per main lift for an athlete, keyed by lift. Used to scale a
 // draft's loads to the athlete it's being generated for — essential when the
 // source program belongs to a different athlete.
 async function storedMaxE1rmMap(athleteId: string): Promise<Map<LiftKey, number>> {
@@ -47,15 +54,8 @@ async function storedMaxE1rmMap(athleteId: string): Promise<Map<LiftKey, number>
     .selectFrom('athlete_maxes')
     .selectAll()
     .where('athlete_id', '=', athleteId)
-    .orderBy('lift_name', 'asc')
-    .orderBy('recorded_at', 'desc')
     .execute()
-  const map = new Map<LiftKey, number>()
-  for (const m of rows) {
-    const key = liftKeyFor(m.lift_name)
-    if (key && !map.has(key)) map.set(key, m.weight) // most-recent row per lift wins
-  }
-  return map
+  return storedMaxMap(rows)
 }
 
 function toIso(d: Date): string {
@@ -317,9 +317,8 @@ export async function generateDraftProgram(
     for (const trend of report.e1rmTrends) {
       if (trend.latestE1RM !== null) e1rmMap.set(trend.liftKey as LiftKey, trend.latestE1RM)
     }
-    for (const max of report.storedMaxes) {
-      const key = liftKeyFor(max.lift_name)
-      if (key && !e1rmMap.has(key)) e1rmMap.set(key, max.weight)
+    for (const [key, weight] of storedMaxMap(report.storedMaxes)) {
+      if (!e1rmMap.has(key)) e1rmMap.set(key, weight)
     }
   }
 
@@ -348,108 +347,112 @@ export async function generateDraftProgram(
     slotsByLift.set(liftKey, template.generate(body.weeks, e1rm, rpeAdjustment, body.style))
   }
 
-  const db = getDb()
   const now = new Date().toISOString()
   const startIso = body.startDate
   const endIso = addDays(startIso, body.weeks * 7 - 1)
 
-  const draftProgram = await db
-    .insertInto('programs')
-    .values({
-      id: uuidv4(),
-      athlete_id: body.athleteId,
-      name: `[Draft] ${source.name}`,
-      description: null,
-      start_date: startIso,
-      end_date: endIso,
-      status: 'draft',
-      enabled_columns: source.enabled_columns ? JSON.stringify(source.enabled_columns) : null,
-      // Carry the source's captured Excel layout + original file so the draft
-      // exports in the coach's own style (Feature: export style templates).
-      export_layout: source.export_layout ? JSON.stringify(source.export_layout) : null,
-      export_template_xlsx: source.export_template_xlsx ?? null,
-      // Override > inherit the source's built-in look > CoachBoard default. (Moot
-      // when the draft inherits an imported coach style, which wins at export.)
-      builtin_template: body.builtin_template ?? source.builtin_template ?? 'coachboard',
-      focus: draftFocus,
-      created_at: now,
-      updated_at: now,
-    })
-    .returningAll()
-    .executeTakeFirstOrThrow()
+  // One transaction for the whole draft. It is a program row plus up to a few
+  // hundred workouts and exercises, and a failure partway used to leave a
+  // half-built "[Draft]" behind that looked like a real, if odd, program.
+  return getDb().transaction().execute(async (db) => {
+    const draftProgram = await db
+      .insertInto('programs')
+      .values({
+        id: uuidv4(),
+        athlete_id: body.athleteId,
+        name: `[Draft] ${source.name}`,
+        description: null,
+        start_date: startIso,
+        end_date: endIso,
+        status: 'draft',
+        enabled_columns: source.enabled_columns ? JSON.stringify(source.enabled_columns) : null,
+        // Carry the source's captured Excel layout + original file so the draft
+        // exports in the coach's own style. The workbook is shared by key, not copied.
+        export_layout: source.export_layout ? JSON.stringify(source.export_layout) : null,
+        export_template_sha: source.export_template_sha ?? null,
+        // Override > inherit the source's built-in look > CoachBoard default. (Moot
+        // when the draft inherits an imported coach style, which wins at export.)
+        builtin_template: body.builtin_template ?? source.builtin_template ?? 'coachboard',
+        focus: draftFocus,
+        created_at: now,
+        updated_at: now,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow()
 
-  for (let week = 1; week <= body.weeks; week++) {
-    for (const day of layout) {
-      const workoutDate = addDays(startIso, (week - 1) * 7 + day.dayOffset)
+    for (let week = 1; week <= body.weeks; week++) {
+      for (const day of layout) {
+        const workoutDate = addDays(startIso, (week - 1) * 7 + day.dayOffset)
 
-      const workout = await db
-        .insertInto('workouts')
-        .values({
-          id: uuidv4(),
-          program_id: draftProgram.id,
-          name: workoutDate,
-          scheduled_date: workoutDate,
-          notes: null,
-          created_at: now,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow()
+        const workout = await db
+          .insertInto('workouts')
+          .values({
+            id: uuidv4(),
+            program_id: draftProgram.id,
+            name: workoutDate,
+            scheduled_date: workoutDate,
+            notes: null,
+            created_at: now,
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow()
 
-      let orderIndex = 0
+        let orderIndex = 0
 
-      for (const seg of day.lifts) {
-        const slot = slotsByLift.get(seg.liftKey)?.[week - 1] ?? null
+        for (const seg of day.lifts) {
+          const slot = slotsByLift.get(seg.liftKey)?.[week - 1] ?? null
 
-        if (slot) {
-          await db
-            .insertInto('exercises')
-            .values({
-              id: uuidv4(),
-              workout_id: workout.id,
-              name: LIFT_DISPLAY[seg.liftKey],
-              sets: String(slot.sets),
-              reps: String(slot.reps),
-              weight: blankWeightLifts.has(seg.liftKey) ? null : slot.weight,
-              duration: null,
-              distance: null,
-              notes: null,
-              order_index: orderIndex++,
-              rest_time: null,
-              intensity: `RPE ${slot.targetRpe}`,
-              load_used: null,
-              rpe: null,
-              group_id: null,
-              suggestion_note: slot.explanation + styleNote,
-            })
-            .execute()
-        }
+          if (slot) {
+            await db
+              .insertInto('exercises')
+              .values({
+                id: uuidv4(),
+                workout_id: workout.id,
+                name: LIFT_DISPLAY[seg.liftKey],
+                sets: String(slot.sets),
+                reps: String(slot.reps),
+                weight: blankWeightLifts.has(seg.liftKey) ? null : slot.weight,
+                duration: null,
+                distance: null,
+                notes: null,
+                order_index: orderIndex++,
+                rest_time: null,
+                intensity: `RPE ${slot.targetRpe}`,
+                load_used: null,
+                rpe: null,
+                group_id: null,
+                suggestion_note: slot.explanation + styleNote,
+              })
+              .execute()
+          }
 
-        for (const acc of seg.accessories) {
-          await db
-            .insertInto('exercises')
-            .values({
-              id: uuidv4(),
-              workout_id: workout.id,
-              name: acc.name,
-              sets: acc.sets,
-              reps: acc.reps,
-              weight: null,
-              duration: acc.duration,
-              distance: acc.distance,
-              notes: acc.notes,
-              order_index: orderIndex++,
-              rest_time: acc.rest_time,
-              intensity: null,
-              load_used: null,
-              rpe: null,
-              group_id: null,
-              suggestion_note: acc.suggestionNote ?? null,
-            })
-            .execute()
+          for (const acc of seg.accessories) {
+            await db
+              .insertInto('exercises')
+              .values({
+                id: uuidv4(),
+                workout_id: workout.id,
+                name: acc.name,
+                sets: acc.sets,
+                reps: acc.reps,
+                weight: null,
+                duration: acc.duration,
+                distance: acc.distance,
+                notes: acc.notes,
+                order_index: orderIndex++,
+                rest_time: acc.rest_time,
+                intensity: null,
+                load_used: null,
+                rpe: null,
+                group_id: null,
+                suggestion_note: acc.suggestionNote ?? null,
+              })
+              .execute()
+          }
         }
       }
     }
-  }
 
-  return { draftProgramId: draftProgram.id }
+    return { draftProgramId: draftProgram.id }
+  })
 }

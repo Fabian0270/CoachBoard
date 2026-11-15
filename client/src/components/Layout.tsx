@@ -31,6 +31,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // Hide the Inbox until Discord is connected — nothing to show otherwise.
   const items = navItems.filter((n) => !n.discordOnly || discordConfigured)
 
+  /**
+   * Whether a nav entry owns the current screen.
+   *
+   * Prefix match, not equality: an exact comparison lit nothing at all on
+   * /athletes/:id or /programs/:id, so the sidebar went blank the moment a coach
+   * opened anything — which is most of the time they spend in the app. Root is
+   * the exception, since every path starts with "/".
+   */
+  const isActive = (to: string): boolean =>
+    to === '/' ? location.pathname === '/' : location.pathname.startsWith(to)
+
   return (
     <div className="h-screen overflow-hidden flex flex-col md:flex-row">
       <nav className="bg-primary text-primary-foreground dark:bg-[#181818] dark:text-[#c8c8c8] dark:border-r dark:border-[#2b2b2b] shrink-0 w-full md:w-56 md:h-screen md:overflow-y-auto flex md:flex-col">
@@ -38,13 +49,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="flex md:flex-col flex-1 overflow-x-auto md:overflow-visible">
           {items.map(({ to, label, icon: Icon }) => {
             const badge = to === '/discord-inbox' && inboxBadge > 0 ? inboxBadge : null
+            const active = isActive(to)
             return (
               <Link
                 key={to}
                 to={to}
+                aria-current={active ? 'page' : undefined}
                 className={cn(
                   'flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors hover:bg-primary-foreground/10 dark:border-l-2 dark:border-l-transparent dark:text-[#c8c8c8] dark:hover:bg-[#2a2d2e]',
-                  location.pathname === to && 'bg-primary-foreground/20 dark:bg-[#37373d] dark:text-white dark:border-l-blue-500',
+                  active && 'bg-primary-foreground/20 dark:bg-[#37373d] dark:text-white dark:border-l-blue-500',
                 )}
               >
                 <Icon className="h-4 w-4 shrink-0" />

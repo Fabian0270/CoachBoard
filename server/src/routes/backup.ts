@@ -4,9 +4,11 @@ import {
   RestoreError,
   backupInfo,
   cancelPendingRestore,
+  dismissRestoreFailure,
   exportToBuffer,
   runStartupBackup,
   stageRestore,
+  stageUndoRestore,
 } from '../services/backupService.js'
 
 const router = Router()
@@ -21,16 +23,17 @@ router.get('/info', (_req: Request, res: Response): void => {
   }
 })
 
-// GET /api/backup/export — the whole database as a downloadable file.
+// GET /api/backup/export — a full backup archive (database + settings) as a
+// downloadable file. See the format note in backupService.
 router.get('/export', async (_req: Request, res: Response): Promise<void> => {
   try {
     const buffer = await exportToBuffer()
     const stamp = new Date().toISOString().slice(0, 10)
-    res.setHeader('Content-Type', 'application/octet-stream')
-    res.setHeader('Content-Disposition', `attachment; filename="coachboard-backup-${stamp}.sqlite"`)
+    res.setHeader('Content-Type', 'application/zip')
+    res.setHeader('Content-Disposition', `attachment; filename="coachboard-backup-${stamp}.zip"`)
     res.send(buffer)
   } catch (err) {
-    fail(res, 'Failed to export the database', err)
+    fail(res, 'Failed to export your data', err)
   }
 })
 
@@ -48,20 +51,23 @@ router.post('/now', async (_req: Request, res: Response): Promise<void> => {
   }
 })
 
-// POST /api/backup/restore — stage an uploaded database. Applied at next launch,
-// because SQLite holds the live file open for the whole session.
+// POST /api/backup/restore — stage an uploaded backup. Applied at next launch,
+// because SQLite holds the live file open for the whole session. Accepts both
+// the current .zip archive and a bare .sqlite from before that format existed.
 router.post(
   '/restore',
   express.raw({ type: 'application/octet-stream', limit: '200mb' }),
-  (req: Request, res: Response): void => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
       const body = req.body
       if (!Buffer.isBuffer(body) || body.length === 0) {
         res.status(400).json({ error: 'No file was uploaded' })
         return
       }
-      stageRestore(body)
-      res.json({ restartRequired: true })
+      const staged = await stageRestore(body)
+      // The client tells the coach which parts are coming back, so a database-only
+      // restore does not look like it will bring their email settings with it.
+      res.json({ restartRequired: true, settings: staged.settings })
     } catch (err) {
       // A rejected file is the coach's problem to fix, not a server fault — give
       // them the specific reason rather than a generic 500.
@@ -73,6 +79,31 @@ router.post(
     }
   },
 )
+
+// POST /api/backup/restore/undo — go back to the database the last restore
+// replaced. Applied at next launch, exactly like a restore.
+router.post('/restore/undo', (_req: Request, res: Response): void => {
+  try {
+    const staged = stageUndoRestore()
+    res.json({ restartRequired: true, settings: staged.settings })
+  } catch (err) {
+    if (err instanceof RestoreError) {
+      res.status(400).json({ error: err.message })
+      return
+    }
+    fail(res, 'Failed to stage the undo', err)
+  }
+})
+
+// DELETE /api/backup/restore-failed — dismiss the notice about a rolled-back restore.
+router.delete('/restore-failed', (_req: Request, res: Response): void => {
+  try {
+    dismissRestoreFailure()
+    res.status(204).end()
+  } catch (err) {
+    fail(res, 'Failed to dismiss the notice', err)
+  }
+})
 
 // DELETE /api/backup/restore — change your mind before restarting.
 router.delete('/restore', (_req: Request, res: Response): void => {

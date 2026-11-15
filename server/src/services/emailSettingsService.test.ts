@@ -10,9 +10,9 @@ import {
 // Reversible stand-in for Electron safeStorage so the round-trip is testable
 // off-Electron. Prefixes the plaintext so we can prove decrypt is actually run.
 const fakeSafeStorage: SafeStorageLike = {
-  isEncryptionAvailable: () => true,
-  encryptString: (s) => Buffer.from(`enc:${s}`, 'utf8'),
-  decryptString: (b) => b.toString('utf8').replace(/^enc:/, ''),
+  isAsyncEncryptionAvailable: async () => true,
+  encryptStringAsync: async (s) => Buffer.from(`enc:${s}`, 'utf8'),
+  decryptStringAsync: async (b) => ({ result: b.toString('utf8').replace(/^enc:/, '') }),
 }
 
 let tmpDir: string
@@ -78,7 +78,7 @@ describe('emailSettingsService', () => {
 
   it('refuses to save a password when secure storage is unavailable', async () => {
     configureSecureStore({
-      safeStorage: { ...fakeSafeStorage, isEncryptionAvailable: () => false },
+      safeStorage: { ...fakeSafeStorage, isAsyncEncryptionAvailable: async () => false },
       userDataDir: tmpDir,
     })
     await expect(saveSettings(baseInput)).rejects.toBeInstanceOf(EmailSettingsError)

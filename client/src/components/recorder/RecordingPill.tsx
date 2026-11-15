@@ -4,11 +4,14 @@ import { DISCORD_MAX_BYTES, formatBytes, formatDuration, sizeStatus } from './re
 // ---------------------------------------------------------------------------
 // The only control that stays on screen while recording.
 //
-// It IS in the recording when the coach records CoachBoard or a whole screen.
-// That is accepted rather than worked around: keeping it out would mean a
-// second always-on-top window, and this app has no IPC to drive one. A small
-// pill that reads as a recording indicator is an honest thing to leave in the
-// frame — and it tells the athlete the coach knows they are being recorded.
+// It IS in the recording when the coach records CoachBoard (or a whole screen
+// with CoachBoard visible). A small pill that reads as a recording indicator is
+// an honest thing to leave in the frame — and it tells the athlete the coach
+// knows they are being recorded.
+//
+// For any other source, CoachBoard is usually behind the window being
+// recorded, so the main process also opens FloatingControls: a separate
+// always-on-top bar, excluded from capture, driven over a BroadcastChannel.
 // ---------------------------------------------------------------------------
 
 interface Props {

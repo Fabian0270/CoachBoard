@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import { buildProgramWorkbook } from './programExport.js'
+import { sheetBounds } from '../lib/sheetBounds.js'
 
 // ---------------------------------------------------------------------------
 // Workbook → HTML preview.
@@ -67,6 +68,26 @@ function parseMerges(merges: string[]): {
   return { masters, covered }
 }
 
+/**
+ * Excel horizontal alignment -> CSS text-align, by allowlist.
+ *
+ * The value comes out of the workbook's styles.xml, which is attacker-shaped
+ * whenever the coach imports a sheet someone else built. It used to be pasted
+ * into the style attribute as-is, so an alignment of
+ * `center" onmouseover="…` closed the attribute and added an event handler to
+ * HTML the client renders with dangerouslySetInnerHTML. Only known values map
+ * to anything; the rest are dropped.
+ */
+const CSS_TEXT_ALIGN: Record<string, string> = {
+  left: 'left',
+  center: 'center',
+  right: 'right',
+  justify: 'justify',
+  distributed: 'justify',
+  centerContinuous: 'center',
+  fill: 'left',
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -82,8 +103,12 @@ export async function renderWorkbookHtml(buffer: Buffer): Promise<string> {
   const ws = wb.worksheets[0]
   if (!ws) return '<table class="xlsx-preview"></table>'
 
-  const colCount = Math.max(ws.columnCount, ws.actualColumnCount, 1)
-  const rowCount = Math.max(ws.rowCount, ws.actualRowCount, 1)
+  // Content extent. rowCount/columnCount reach the furthest cell ever stored,
+  // and this loop builds a <td> for every position — one stray cell at row
+  // 100,000 produced 90 MB of HTML. See lib/sheetBounds.ts.
+  const bounds = sheetBounds(ws)
+  const colCount = Math.max(bounds.cols, 1)
+  const rowCount = Math.max(bounds.rows, 1)
   const { masters, covered } = parseMerges((ws.model.merges as string[]) ?? [])
 
   const colGroup: string[] = []
@@ -111,7 +136,7 @@ export async function renderWorkbookHtml(buffer: Buffer): Promise<string> {
       const fontColor = argbToCss(font?.color?.argb)
       if (fontColor) styles.push(`color:${fontColor}`)
 
-      const align = cell.alignment?.horizontal
+      const align = CSS_TEXT_ALIGN[String(cell.alignment?.horizontal ?? '')]
       if (align) styles.push(`text-align:${align}`)
 
       const spanAttr = span ? ` rowspan="${span.rowspan}" colspan="${span.colspan}"` : ''
@@ -128,7 +153,9 @@ export async function renderWorkbookHtml(buffer: Buffer): Promise<string> {
 }
 
 /** Build a program's workbook and return its HTML preview (shares the export path). */
-export async function buildProgramPreviewHtml(programId: string): Promise<string> {
-  const { buffer } = await buildProgramWorkbook(programId)
-  return renderWorkbookHtml(buffer)
+export async function buildProgramPreviewHtml(
+  programId: string,
+): Promise<{ html: string; notice: string | null }> {
+  const { buffer, notice } = await buildProgramWorkbook(programId)
+  return { html: await renderWorkbookHtml(buffer), notice }
 }

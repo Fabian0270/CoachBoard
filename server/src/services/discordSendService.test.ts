@@ -9,9 +9,9 @@ import { saveToken } from './discordSettingsService.js'
 import { replyToMedia, dmAthlete, listSentForMedia, DiscordSendError } from './discordSendService.js'
 
 const fakeSafeStorage: SafeStorageLike = {
-  isEncryptionAvailable: () => true,
-  encryptString: (s) => Buffer.from(`enc:${s}`, 'utf8'),
-  decryptString: (b) => b.toString('utf8').replace(/^enc:/, ''),
+  isAsyncEncryptionAvailable: async () => true,
+  encryptStringAsync: async (s) => Buffer.from(`enc:${s}`, 'utf8'),
+  decryptStringAsync: async (b) => ({ result: b.toString('utf8').replace(/^enc:/, '') }),
 }
 
 let tmpDir: string

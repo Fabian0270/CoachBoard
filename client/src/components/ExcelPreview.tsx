@@ -12,6 +12,8 @@ interface Props {
 // what the coach sees here is what the athlete receives.
 export default function ExcelPreview({ programId, refreshKey }: Props) {
   const [html, setHtml] = useState<string | null>(null)
+  /** Why the coach's own style was not used for this export, when it was not. */
+  const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -23,9 +25,13 @@ export default function ExcelPreview({ programId, refreshKey }: Props) {
       .then(async (r) => {
         const data = await r.json().catch(() => ({}))
         if (!r.ok) throw new Error(data.error ?? 'Failed to build the preview')
-        return data.html as string
+        return data as { html: string; notice?: string | null }
       })
-      .then((h) => { if (!cancelled) setHtml(h) })
+      .then((d) => {
+        if (cancelled) return
+        setHtml(d.html)
+        setNotice(d.notice ?? null)
+      })
       .catch((e) => { if (!cancelled) setError(e.message) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -50,8 +56,16 @@ export default function ExcelPreview({ programId, refreshKey }: Props) {
   }
 
   return (
-    <div className="overflow-auto rounded-md border bg-white p-3">
-      <div dangerouslySetInnerHTML={{ __html: html ?? '' }} />
+    <div className="space-y-2">
+      {notice && (
+        <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{notice}</span>
+        </div>
+      )}
+      <div className="overflow-auto rounded-md border bg-white p-3">
+        <div dangerouslySetInnerHTML={{ __html: html ?? '' }} />
+      </div>
     </div>
   )
 }

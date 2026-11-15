@@ -27,6 +27,12 @@ export function configureUpdates(opts: { install?: (() => void) | null }): void 
 }
 
 export function setUpdateState(next: { status: UpdateStatus; version?: string | null; message?: string | null }): void {
+  // Once an update is downloaded it stays installable until a NEWER one is
+  // ready. The periodic re-check reports 'checking', then 'idle' or 'error',
+  // and each of those used to overwrite 'ready' — so the "Restart to update"
+  // banner disappeared and the install request answered 409, while the staged
+  // update was still sitting there waiting to be applied on quit.
+  if (state.status === 'ready' && next.status !== 'ready') return
   state = { version: null, message: null, ...next }
 }
 

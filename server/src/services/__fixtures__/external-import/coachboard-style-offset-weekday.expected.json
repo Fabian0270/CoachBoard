@@ -23,6 +23,8 @@
       "name": "Squat",
       "sets": "3",
       "reps": "5",
+      "loadCap": null,
+      "intensity": null,
       "load": "100",
       "rpe": "8"
     },
@@ -34,6 +36,8 @@
       "name": "Bench",
       "sets": "3",
       "reps": "8",
+      "loadCap": null,
+      "intensity": null,
       "load": "60",
       "rpe": "7"
     }

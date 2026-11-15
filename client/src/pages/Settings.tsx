@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import { Mail, Send, ExternalLink, AlertTriangle, Lock, MessageSquare, Database, Settings as SettingsIcon } from 'lucide-react'
 import DiscordSettingsCard from '../components/discord/DiscordSettingsCard'
 import DataSettingsCard from '../components/DataSettingsCard'
+import { errorMessage, getJson } from '../lib/api'
 
 type Provider = 'gmail' | 'outlook' | 'custom'
 
@@ -75,9 +76,8 @@ export default function Settings() {
   const [unlocked, setUnlocked] = useState(false)
 
   useEffect(() => {
-    fetch('/api/settings/email')
-      .then((r) => r.json())
-      .then((s: PublicEmailSettings) => {
+    getJson<PublicEmailSettings>('/api/settings/email')
+      .then((s) => {
         if (s && s.configured) {
           setConfigured(true)
           if (s.provider) setProvider(s.provider)
@@ -88,7 +88,9 @@ export default function Settings() {
           if (s.fromName) setFromName(s.fromName)
         }
       })
-      .catch(() => { /* leave defaults */ })
+      // Leaving the defaults silently made a configured account look unset,
+      // and saving the form would then overwrite it.
+      .catch((err) => toast.error(`Could not read your saved email settings. ${errorMessage(err)}`))
       .finally(() => setLoading(false))
   }, [])
 
@@ -132,6 +134,9 @@ export default function Settings() {
       setUnlocked(false)
       toast.success('Email settings saved')
       return true
+    } catch {
+      toast.error('CoachBoard could not reach its own server, so the settings were not saved.')
+      return false
     } finally {
       setSaving(false)
     }
@@ -146,6 +151,8 @@ export default function Settings() {
       const data = await res.json().catch(() => ({}))
       if (res.ok) toast.success(`Test email sent to ${user.trim()} — check your inbox`)
       else toast.error(data.error ?? 'Failed to send test email')
+    } catch {
+      toast.error('CoachBoard could not reach its own server, so no test email was sent.')
     } finally {
       setTesting(false)
     }

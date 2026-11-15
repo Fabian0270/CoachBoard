@@ -142,6 +142,10 @@ function DmComposerDialog({
       } else {
         toast.error(data.error ?? 'Discord rejected the message')
       }
+    } catch {
+      // The request itself failed. Without this the rejection went unhandled
+      // and replaced the whole app with the error screen.
+      toast.error('CoachBoard could not reach its own server, so the DM was not sent.')
     } finally {
       setSending(false)
     }

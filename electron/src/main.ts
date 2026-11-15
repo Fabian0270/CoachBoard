@@ -7,12 +7,14 @@ import {
   desktopCapturer,
   nativeTheme,
   safeStorage,
+  screen,
   shell,
 } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { createServer, type RequestListener } from 'http'
 import { autoUpdater } from 'electron-updater'
+import { createWindowTools, type WindowTools } from './minimizedWindows'
 
 /**
  * Dev means "running from source", which is exactly what app.isPackaged says.
@@ -28,7 +30,17 @@ import { autoUpdater } from 'electron-updater'
  * docs/ROADMAP.md for why that is the only trustworthy check anyway.
  */
 const isDev = !app.isPackaged
+/** Preferred port. The dev renderer's Vite proxy points here. */
 const SERVER_PORT = 3001
+/**
+ * Where to look when the preferred port is taken. A fixed, ordered list rather
+ * than "any free port", so a coach whose machine always has 3001 busy lands on
+ * the same port every launch — browser storage (theme, onboarding progress) is
+ * kept per origin, and a random port would start it empty every time.
+ */
+const FALLBACK_PORTS = [3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010]
+/** The port the embedded server actually bound. */
+let serverPort = SERVER_PORT
 
 /**
  * The embedded server bundle, loaded at runtime from extraResources. Typed here
@@ -41,9 +53,11 @@ const SERVER_PORT = 3001
 interface ServerBundle {
   initializeDatabase(dbPath: string): Promise<void>
   createApp(staticDir: string, logPath: string): RequestListener
+  /** Points the server's logger at the log file. Must run before initializeDatabase. */
+  configureLogger?(path: string): void
   configureSecureStore(opts: { safeStorage: unknown; userDataDir: string }): void
   configureSystem?(opts: { shell: unknown }): void
-  configureCapture?(opts: { desktopCapturer: unknown }): void
+  configureCapture?(opts: { desktopCapturer: unknown; ownSourceIds?: () => string[]; windowTools?: WindowTools | null }): void
   /** The source the coach picked, consumed once. See services/captureService. */
   resolvePendingSource?(): Promise<
     { kind: 'self' } | { kind: 'source'; source: Electron.DesktopCapturerSource } | null
@@ -51,12 +65,102 @@ interface ServerBundle {
   configureUpdates?(opts: { install: () => void }): void
   setUpdateState?(state: { status: string; version?: string | null; message?: string | null }): void
   runStartupBackup?(): Promise<string | null>
+  /** The settings half of a staged restore. Needs the keychain, so it runs
+   *  after configureSecureStore rather than inside initializeDatabase. */
+  applyPendingSettingsRestore?(dbPath: string): Promise<{
+    restored: string[]
+    secretsDropped: string[]
+  } | null>
   sweepRecordings?(): Promise<number>
   sweepAnalysisVideos?(): Promise<number>
+  sweepPartialMedia?(): Promise<number>
   initDiscordSync?(opts: { launchDelayMs: number }): void | Promise<void>
 }
 
 let serverBundle: ServerBundle | null = null
+
+/** The app window, once created — the recorder leaves it out of the window list. */
+let ownWindow: BrowserWindow | null = null
+
+/** The floating recording controls, while open. See openRecorderControls. */
+let controlsWindow: BrowserWindow | null = null
+
+const CONTROLS_WIDTH = 300
+const CONTROLS_HEIGHT = 48
+
+/**
+ * The floating recording controls.
+ *
+ * Opened when the coach records another window or the whole screen. CoachBoard
+ * is then usually behind that window, and its in-app pill is out of reach — a
+ * coach who recorded a restored window had to dig CoachBoard out to stop.
+ * Always on top, starts at the top-centre of the screen the pointer is on,
+ * draggable, and excluded from screen capture (Windows' WDA_EXCLUDEFROMCAPTURE)
+ * so the athlete never sees it. It is a page of this app: it talks to the
+ * recorder in the main window over a BroadcastChannel and closes itself when
+ * the recording ends (client/src/components/recorder/FloatingControls.tsx).
+ */
+function openRecorderControls(): void {
+  if (controlsWindow && !controlsWindow.isDestroyed()) {
+    controlsWindow.showInactive()
+    return
+  }
+  const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const bar = new BrowserWindow({
+    width: CONTROLS_WIDTH,
+    height: CONTROLS_HEIGHT,
+    x: Math.round(workArea.x + (workArea.width - CONTROLS_WIDTH) / 2),
+    y: workArea.y + 16,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    title: 'CoachBoard recording',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      backgroundThrottling: false,
+    },
+  })
+  // Above full-screen apps too, and never in a recording.
+  bar.setAlwaysOnTop(true, 'screen-saver')
+  bar.setContentProtection(true)
+  // Keep its own title rather than the page's "CoachBoard", so it can be told
+  // apart from the main window (in Windows' own lists, and in the logs).
+  bar.on('page-title-updated', (event) => event.preventDefault())
+  bar.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  bar.webContents.on('will-navigate', (event) => event.preventDefault())
+  bar.webContents.on('will-attach-webview', (event) => event.preventDefault())
+  // Shown without focus: the coach is working in the window being recorded.
+  bar.once('ready-to-show', () => {
+    if (!bar.isDestroyed()) bar.showInactive()
+  })
+  bar.on('closed', () => {
+    controlsWindow = null
+    // The bar closes itself when the recording stops; the review dialog is in
+    // CoachBoard, so bring it forward. Not when the app itself is going away.
+    if (!quitting && ownWindow && !ownWindow.isDestroyed()) {
+      if (ownWindow.isMinimized()) ownWindow.restore()
+      ownWindow.show()
+      ownWindow.focus()
+    }
+  })
+  void bar.loadURL(`${appOrigin()}/#/recorder-controls`).catch((err: unknown) => {
+    log(`Recording controls failed to load: ${describeError(err)}`)
+  })
+  controlsWindow = bar
+}
+
+/** Set while the app is quitting, so the close guard can finish a quit it interrupted. */
+let quitting = false
+app.on('before-quit', () => {
+  quitting = true
+})
 
 let logPath = ''
 
@@ -139,6 +243,10 @@ async function startServer(): Promise<void> {
 
   const bundle = (await import(bundlePath as string)) as ServerBundle
   serverBundle = bundle
+  // Before the database opens: migrations and restores log during
+  // initializeDatabase, and until now that went to a console a packaged app
+  // does not have — the log file only got connected later, in createApp.
+  bundle.configureLogger?.(logPath)
   log('Bundle loaded, initializing database...')
 
   await bundle.initializeDatabase(dbPath)
@@ -156,11 +264,34 @@ async function startServer(): Promise<void> {
   // userData path so it can persist the encrypted email app-password (Feature 6a).
   bundle.configureSecureStore({ safeStorage, userDataDir: app.getPath('userData') })
 
+  // The settings half of a restore, which the database half (inside
+  // initializeDatabase) cannot do: deciding whether to keep or drop a restored
+  // credential means attempting a decrypt, and safeStorage only exists from the
+  // line above. Same machine, the app password survives; anywhere else it is
+  // undecryptable bytes and gets dropped rather than left to fail at send time.
+  const settingsRestore = await bundle.applyPendingSettingsRestore?.(dbPath)
+  if (settingsRestore?.restored.length) {
+    log(`Restored settings: ${settingsRestore.restored.join(', ')}`)
+    if (settingsRestore.secretsDropped.length) {
+      log(`Credentials dropped (not from this machine): ${settingsRestore.secretsDropped.join(', ')}`)
+    }
+  }
+
   // Same injection seam for the handful of shell actions the UI needs (opening
   // the data folder from Settings and from the error screen). Optional-chained so
   // a stale bundle without the export can't break startup.
   bundle.configureSystem?.({ shell })
-  bundle.configureCapture?.({ desktopCapturer })
+  // From Electron 45 the window list includes our own window, which the picker
+  // already offers as "CoachBoard" (captured by frame, see the display handler).
+  bundle.configureCapture?.({
+    desktopCapturer,
+    ownSourceIds: () =>
+      [ownWindow, controlsWindow]
+        .filter((w): w is BrowserWindow => !!w && !w.isDestroyed())
+        .map((w) => w.getMediaSourceId()),
+    // Minimised windows, which Electron does not list (Windows only; null elsewhere).
+    windowTools: createWindowTools(log),
+  })
 
   // Feedback recordings are scratch space: the coach keeps one only by saving or
   // sending it. Anything still on disk after a restart is therefore abandoned —
@@ -177,19 +308,39 @@ async function startServer(): Promise<void> {
   const orphans = await bundle.sweepAnalysisVideos?.().catch(() => 0)
   if (orphans) log(`Swept ${orphans} orphaned analysis video(s)`)
 
+  // Half-written uploads and downloads. Safe only here, before the server is
+  // listening: nothing can be in flight yet. See mediaStore.sweepPartialMedia.
+  const partials = await bundle.sweepPartialMedia?.().catch(() => 0)
+  if (partials) log(`Swept ${partials} abandoned partial file(s)`)
+
   const expressApp = bundle.createApp(staticDir, logPath)
 
-  await new Promise<void>((resolve, reject) => {
-    const server = createServer(expressApp)
-    server.listen(SERVER_PORT, '127.0.0.1', () => {
-      log(`Server listening on port ${SERVER_PORT}`)
-      resolve()
-    })
-    server.on('error', (err) => {
-      log(`Server error: ${err}`)
-      reject(err)
-    })
-  })
+  // A fixed port used to mean "CoachBoard failed to start" whenever anything
+  // else on the machine held 3001 — another dev server, another app. The
+  // single-instance lock already rules out a second CoachBoard, so a busy port
+  // is always someone else's, and the next one in the list will do. Dev keeps
+  // 3001 only: the Vite proxy is wired to it.
+  const candidates = isDev ? [SERVER_PORT] : [SERVER_PORT, ...FALLBACK_PORTS]
+  for (const [i, port] of candidates.entries()) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const server = createServer(expressApp)
+        server.once('error', reject)
+        server.listen(port, '127.0.0.1', () => {
+          server.off('error', reject)
+          server.on('error', (err) => log(`Server error: ${err}`))
+          resolve()
+        })
+      })
+      serverPort = port
+      log(`Server listening on port ${port}`)
+      break
+    } catch (err) {
+      const busy = (err as NodeJS.ErrnoException).code === 'EADDRINUSE'
+      log(`Port ${port} unavailable: ${describeError(err)}`)
+      if (!busy || i === candidates.length - 1) throw err
+    }
+  }
 
   // Discord sync-on-launch (delayed so startup isn't blocked; no-op when the
   // integration isn't configured). Optional-chained so a stale bundle without
@@ -250,11 +401,26 @@ function initAutoUpdate(): void {
 
   bundle?.configureUpdates?.({ install: () => autoUpdater.quitAndInstall() })
 
-  bundle?.setUpdateState?.({ status: 'checking' })
-  void autoUpdater.checkForUpdates().catch((err: unknown) => {
-    log(`Auto-update check failed: ${describeError(err)}`)
-    bundle?.setUpdateState?.({ status: 'error', message: 'check failed' })
-  })
+  const check = (): void => {
+    bundle?.setUpdateState?.({ status: 'checking' })
+    void autoUpdater.checkForUpdates().catch((err: unknown) => {
+      log(`Auto-update check failed: ${describeError(err)}`)
+      bundle?.setUpdateState?.({ status: 'error', message: 'check failed' })
+    })
+  }
+
+  check()
+
+  // electron-updater does not poll on its own, and this only ever ran once at
+  // launch — so a coach who leaves CoachBoard open for a week never learned a
+  // release existed. Six hours means they have it within a working day while
+  // staying well inside the "deliberately quiet" posture above: every failure is
+  // still a logged no-op, and the only visible outcome is the optional
+  // restart-to-update banner once something has already downloaded.
+  const SIX_HOURS_MS = 6 * 60 * 60 * 1000
+  const timer = setInterval(check, SIX_HOURS_MS)
+  // Without this the interval keeps the event loop alive and delays quit.
+  app.on('before-quit', () => clearInterval(timer))
 }
 
 /**
@@ -279,8 +445,14 @@ function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): voi
   // recording was played back — the <video> fullscreen button goes through this
   // handler, and so does the Excel preview. Exactly the case the logging below
   // exists to surface.
+  //
+  // 'display-capture' is screen and window capture — the recorder. Until
+  // Electron 45 Chromium reported it as 'media' (with an empty mediaTypes
+  // list); from 45 it arrives under its own name, and without it here every
+  // screen recording would be refused while camera and microphone still worked.
   const ALLOWED = new Set([
     'media',
+    'display-capture',
     'clipboard-write',
     'clipboard-sanitized-write',
     'fullscreen',
@@ -303,12 +475,30 @@ function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): voi
   sess.setDisplayMediaRequestHandler(
     (_request, callback) => {
       // useSystemPicker stays on so this handler is skipped wherever the OS does
-      // provide a picker (recent macOS). It does NOT engage on Windows in
+      // provide a picker (recent macOS). It did NOT engage on Windows in
       // Electron 33 — measured during the 11c spike, where every capture landed
       // here — so on Windows the app's own picker is the real path, and the
       // source it parked is what gets recorded.
-      void serverBundle
-        ?.resolvePendingSource?.()
+      //
+      // The callback is one-shot and must be answered exactly once. Refusal is
+      // `null`: from Electron 45 `{ video: undefined }` throws ("video must be a
+      // WebFrameMain or DesktopCapturerSource"), and the catch below then
+      // answered a second time — an unhandled error in the main process.
+      let answered = false
+      const answer = (streams: Electron.Streams | null): void => {
+        if (answered) return
+        answered = true
+        callback(streams)
+      }
+      const pending = serverBundle?.resolvePendingSource?.()
+      if (!pending) {
+        // No server bundle (or one without the picker): nothing can have been
+        // chosen. Answering keeps the capture from hanging forever.
+        log('Display capture refused: the source picker is unavailable')
+        answer(null)
+        return
+      }
+      pending
         .then((chosen) => {
           if (!chosen) {
             // No choice parked: the request did not come from our picker, or the
@@ -316,7 +506,7 @@ function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): voi
             // answer — defaulting to the whole screen would record something
             // they never agreed to share.
             log('Display capture refused: no source was chosen')
-            callback({ video: undefined })
+            answer(null)
             return
           }
           // 'loopback' mixes the machine's own audio in, so a lift video's sound
@@ -327,26 +517,40 @@ function configureMediaHandlers(sess: Electron.Session, win: BrowserWindow): voi
             // 11c — is done by capturing the frame rather than the window.
             // Also strictly better: nothing overlapping the window can bleed in.
             log('Display capture: CoachBoard (frame)')
-            callback({ video: win.webContents.mainFrame, audio: 'loopback' })
+            answer({ video: win.webContents.mainFrame, audio: 'loopback' })
             return
           }
           log(`Display capture: ${chosen.source.name}`)
-          callback({ video: chosen.source, audio: 'loopback' })
+          answer({ video: chosen.source as Electron.Video, audio: 'loopback' })
+          // CoachBoard is usually behind what is being recorded, so give the
+          // coach controls that stay on screen.
+          openRecorderControls()
         })
         .catch((err: unknown) => {
           log(`Display capture failed: ${describeError(err)}`)
-          callback({ video: undefined })
+          answer(null)
         })
     },
     { useSystemPicker: true },
   )
 }
 
-/** Dev serves the renderer from :3000, production from the embedded server. */
+/**
+ * Dev serves the renderer from :3000, production from the embedded server —
+ * on whichever port it actually bound, so this is read after startServer.
+ */
+const appOrigin = (): string => (isDev ? 'http://localhost:3000' : `http://localhost:${serverPort}`)
+
+/**
+ * Whether a URL is the app's own page.
+ *
+ * Exact origin, not "any localhost". The looser check granted camera,
+ * microphone and clipboard to any page served from ANY local port — another
+ * dev server, or a page the window had been navigated to.
+ */
 function isOwnOrigin(url: string): boolean {
   try {
-    const { hostname } = new URL(url)
-    return hostname === 'localhost' || hostname === '127.0.0.1'
+    return new URL(url).origin === appOrigin()
   } catch {
     return false
   }
@@ -382,7 +586,21 @@ async function createWindow(): Promise<void> {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      // The recorder draws the captured window (plus the webcam bubble) onto a
+      // canvas in THIS page and records the canvas, driven by
+      // requestAnimationFrame. Chromium stops animation frames in a window that
+      // is hidden or fully covered — measured: 332 frames in 2 s when visible,
+      // 0 when another window covered CoachBoard — and recording another window
+      // means that window is in front. So every such recording froze for as long
+      // as CoachBoard was covered.
+      backgroundThrottling: false,
     },
+  })
+
+  ownWindow = win
+  // The bar counts as a window: left open, the app would not quit on Windows.
+  win.on('closed', () => {
+    if (controlsWindow && !controlsWindow.isDestroyed()) controlsWindow.destroy()
   })
 
   // Needs the window: recording CoachBoard itself captures its frame, not a
@@ -416,12 +634,69 @@ async function createWindow(): Promise<void> {
     return { action: 'deny' }
   })
 
-  if (isDev) {
-    await win.loadURL('http://localhost:3000')
-    win.webContents.openDevTools()
-  } else {
-    await win.loadURL(`http://localhost:${SERVER_PORT}`)
+  // The same rule for navigation in place. Without it, a link without
+  // target=_blank — or a redirect — replaced the app with whatever it pointed
+  // at, inside a window that holds camera, microphone and screen-capture
+  // grants and has no address bar to show where it had gone. External links go
+  // to the system browser instead; hash routing never fires this event.
+  const keepInApp = (event: Electron.Event, url: string): void => {
+    if (isOwnOrigin(url)) return
+    event.preventDefault()
+    log(`Blocked navigation away from the app: ${url}`)
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
   }
+  win.webContents.on('will-navigate', keepInApp)
+  win.webContents.on('will-redirect', keepInApp)
+  // The app never uses <webview>, and one would be a second, unguarded window.
+  win.webContents.on('will-attach-webview', (event) => event.preventDefault())
+
+  // The close guard. A page with work in flight — a recording, a video upload,
+  // program edits that have not saved — asks the browser not to unload, and
+  // Electron then cancels the close SILENTLY: the window just would not shut.
+  // This is the documented hook for asking instead.
+  //
+  // Asked WITHOUT blocking. This used showMessageBoxSync, which halts the main
+  // process until answered — and the main process produces the frames when
+  // CoachBoard records itself and receives every uploaded chunk, so a recording
+  // froze for as long as the question was on screen. Not calling
+  // preventDefault() cancels this close straight away; the question is then
+  // asked asynchronously, and "Close anyway" closes the window directly
+  // (destroy() skips beforeunload, so it cannot ask a second time).
+  let asking = false
+  win.webContents.on('will-prevent-unload', () => {
+    if (asking) return // a second click on × while the question is already up
+    asking = true
+    const quitWasRequested = quitting
+    void dialog
+      .showMessageBox(win, {
+        type: 'warning',
+        buttons: ['Close anyway', 'Keep working'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'CoachBoard',
+        message: 'CoachBoard is still working on something.',
+        detail:
+          'A recording, a video upload, or program changes that have not saved yet would be lost if you close now.',
+      })
+      .then(({ response }) => {
+        if (response !== 0) {
+          quitting = false
+          return
+        }
+        if (!win.isDestroyed()) win.destroy()
+        // A quit (Cmd+Q, or installing an update) was what asked to close. On
+        // Windows the app quits with its last window anyway; on macOS it would
+        // otherwise stay running with no window.
+        if (quitWasRequested) app.quit()
+      })
+      .catch((err: unknown) => log(`Close confirmation failed: ${describeError(err)}`))
+      .finally(() => {
+        asking = false
+      })
+  })
+
+  await win.loadURL(appOrigin())
+  if (isDev) win.webContents.openDevTools()
 }
 
 // A second instance would fail to bind the server port — focus the existing window instead.

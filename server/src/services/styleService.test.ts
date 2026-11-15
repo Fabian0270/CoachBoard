@@ -138,3 +138,44 @@ describe('detectPatterns', () => {
     expect(repeated!.templateId).toBe('hypertrophy_repeated_effort')
   })
 })
+
+describe('intensity ramp — the audit cases', () => {
+  const squatWeeks = (loads: number[], extra?: (wk: number) => Cell[][]): Cell[][] => [
+    HEADER,
+    ...loads.flatMap((load, wk) => [
+      [`Week ${wk + 1}`], ['Day 1'], ['Squat', 4, 5, load, 8], ...(extra?.(wk) ?? []),
+    ] as Cell[][]),
+  ]
+  const ramp = async (grid: Cell[][]) =>
+    computeFingerprint((await findProgramForExport(await commit(grid, 'strength')))!).intensityRamp
+
+  it('reads a linear block that ends in a deload as rising, not as a wave', async () => {
+    expect(await ramp(squatWeeks([100, 105, 110, 115, 90]))).toBe('rising')
+  })
+
+  it('ignores accessory loads', async () => {
+    // Curls logged in weeks 2 and 4 used to drag those weeks' average down.
+    const curls = (wk: number): Cell[][] => (wk === 1 || wk === 3 ? [['Curl', 3, 12, 15, 8]] : [])
+    expect(await ramp(squatWeeks([100, 105, 110, 115, 120], curls))).toBe('rising')
+  })
+
+  it('still recognises a genuine wave', async () => {
+    expect(await ramp(squatWeeks([100, 110, 120, 105, 115, 125]))).toBe('wave')
+  })
+})
+
+describe('RPE in the fingerprint', () => {
+  it('reads the prescribed target, not what the athlete reported', async () => {
+    const { createProgram, createWorkout, createExercise, setProgramDuration } = await import('./programService.js')
+    const program = await createProgram({ athlete_id: athleteId, name: 'Native', status: 'completed' })
+    await setProgramDuration(program.id, '2026-01-05', 2)
+    for (const [i, [target, reported]] of [['RPE 7', '9'], ['RPE 8', '9.5']].entries()) {
+      const date = i ? '2026-01-12' : '2026-01-05'
+      const w = await createWorkout({ program_id: program.id, name: date, scheduled_date: date })
+      await createExercise({ workout_id: w.id, name: 'Squat', sets: '4', reps: '5', intensity: target, rpe: reported, load_used: '100' })
+    }
+    const fp = computeFingerprint((await findProgramForExport(program.id))!)
+    expect(fp.startRpe).toBe(7)
+    expect(fp.peakRpe).toBe(8)
+  })
+})

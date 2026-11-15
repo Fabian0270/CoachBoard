@@ -6,6 +6,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { createApp } from './app.js'
 import { initializeDatabase } from './db.js'
+import { POSE_WIRE_TYPE, decodePoseTrack, encodePoseTrack } from 'coachboard-shared/pose'
 
 let server: Server
 let baseUrl: string
@@ -244,12 +245,24 @@ describe('pose API', () => {
   })
 
   /** A tiny two-frame, two-landmark track — enough to prove the packing survives. */
-  const track = {
-    frameCount: 2,
-    landmarkCount: 2,
-    keypoints: [1, 2, 0.9, 3, 4, 0.8, 5, 6, 0.7, 7, 8, 0.6],
-    world: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2],
-    times: [0, 0.033],
+  const track = () =>
+    encodePoseTrack({
+      frameCount: 2,
+      landmarkCount: 2,
+      keypoints: Float32Array.from([1, 2, 0.9, 3, 4, 0.8, 5, 6, 0.7, 7, 8, 0.6]),
+      world: Float32Array.from([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2]),
+      times: Float64Array.from([0, 0.033]),
+    })
+  const putTrack = (id: string, body: Uint8Array = track()) =>
+    api(`/api/analysis/${id}/pose`, {
+      method: 'PUT',
+      headers: { 'Content-Type': POSE_WIRE_TYPE },
+      body: body.buffer as ArrayBuffer,
+    })
+  /** The stored track, decoded the way poseApi.loadPose reads it. */
+  const getTrack = async (id: string) => {
+    const res = await api(`/api/analysis/${id}/pose`)
+    return { status: res.status, ...decodePoseTrack(new Uint8Array(await res.arrayBuffer()), { maxFrames: 100, maxLandmarks: 64 }) }
   }
 
   it('404s before anything has been stored', async () => {
@@ -257,69 +270,47 @@ describe('pose API', () => {
   })
 
   it('round-trips a track through the API', async () => {
-    const put = await api(`/api/analysis/${analysisId}/pose`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(track),
-    })
-    expect(put.status).toBe(204)
+    expect((await putTrack(analysisId)).status).toBe(204)
 
-    const { status, body } = await json(`/api/analysis/${analysisId}/pose`)
+    const { status, packed, meta } = await getTrack(analysisId)
     expect(status).toBe(200)
-    expect(body.frameCount).toBe(2)
-    expect(body.keypoints[3]).toBeCloseTo(3, 4)
-    expect(body.world[11]).toBeCloseTo(1.2, 4)
-    expect(body.times).toEqual([0, 0.033])
-    expect(body.corrections).toEqual([])
+    expect(packed.frameCount).toBe(2)
+    expect(packed.keypoints[3]).toBeCloseTo(3, 4)
+    expect(packed.world![11]).toBeCloseTo(1.2, 4)
+    expect(Array.from(packed.times)).toEqual([0, 0.033])
+    expect((meta as { corrections: unknown[] }).corrections).toEqual([])
   })
 
   it('refuses a track for an analysis that does not exist', async () => {
-    const res = await api('/api/analysis/no-such-analysis/pose', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(track),
-    })
-    expect(res.status).toBe(404)
+    expect((await putTrack('no-such-analysis')).status).toBe(404)
   })
 
   it('refuses arrays that disagree with the stated counts', async () => {
-    const res = await api(`/api/analysis/${analysisId}/pose`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...track, frameCount: 9 }),
-    })
-    expect(res.status).toBe(400)
+    const body = track()
+    new DataView(body.buffer).setUint32(4, 9, true) // frameCount
+    expect((await putTrack(analysisId, body)).status).toBe(400)
   })
 
   it('stores and takes back a correction', async () => {
-    await api(`/api/analysis/${analysisId}/pose`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(track),
-    })
+    await putTrack(analysisId)
     await api(`/api/analysis/${analysisId}/pose/corrections`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ frameIndex: 1, landmark: 25, x: 500, y: 600 }),
     })
 
-    let got = await json(`/api/analysis/${analysisId}/pose`)
-    expect(got.body.corrections).toEqual([{ frameIndex: 1, landmark: 25, x: 500, y: 600 }])
+    const corrections = async () => ((await getTrack(analysisId)).meta as { corrections: unknown[] }).corrections
+    expect(await corrections()).toEqual([{ frameIndex: 1, landmark: 25, x: 500, y: 600 }])
 
     const del = await api(`/api/analysis/${analysisId}/pose/corrections/1/25`, {
       method: 'DELETE',
     })
     expect(del.status).toBe(204)
-    got = await json(`/api/analysis/${analysisId}/pose`)
-    expect(got.body.corrections).toEqual([])
+    expect(await corrections()).toEqual([])
   })
 
   it('goes when the analysis goes', async () => {
-    await api(`/api/analysis/${analysisId}/pose`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(track),
-    })
+    await putTrack(analysisId)
     await api(`/api/analysis/${analysisId}`, { method: 'DELETE' })
     expect((await api(`/api/analysis/${analysisId}/pose`)).status).toBe(404)
   })
@@ -375,5 +366,31 @@ describe('static fallthrough', () => {
     const res = await fetch(`${staticBase}/athletes/some-id`)
     expect(res.status).toBe(200)
     expect(await res.text()).toContain('app shell')
+  })
+})
+
+describe('program responses', () => {
+  it('never carry the stored original workbook, only whether there is one', async () => {
+    const { getDb } = await import('./db.js')
+    const { storeTemplate } = await import('./services/templateBlobStore.js')
+    const { body: athlete } = await post('/api/athletes', { name: 'Blob Owner' })
+    const { body: program } = await post('/api/programs', { athlete_id: athlete.id, name: 'Imported Style' })
+    await getDb()
+      .updateTable('programs')
+      .set({ export_template_sha: await storeTemplate('A'.repeat(100_000)) })
+      .where('id', '=', program.id)
+      .execute()
+
+    const list = await json('/api/programs')
+    const listed = list.body.find((p: { id: string }) => p.id === program.id)
+    expect(listed).not.toHaveProperty('export_template_sha')
+    expect(listed.has_export_template).toBe(true)
+
+    const one = await json(`/api/programs/${program.id}`)
+    expect(one.body).not.toHaveProperty('export_template_sha')
+    expect(one.body.has_export_template).toBe(true)
+
+    const updated = await put(`/api/programs/${program.id}`, { name: 'Renamed' })
+    expect(updated.body).not.toHaveProperty('export_template_sha')
   })
 })
