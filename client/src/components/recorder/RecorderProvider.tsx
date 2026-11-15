@@ -32,6 +32,9 @@ export function useRecorder(): RecorderContextValue {
   return ctx
 }
 
+/** Same id as SELF_SOURCE_ID in server/src/services/captureService.ts. */
+const SELF_SOURCE_ID = 'self:coachboard'
+
 export default function RecorderProvider({ children }: { children: React.ReactNode }) {
   const engine = useRecorderEngine()
   const toast = useToast()
@@ -46,8 +49,14 @@ export default function RecorderProvider({ children }: { children: React.ReactNo
     engine.send('open')
   }, [engine])
 
+  // Any source other than CoachBoard itself gets the floating bar from the main
+  // process, so the in-app pill would be a second set of controls — and, when the
+  // whole screen is recorded, one that appears in the video.
+  const [barIsOpen, setBarIsOpen] = useState(false)
+
   const onStart = useCallback(
     (options: RecorderOptions) => {
+      setBarIsOpen(options.sourceId !== SELF_SOURCE_ID)
       engine.send('start')
       void engine.start(options)
     },
@@ -137,7 +146,7 @@ export default function RecorderProvider({ children }: { children: React.ReactNo
         <PreflightDialog onStart={onStart} onCancel={() => engine.send('cancel')} />
       )}
 
-      {isCapturing(engine.state) && (
+      {isCapturing(engine.state) && !barIsOpen && (
         <RecordingPill
           elapsedMs={engine.elapsedMs}
           bytes={engine.bytes}
