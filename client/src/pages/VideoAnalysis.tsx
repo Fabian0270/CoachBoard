@@ -1441,7 +1441,7 @@ export default function VideoAnalysis() {
 
             {savedId &&
               (savedContext !== null && savedContext !== contextNow() ? (
-                <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-sm">
                   <span>The lift, load, RPE or athlete changed since you saved.</span>
                   <Button size="sm" variant="outline" onClick={updateSavedContext} disabled={updatingSaved}>
                     {updatingSaved ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -1450,7 +1450,7 @@ export default function VideoAnalysis() {
                 </div>
               ) : (
                 <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Check className="h-4 w-4 text-emerald-500" /> Saved.
+                  <Check className="h-4 w-4 text-success" /> Saved.
                 </p>
               ))}
 
@@ -1521,7 +1521,7 @@ export default function VideoAnalysis() {
                               {r.index + 1}
                               {suspect && !excluded && (
                                 <span
-                                  className="ml-1.5 text-amber-500"
+                                  className="ml-1.5 text-warning"
                                   title="The peak is far out of line with the mean — the tracker probably jumped here. Strike this rep off or track it again."
                                 >
                                   ⚠

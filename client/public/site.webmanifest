@@ -4,8 +4,8 @@
   "description": "Athletic Training Management",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#1d4ed8",
+  "background_color": "#0c0d0f",
+  "theme_color": "#0c0d0f",
   "icons": [
     {
       "src": "/icon.png",

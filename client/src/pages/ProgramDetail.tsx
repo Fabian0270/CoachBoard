@@ -12,7 +12,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { useToast } from '../components/ui/toast'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { ArrowLeft, Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, Eye, Film } from 'lucide-react'
+import { Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, Eye, Film } from 'lucide-react'
+import { BackLink } from '../components/PageHeader'
 import DayAttachments from '../components/discord/DayAttachments'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import ImportDialog from '../components/ImportDialog'
@@ -270,16 +271,16 @@ export default function ProgramDetail() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <Link to="/programs"><ArrowLeft className="h-5 w-5 text-muted-foreground" /></Link>
-          <h1 className="text-3xl font-bold">{program.name}</h1>
-          <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
+    <div className="mx-auto max-w-[1400px] space-y-6">
+      <BackLink to="/programs">Programs</BackLink>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <h1 className="text-[28px] font-semibold leading-tight tracking-tight">{program.name}</h1>
+          <Badge variant={program.status === 'active' ? 'default' : 'secondary'} className="capitalize">{program.status}</Badge>
           <select
             value={program.focus ?? ''}
             onChange={(e) => handleSetFocus(e.target.value)}
-            className="rounded border bg-background px-2 py-1 text-xs text-muted-foreground"
+            className="h-6 cursor-pointer rounded-full border bg-transparent px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
             title="Training focus — used to tailor future program suggestions"
           >
             <option value="">No focus</option>
@@ -294,18 +295,30 @@ export default function ProgramDetail() {
             </Button>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           {program.start_date && (
             <>
-              <Button variant="outline" size="sm" onClick={() => setColumnsOpen(true)}>
-                <SlidersHorizontal className="h-4 w-4 mr-1" />Columns
+              <Button variant="ghost" size="sm" onClick={() => setColumnsOpen(true)}>
+                <SlidersHorizontal className="h-4 w-4" />Columns
               </Button>
+              <Button variant="ghost" size="sm" onClick={handleChangeDuration}>
+                <CalendarRange className="h-4 w-4" />Duration
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)}>
+                <Download className="h-4 w-4" />Import
+              </Button>
+              <Button variant="ghost" size="sm" asChild>
+                <Link to={`/programs/${program.id}/report`}>
+                  <BarChart2 className="h-4 w-4" />Report
+                </Link>
+              </Button>
+              <span aria-hidden className="mx-1 h-5 w-px bg-border" />
               <div className="relative" ref={exportMenuRef}>
-                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setExportMenuOpen((v) => !v) }}>
-                  <Upload className="h-4 w-4 mr-1" />Export<ChevronDown className="h-4 w-4 ml-1" />
+                <Button size="sm" onClick={(e) => { e.stopPropagation(); setExportMenuOpen((v) => !v) }}>
+                  <Upload className="h-4 w-4" />Export<ChevronDown className="h-4 w-4 -mr-0.5 opacity-70" />
                 </Button>
                 {exportMenuOpen && (
-                  <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-md border bg-card shadow-lg py-1" onClick={(e) => e.stopPropagation()}>
+                  <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-lg border bg-popover py-1 shadow-xl shadow-black/20" onClick={(e) => e.stopPropagation()}>
                     <button
                       type="button"
                       onClick={() => { setExportMenuOpen(false); setPreviewOpen(true) }}
@@ -330,23 +343,21 @@ export default function ProgramDetail() {
                   </div>
                 )}
               </div>
-              <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-                <Download className="h-4 w-4 mr-1" />Import
-              </Button>
-              <Button variant="outline" size="sm" asChild>
-                <Link to={`/programs/${program.id}/report`}>
-                  <BarChart2 className="h-4 w-4 mr-1" />Report
-                </Link>
-              </Button>
-              <Button variant="outline" size="sm" onClick={handleChangeDuration}>
-                <CalendarRange className="h-4 w-4 mr-1" />Change duration
-              </Button>
             </>
           )}
-          <Button variant="destructive" size="sm" onClick={handleDelete}><Trash2 className="h-4 w-4" /></Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleDelete}
+            aria-label="Delete program"
+            title="Delete program"
+            className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
         </div>
       </div>
-      {program.description && <p className="text-muted-foreground">{program.description}</p>}
+      {program.description && <p className="max-w-3xl text-sm text-muted-foreground">{program.description}</p>}
 
       {/* Stays until the edits actually land. The old 2.5-second cell flash was
           the only signal a save had failed, and it cleared itself while the
@@ -403,21 +414,23 @@ export default function ProgramDetail() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-2">
-          <div className="text-sm text-muted-foreground">
-            {program.start_date} → {program.end_date} · {grid.weeks} {grid.weeks === 1 ? 'week' : 'weeks'} · click any day to edit
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span className="num text-foreground">{program.start_date} → {program.end_date}</span>
+            <span><span className="num text-foreground">{grid.weeks}</span> {grid.weeks === 1 ? 'week' : 'weeks'}</span>
+            <span>Click any day to edit · drag a day to move it</span>
           </div>
-          <div className="overflow-x-auto rounded-md border border-border bg-card">
+          <div className="overflow-x-auto rounded-xl border border-border bg-card">
             <table className="w-full min-w-[640px] border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
               <colgroup>
-                <col style={{ width: 64 }} />
+                <col style={{ width: 56 }} />
                 {DAY_LABELS.map((d) => <col key={d} />)}
               </colgroup>
               <thead>
-                <tr className="bg-muted/50">
-                  <th className="border-b border-r border-border px-2 py-1.5 text-xs font-medium text-muted-foreground"></th>
+                <tr>
+                  <th className="border-b border-r border-border px-2 py-2 text-[11px] font-medium text-muted-foreground"></th>
                   {DAY_LABELS.map((d) => (
-                    <th key={d} className="border-b border-r border-border px-2 py-1.5 text-xs font-medium text-muted-foreground text-left">
+                    <th key={d} className="border-b border-r border-border px-2.5 py-2 text-left text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground last:border-r-0">
                       {d}
                     </th>
                   ))}
@@ -425,8 +438,8 @@ export default function ProgramDetail() {
               </thead>
               <tbody>
                 {grid.rows.map((row) => (
-                  <tr key={row.weekIndex}>
-                    <th className="border-r border-b border-border bg-muted/30 px-2 py-1 text-xs font-medium text-muted-foreground align-top">
+                  <tr key={row.weekIndex} className="[&:last-child>*]:border-b-0">
+                    <th className="num border-b border-r border-border px-2 py-2 align-top text-[11px] font-medium text-muted-foreground">
                       W{row.weekIndex + 1}
                     </th>
                     {row.days.map((cell) => {
@@ -456,19 +469,21 @@ export default function ProgramDetail() {
                             handleDayDrop(cell.date)
                           } : undefined}
                           onDragEnd={() => { setDayDragSource(null); setDayDragOver(null) }}
-                          className={`border-r border-b border-border align-top p-0 transition-colors ${
+                          className={`border-r border-b border-border align-top p-0 transition-colors last:border-r-0 ${
                             isDragSource ? 'opacity-40' :
-                            isDragOver ? (workout ? 'ring-2 ring-inset ring-amber-400 bg-amber-500/10' : 'ring-2 ring-inset ring-primary/50 bg-primary/5') :
+                            isDragOver ? (workout ? 'ring-2 ring-inset ring-warning bg-warning/10' : 'ring-2 ring-inset ring-primary/50 bg-primary/5') :
                             ''
                           }`}
                         >
                           <button
                             type="button"
                             onClick={() => setOpenDate(cell.date)}
-                            className="block w-full h-full min-h-[88px] text-left px-2 py-1.5 hover:bg-accent/40 focus:bg-accent/40 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary transition-colors"
+                            className={`group/cell block h-full min-h-[92px] w-full px-2.5 py-2 text-left transition-colors duration-150 ease-smooth hover:bg-primary/[0.06] focus:bg-primary/[0.06] focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary ${
+                              exercises.length > 0 ? 'shadow-[inset_2px_0_0_hsl(var(--primary)/0.55)]' : ''
+                            }`}
                           >
                             <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                              <span>{cell.label}</span>
+                              <span className="num">{cell.label}</span>
                               <span className="flex items-center gap-0.5">
                                 {workout && (mediaByWorkoutId.get(workout.id)?.length ?? 0) > 0 && (
                                   <span
@@ -483,22 +498,22 @@ export default function ProgramDetail() {
                                   <GripVertical className="h-2.5 w-2.5 text-muted-foreground/30" />
                                 )}
                                 {status === 'saving' && <Loader2 className="h-3 w-3 animate-spin" />}
-                                {status === 'saved' && <Check className="h-3 w-3 text-green-600 dark:text-green-400" />}
+                                {status === 'saved' && <Check className="h-3 w-3 text-success" />}
                                 {status === 'error' && <X className="h-3 w-3 text-destructive" />}
                               </span>
                             </div>
                             {exercises.length === 0 ? (
-                              <div className="text-[11px] text-muted-foreground/60 mt-1">+ Add</div>
+                              <div className="mt-1 text-[11px] text-muted-foreground/40 transition-colors group-hover/cell:text-muted-foreground">+ Add</div>
                             ) : (
-                              <ul className="mt-1 space-y-0.5">
+                              <ul className="mt-1.5 space-y-1">
                                 {exercises.slice(0, 3).map((ex) => (
-                                  <li key={ex.id} className="text-[11px] leading-tight truncate">
+                                  <li key={ex.id} className="truncate text-[11.5px] leading-tight">
                                     <span className="font-medium">{ex.name || '—'}</span>
                                     {ex.sets != null && ex.reps != null && (
-                                      <span className="text-muted-foreground"> {ex.sets}×{ex.reps}</span>
+                                      <span className="num text-muted-foreground"> {ex.sets}×{ex.reps}</span>
                                     )}
                                     {ex.weight != null && (
-                                      <span className="text-muted-foreground"> @{ex.weight}kg</span>
+                                      <span className="num text-muted-foreground"> @{ex.weight}kg</span>
                                     )}
                                   </li>
                                 ))}
@@ -643,8 +658,8 @@ export default function ProgramDetail() {
       )}
 
       {exportToast && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-lg bg-green-600 px-4 py-3 text-sm font-medium text-white shadow-lg">
-          <Check className="h-4 w-4" />
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-lg border bg-popover px-4 py-3 text-sm font-medium shadow-xl shadow-black/20">
+          <Check className="h-4 w-4 text-success" />
           Program exported successfully
         </div>
       )}

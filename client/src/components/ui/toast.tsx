@@ -64,7 +64,7 @@ const ICONS: Record<ToastVariant, typeof Info> = {
 
 const ACCENTS: Record<ToastVariant, string> = {
   error: 'text-destructive',
-  success: 'text-emerald-600 dark:text-emerald-400',
+  success: 'text-success',
   info: 'text-primary',
 }
 
@@ -77,7 +77,7 @@ function ToastViewport({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: 
           <div
             key={t.id}
             role={t.variant === 'error' ? 'alert' : 'status'}
-            className="pointer-events-auto flex items-start gap-3 rounded-lg border bg-background p-4 shadow-lg data-[state=open]:animate-in slide-in-from-right-2 fade-in-0"
+            className="pointer-events-auto flex items-start gap-3 rounded-lg border bg-popover p-4 shadow-xl shadow-black/20data-[state=open]:animate-in slide-in-from-right-2 fade-in-0"
             data-state="open"
           >
             <Icon className={cn('mt-0.5 h-5 w-5 shrink-0', ACCENTS[t.variant])} />

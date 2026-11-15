@@ -27,7 +27,7 @@ export default function LoadError({
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-border bg-card px-6 py-12 text-center">
-      <AlertTriangle className="h-8 w-8 text-amber-500" />
+      <AlertTriangle className="h-8 w-8 text-warning" />
       <div className="space-y-1">
         <h2 className="text-lg font-semibold">Could not load {what}</h2>
         <p className="max-w-sm text-sm text-muted-foreground">

@@ -449,8 +449,8 @@ export default function VelocityPanel({
       </div>
 
       {mistracked.length > 0 && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+        <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
           <p>
             {mistracked.length === 1 ? 'Rep' : 'Reps'}{' '}
             {mistracked.map((r) => r.index + 1).join(', ')}{' '}
@@ -467,8 +467,8 @@ export default function VelocityPanel({
       )}
 
       {repMismatch && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+        <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
           <p>
             You counted {repMismatch.counted}{' '}
             {repMismatch.counted === 1 ? 'rep' : 'reps'}, the tracker has{' '}

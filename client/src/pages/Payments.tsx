@@ -6,7 +6,8 @@ import LoadError from '../components/LoadError'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { AlertTriangle, Wallet } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
 import PaymentsSection from '../components/PaymentsSection'
 import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
 
@@ -42,16 +43,16 @@ export default function Payments() {
 
   if (error) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-3xl font-bold flex items-center gap-2"><Wallet className="h-7 w-7" />Payments</h1>
+      <div className="mx-auto max-w-5xl space-y-6">
+        <PageHeader title="Payments" />
         <LoadError what="your payments" message={error} onRetry={() => void load()} />
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold flex items-center gap-2"><Wallet className="h-7 w-7" />Payments</h1>
+    <div className="mx-auto max-w-5xl space-y-6">
+      <PageHeader title="Payments" description="Who has paid, who is due, and who is about to run out." />
 
       <Card>
         <CardHeader>

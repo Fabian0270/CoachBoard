@@ -106,7 +106,7 @@ export default function SendProgramDialog({ programId, programName, athleteId, o
         ) : loadError ? (
           <p className="text-sm text-destructive">{loadError}</p>
         ) : !configured ? (
-          <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
+          <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground [&>svg]:text-warning">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
               Email isn’t set up yet. Add your email account in{' '}
@@ -122,7 +122,7 @@ export default function SendProgramDialog({ programId, programName, athleteId, o
               <Label htmlFor="to">To</Label>
               <Input id="to" type="email" value={to} placeholder="athlete@example.com" onChange={(e) => setTo(e.target.value)} />
               {athleteMissingEmail && (
-                <p className="text-xs text-amber-600 dark:text-amber-400">
+                <p className="text-xs text-warning">
                   This athlete has no email on file — enter one above (or add it on their profile).
                 </p>
               )}

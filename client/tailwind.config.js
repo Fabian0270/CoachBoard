@@ -41,6 +41,20 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        success: "hsl(var(--success) / <alpha-value>)",
+        warning: "hsl(var(--warning) / <alpha-value>)",
+        info: "hsl(var(--info) / <alpha-value>)",
+        sidebar: "hsl(var(--sidebar) / <alpha-value>)",
+      },
+      fontFamily: {
+        sans: ['"Geist Variable"', 'system-ui', '"Segoe UI"', 'sans-serif'],
+        mono: ['"Geist Mono Variable"', 'ui-monospace', 'Consolas', 'monospace'],
+      },
+      transitionTimingFunction: {
+        smooth: "cubic-bezier(0.2, 0.8, 0.2, 1)",
+      },
+      transitionDuration: {
+        DEFAULT: "150ms",
       },
       borderRadius: {
         lg: "var(--radius)",

@@ -152,13 +152,13 @@ function NumberedSteps({
           className={cn(
             'flex gap-3',
             s.highlight &&
-              'rounded-md border border-amber-300 bg-amber-50 p-2 dark:border-amber-700 dark:bg-amber-950/60',
+              'rounded-md border border-warning/40 bg-warning/10 p-2',
           )}
         >
           <span
             className={cn(
               'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
-              s.highlight ? 'bg-amber-500 text-white' : 'bg-primary/10 text-primary',
+              s.highlight ? 'bg-warning text-background' : 'bg-primary/10 text-primary',
             )}
           >
             {i + 1}
@@ -166,7 +166,7 @@ function NumberedSteps({
           <div
             className={cn(
               'flex-1 text-sm',
-              s.highlight ? 'text-amber-900 dark:text-amber-200' : 'text-muted-foreground',
+              s.highlight ? 'text-foreground' : 'text-muted-foreground',
             )}
           >
             {s.text}
@@ -336,12 +336,12 @@ function TokenStep({
         </p>
       )}
       {state === 'ok' && (
-        <p className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+        <p className="flex items-center gap-2 text-sm text-success">
           <CheckCircle2 className="h-4 w-4" /> Connected as <strong>{botName}</strong>
         </p>
       )}
       {state === 'ok' && checked?.messageContentIntent === false && (
-        <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
+        <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground [&>svg]:text-warning">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             <strong>Almost there — one required toggle is off.</strong> Your bot doesn’t have{' '}
@@ -772,7 +772,7 @@ function FirstSyncStep({ onFinish }: { onFinish: () => void }) {
             <span>{c.name}</span>
             <span className="flex items-center gap-2 text-muted-foreground">
               {c.done ? (
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                <CheckCircle2 className="h-4 w-4 text-success" />
               ) : c.error ? (
                 <AlertTriangle className="h-4 w-4 text-destructive" />
               ) : (
@@ -794,7 +794,7 @@ function FirstSyncStep({ onFinish }: { onFinish: () => void }) {
       {refused && <p className="text-sm text-destructive">{refused}</p>}
 
       {intentProblem && (
-        <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
+        <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground [&>svg]:text-warning">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             <strong>Message Content Intent is turned off</strong>

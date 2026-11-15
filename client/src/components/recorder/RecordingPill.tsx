@@ -38,7 +38,7 @@ export default function RecordingPill({
       <div className="flex items-center gap-3 rounded-full border border-border bg-card/95 px-4 py-2 shadow-lg backdrop-blur">
         <span
           className={`h-2.5 w-2.5 rounded-full ${
-            paused ? 'bg-muted-foreground' : 'animate-pulse bg-red-500'
+            paused ? 'bg-muted-foreground' : 'animate-pulse bg-destructive'
           }`}
         />
         <span className="font-mono text-sm tabular-nums">{formatDuration(elapsedMs)}</span>
@@ -50,7 +50,7 @@ export default function RecordingPill({
             status === 'over'
               ? 'text-destructive'
               : status === 'near'
-                ? 'text-amber-500'
+                ? 'text-warning'
                 : 'text-muted-foreground'
           }`}
           title={

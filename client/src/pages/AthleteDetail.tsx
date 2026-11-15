@@ -22,7 +22,19 @@ import {
 import { WEIGHT_CLASSES, isPowerlifting } from 'coachboard-shared'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
 import type { DiscordUserItem } from 'coachboard-shared/discord'
-import { Plus, ArrowLeft, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
+import { Plus, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
+import { cn, initials } from '../lib/utils'
+import { BackLink } from '../components/PageHeader'
+
+/** One labelled fact in the athlete's Info tab. */
+function InfoField({ label, mono, className, children }: { label: string; mono?: boolean; className?: string; children: React.ReactNode }) {
+  return (
+    <div className={cn('min-w-0 space-y-1', className)}>
+      <dt className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</dt>
+      <dd className={cn('break-words text-sm', mono && 'num')}>{children}</dd>
+    </div>
+  )
+}
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
 import LoadError from '../components/LoadError'
@@ -198,17 +210,39 @@ export default function AthleteDetail() {
   if (!athlete) return <div className="text-muted-foreground">Loading...</div>
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link to="/athletes"><ArrowLeft className="h-5 w-5 text-muted-foreground" /></Link>
-          <h1 className="text-3xl font-bold">{athlete.name}</h1>
-          {athlete.sport && <Badge variant="secondary">{athlete.sport}</Badge>}
+    <div className="mx-auto max-w-6xl space-y-6">
+      <BackLink to="/athletes">Athletes</BackLink>
+      {/* Profile header: who this is at a glance, on the same glow as the hero figures. */}
+      <section className="flex flex-wrap items-center gap-5 rounded-xl border bg-card bg-glow-hero px-6 py-5">
+        <span
+          aria-hidden
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/15 text-lg font-semibold text-primary"
+        >
+          {initials(athlete.name)}
+        </span>
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <h1 className="truncate text-[26px] font-semibold leading-tight tracking-tight">{athlete.name}</h1>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+            {athlete.sport && <Badge variant="default">{athlete.sport}</Badge>}
+            {isPowerlifting(athlete.sport) && athlete.weight_class && <span className="num">{athlete.weight_class} kg</span>}
+            {athlete.email && <span className="truncate">{athlete.email}</span>}
+          </div>
         </div>
-        <Button variant="destructive" size="sm" onClick={handleDelete}><Trash2 className="h-4 w-4" /></Button>
-      </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={startEdit}><Pencil className="h-3.5 w-3.5" />Edit</Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleDelete}
+            aria-label="Delete athlete"
+            className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </section>
       <Tabs defaultValue={initialTab}>
-        <TabsList>
+        <TabsList className="flex-wrap">
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="programs">Programs ({programs.length})</TabsTrigger>
           <TabsTrigger value="maxes">Maxes &amp; RPE</TabsTrigger>
@@ -278,27 +312,27 @@ export default function AthleteDetail() {
                 </form>
               </CardContent>
             ) : (
-              <CardContent className="p-6 space-y-3">
-                <div className="flex justify-end">
-                  <Button type="button" variant="outline" size="sm" onClick={startEdit}>
-                    <Pencil className="h-4 w-4 mr-1" />Edit
-                  </Button>
-                </div>
-                {athlete.email && <div><span className="font-medium">Email:</span> {athlete.email}</div>}
-                {athlete.sport && <div><span className="font-medium">Sport:</span> {athlete.sport}</div>}
-                {isPowerlifting(athlete.sport) && athlete.weight_class && (
-                  <div><span className="font-medium">Weight class:</span> {athlete.weight_class} kg</div>
-                )}
-                {athlete.height_cm != null && (
-                  <div><span className="font-medium">Height:</span> {athlete.height_cm} cm</div>
-                )}
-                {athlete.date_of_birth && <div><span className="font-medium">Date of Birth:</span> {athlete.date_of_birth}</div>}
-                {discordUsernames.length > 0 && (
-                  <div><span className="font-medium">Discord:</span> {discordUsernames.map((u) => `@${u}`).join(', ')}</div>
-                )}
-                {athlete.notes && <div><span className="font-medium">Notes:</span> {athlete.notes}</div>}
-                {!athlete.email && !athlete.sport && !athlete.date_of_birth && !athlete.notes && discordUsernames.length === 0 && (
+              <CardContent className="p-6">
+                {!athlete.email && !athlete.sport && !athlete.date_of_birth && !athlete.notes && discordUsernames.length === 0 ? (
                   <p className="text-muted-foreground text-sm">No details yet.</p>
+                ) : (
+                  <dl className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
+                    {athlete.email && <InfoField label="Email">{athlete.email}</InfoField>}
+                    {athlete.sport && <InfoField label="Sport">{athlete.sport}</InfoField>}
+                    {isPowerlifting(athlete.sport) && athlete.weight_class && (
+                      <InfoField label="Weight class" mono>{athlete.weight_class} kg</InfoField>
+                    )}
+                    {athlete.height_cm != null && <InfoField label="Height" mono>{athlete.height_cm} cm</InfoField>}
+                    {athlete.date_of_birth && <InfoField label="Date of birth" mono>{athlete.date_of_birth}</InfoField>}
+                    {discordUsernames.length > 0 && (
+                      <InfoField label="Discord">{discordUsernames.map((u) => `@${u}`).join(', ')}</InfoField>
+                    )}
+                    {athlete.notes && (
+                      <InfoField label="Notes" className="sm:col-span-2 lg:col-span-3">
+                        <span className="whitespace-pre-wrap">{athlete.notes}</span>
+                      </InfoField>
+                    )}
+                  </dl>
                 )}
               </CardContent>
             )}
@@ -313,7 +347,7 @@ export default function AthleteDetail() {
                 <Plus className="h-4 w-4 mr-2" />New Program<ChevronDown className="h-4 w-4 ml-2" />
               </Button>
               {newMenuOpen && (
-                <div className="absolute left-0 top-full mt-1 z-20 min-w-[200px] rounded-md border bg-card shadow-lg py-1" onClick={(e) => e.stopPropagation()}>
+                <div className="absolute left-0 top-full mt-1 z-20 min-w-[200px] rounded-lg border bg-popover py-1 shadow-xl shadow-black/20" onClick={(e) => e.stopPropagation()}>
                   <Link to={`/programs/new?athlete_id=${id}`} onClick={() => setNewMenuOpen(false)}>
                     <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent">
                       <Plus className="h-4 w-4" />New program
@@ -339,34 +373,35 @@ export default function AthleteDetail() {
             {programsError ? (
               <LoadError what="this athlete's programs" message={programsError} onRetry={() => { if (id) void loadPrograms(id) }} />
             ) : programs.length === 0 ? (
-              <Card><CardContent className="py-8 text-center text-muted-foreground">No programs yet.</CardContent></Card>
-            ) : programs.map((program) => (
-              <div key={program.id} className="group relative">
-                <Link to={`/programs/${program.id}`} className="block">
-                  <Card className="hover:shadow-md transition-shadow cursor-pointer">
-                    <CardHeader className="py-4 pr-10">
-                      <CardTitle className="text-base">{program.name}</CardTitle>
-                      <div className="flex gap-1.5">
-                        <Badge variant={program.status === 'active' ? 'default' : 'secondary'}>{program.status}</Badge>
-                        {program.focus && <Badge variant="outline" className="capitalize">{program.focus}</Badge>}
-                      </div>
-                    </CardHeader>
-                  </Card>
-                </Link>
-                <div
-                  className={
-                    program.bookmarked === 1
-                      ? 'absolute top-3 right-3'
-                      : 'absolute top-3 right-3 opacity-0 transition-opacity group-hover:opacity-100'
-                  }
-                >
-                  <BookmarkStar
-                    bookmarked={program.bookmarked === 1}
-                    onToggle={(next) => toggleBookmark(program, next)}
-                  />
-                </div>
-              </div>
-            ))}
+              <div className="rounded-xl border border-dashed bg-card/50 py-10 text-center text-sm text-muted-foreground">No programs yet.</div>
+            ) : (
+              <ul className="divide-y overflow-hidden rounded-xl border bg-card">
+                {programs.map((program) => (
+                  <li key={program.id} className="group relative">
+                    <Link
+                      to={`/programs/${program.id}`}
+                      className="flex items-center gap-4 px-4 py-3 pr-14 transition-colors duration-150 ease-smooth hover:bg-foreground/[0.03]"
+                    >
+                      <span className="min-w-0 flex-1 truncate font-medium">{program.name}</span>
+                      {program.focus && <Badge variant="outline" className="hidden capitalize sm:inline-flex">{program.focus}</Badge>}
+                      <Badge variant={program.status === 'active' ? 'default' : 'secondary'} className="capitalize">{program.status}</Badge>
+                    </Link>
+                    <div
+                      className={
+                        program.bookmarked === 1
+                          ? 'absolute right-3 top-1/2 -translate-y-1/2'
+                          : 'absolute right-3 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100'
+                      }
+                    >
+                      <BookmarkStar
+                        bookmarked={program.bookmarked === 1}
+                        onToggle={(next) => toggleBookmark(program, next)}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           </SlideIn>
         </TabsContent>

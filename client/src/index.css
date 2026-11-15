@@ -2,51 +2,81 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * "Quiet precision" palette. One accent (Moss), warm-neutral surfaces, hairline
+ * borders instead of shadows. The two themes are designed as a pair, not as an
+ * inversion: dark is deep ink, light is warm paper, both carry the same moss
+ * ambient glow (see .bg-glow-* below).
+ */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    /* Light: warm paper #f7f6f1, ink #16171a, moss #5a7a1e */
+    --background: 50 26% 96%;
+    --foreground: 225 8% 9%;
+    --card: 48 100% 99%;
+    --card-foreground: 225 8% 9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
+    --popover-foreground: 225 8% 9%;
+    --primary: 81 60% 30%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 53 19% 92%;
+    --secondary-foreground: 225 8% 9%;
+    --muted: 53 19% 92%;
+    --muted-foreground: 77 3% 42%;
+    --accent: 55 18% 90%;
+    --accent-foreground: 225 8% 9%;
+    --destructive: 3 70% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 55% 30%;
+    --warning: 32 90% 38%;
+    --info: 205 75% 38%;
+    --border: 50 15% 86%;
+    --input: 50 12% 82%;
+    --ring: 81 60% 30%;
+    --sidebar: 53 19% 92%;
+    /* Chart series: Moss, steel blue, ember. Distinct in hue and lightness. */
+    --chart-1: 81 60% 32%;
+    --chart-2: 208 65% 42%;
+    --chart-3: 22 85% 48%;
+    /* Ambient glow: moss, stronger in light so it reads on paper */
+    --glow: 77 51% 56%;
+    --glow-main: 0.3;
+    --glow-side: 0.35;
+    --glow-hero: 0.22;
     --radius: 0.5rem;
   }
 
   .dark {
-    /* VSCode-style neutral dark palette: grey editor surface, slightly-elevated cards */
-    --background: 0 0% 12%;
-    --foreground: 0 0% 83%;
-    --card: 240 2% 15%;
-    --card-foreground: 0 0% 83%;
-    --popover: 240 2% 15%;
-    --popover-foreground: 0 0% 83%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 18%;
-    --secondary-foreground: 0 0% 83%;
-    --muted: 0 0% 18%;
-    --muted-foreground: 0 0% 62%;
-    --accent: 240 5% 23%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 45%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 24%;
-    --input: 0 0% 24%;
-    --ring: 217.2 91.2% 59.8%;
+    /* Dark: deep ink #0c0d0f, panels #121317, moss #a9c957 */
+    --background: 220 11% 5%;
+    --foreground: 240 5% 93%;
+    --card: 228 12% 8%;
+    --card-foreground: 240 5% 93%;
+    --popover: 228 11% 9%;
+    --popover-foreground: 240 5% 93%;
+    --primary: 77 51% 56%;
+    --primary-foreground: 84 33% 6%;
+    --secondary: 220 10% 11%;
+    --secondary-foreground: 240 5% 93%;
+    --muted: 220 10% 11%;
+    --muted-foreground: 240 3% 56%;
+    --accent: 214 11% 13%;
+    --accent-foreground: 240 5% 93%;
+    --destructive: 3 75% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 55% 55%;
+    --warning: 38 92% 58%;
+    --info: 205 80% 64%;
+    --border: 223 9% 15%;
+    --input: 223 9% 19%;
+    --ring: 77 51% 56%;
+    --sidebar: 225 13% 4%;
+    --chart-1: 77 51% 56%;
+    --chart-2: 208 75% 66%;
+    --chart-3: 24 92% 62%;
+    --glow-main: 0.16;
+    --glow-side: 0.22;
+    --glow-hero: 0.12;
   }
 }
 
@@ -54,8 +84,41 @@
   * {
     @apply border-border;
   }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+  h1, h2, h3 {
+    letter-spacing: -0.02em;
+  }
+  ::selection {
+    background: hsl(var(--glow) / 0.35);
+  }
+}
+
+@layer utilities {
+  /* Moss haze, top-right of the content area. Attached to the scrolling
+     element's box, so it stays put while content scrolls under it. */
+  .bg-glow-main {
+    background-image: radial-gradient(60% 45% at 92% -8%, hsl(var(--glow) / var(--glow-main)), transparent 70%);
+  }
+  /* Moss haze, top-left of the sidebar. */
+  .bg-glow-side {
+    background-image: radial-gradient(120% 55% at 0% 0%, hsl(var(--glow) / var(--glow-side)), transparent 62%);
+  }
+  /* Faint diagonal wash for hero numbers. Never on tables. */
+  .bg-glow-hero {
+    background-image: linear-gradient(135deg, hsl(var(--glow) / var(--glow-hero)), transparent 62%);
+  }
+  /* Numbers coaches compare: weights, reps, RPE, money. */
+  .num {
+    font-family: theme('fontFamily.mono');
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
   }
 }
 

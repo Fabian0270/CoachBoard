@@ -269,8 +269,8 @@ export default function DataSettingsCard() {
         )}
 
         {info?.restorePending && (
-          <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <div className="space-y-2">
               <p>
                 A restore is ready. Close and reopen CoachBoard to apply it — nothing has changed
