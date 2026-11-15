@@ -165,12 +165,12 @@ async function addSetInTransaction(
     .orderBy('order_index')
     .execute()
 
-  let lastGroupIdx = source.order_index
+  // The last row of the group is what the new set follows — and what it copies.
+  let lastRow = source
   for (const ex of allExercises) {
-    if (ex.group_id === groupId && ex.order_index > lastGroupIdx) {
-      lastGroupIdx = ex.order_index
-    }
+    if (ex.group_id === groupId && ex.order_index > lastRow.order_index) lastRow = ex
   }
+  const lastGroupIdx = lastRow.order_index
 
   // Shift subsequent exercises up
   const toShift = allExercises.filter((ex) => ex.order_index > lastGroupIdx)
@@ -189,15 +189,17 @@ async function addSetInTransaction(
       id: uuidv4(),
       workout_id: workoutId,
       name: source.name,
-      sets: null,
-      reps: null,
+      // Starts as the set above it. A back-off or top set usually changes one
+      // field; an empty row meant retyping all of them every time.
+      sets: lastRow.sets,
+      reps: lastRow.reps,
       weight: null,
       duration: null,
       distance: null,
       notes: null,
       order_index: lastGroupIdx + 1,
       rest_time: null,
-      intensity: null,
+      intensity: lastRow.intensity,
       load_used: null,
       rpe: null,
       group_id: groupId,
@@ -213,4 +215,77 @@ async function addSetInTransaction(
     .execute()
 
   return { exercises }
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate — a copy of the exercise (all of its set rows, if it has several)
+// placed directly under it. What the athlete logged is not copied: Load Used
+// and RPE belong to the lift that was done, not to the copy.
+// ---------------------------------------------------------------------------
+
+export async function duplicateExercise(exerciseId: string, workoutId: string, programId: string) {
+  return getDb().transaction().execute(async (db) => {
+    const workout = await db
+      .selectFrom('workouts')
+      .select(['id'])
+      .where('id', '=', workoutId)
+      .where('program_id', '=', programId)
+      .executeTakeFirst()
+    if (!workout) return null
+
+    const all = await db
+      .selectFrom('exercises')
+      .selectAll()
+      .where('workout_id', '=', workoutId)
+      .orderBy('order_index')
+      .execute()
+    const source = all.find((ex) => ex.id === exerciseId)
+    if (!source) return null
+
+    const rows = source.group_id ? all.filter((ex) => ex.group_id === source.group_id) : [source]
+    const lastIdx = Math.max(...rows.map((r) => r.order_index))
+
+    for (const ex of all.filter((e) => e.order_index > lastIdx)) {
+      await db
+        .updateTable('exercises')
+        .set({ order_index: ex.order_index + rows.length })
+        .where('id', '=', ex.id)
+        .execute()
+    }
+
+    const newGroupId = source.group_id ? uuidv4() : null
+    const newIds: string[] = []
+    for (const [i, row] of rows.entries()) {
+      const id = uuidv4()
+      newIds.push(id)
+      await db
+        .insertInto('exercises')
+        .values({
+          id,
+          workout_id: workoutId,
+          name: row.name,
+          sets: row.sets,
+          reps: row.reps,
+          weight: row.weight,
+          duration: row.duration,
+          distance: row.distance,
+          notes: row.notes,
+          order_index: lastIdx + 1 + i,
+          rest_time: row.rest_time,
+          intensity: row.intensity,
+          load_used: null,
+          rpe: null,
+          group_id: newGroupId,
+        })
+        .execute()
+    }
+
+    const exercises = await db
+      .selectFrom('exercises')
+      .selectAll()
+      .where('workout_id', '=', workoutId)
+      .orderBy('order_index')
+      .execute()
+    return { exercises, newIds }
+  })
 }

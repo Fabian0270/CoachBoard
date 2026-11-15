@@ -19,6 +19,7 @@ export {
   deleteExercise,
   reorderExercises,
   addSetToExercise,
+  duplicateExercise,
 } from './program/exerciseService.js'
 
 const toIso = (d: Date) => d.toISOString().slice(0, 10)

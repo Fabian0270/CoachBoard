@@ -8,6 +8,7 @@ import {
   type FailedEditMap,
 } from '../lib/failedEdits'
 import { useConfirm } from '../components/ui/confirm-dialog'
+import { errorMessage, sendJson } from '../lib/api'
 
 type SetProgram = React.Dispatch<React.SetStateAction<Program | null>>
 type FlashCell = (date: string, status: 'saving' | 'saved' | 'error') => void
@@ -202,6 +203,23 @@ export function useWorkoutActions(
     }
   }
 
+  /** Copy an exercise (with its set rows) directly under itself. */
+  const duplicateExercise = async (date: string, workoutId: string, exerciseId: string): Promise<void> => {
+    if (!id) return
+    flashCell(date, 'saving')
+    try {
+      const data = await sendJson<{ exercises: Exercise[] }>(
+        'POST',
+        `/api/programs/${id}/workouts/${workoutId}/exercises/${exerciseId}/duplicate`,
+      )
+      updateWorkout(workoutId, (w) => ({ ...w, exercises: data.exercises }))
+      flashCell(date, 'saved')
+    } catch (err) {
+      flashCell(date, 'error')
+      onSaveError?.(`Could not duplicate that exercise. ${errorMessage(err)}`)
+    }
+  }
+
   const reorderExercises = async (date: string, workoutId: string, exerciseIds: string[]): Promise<void> => {
     if (!id) return
     flashCell(date, 'saving')
@@ -226,6 +244,7 @@ export function useWorkoutActions(
     deleteExercise,
     deleteWorkout,
     addSet,
+    duplicateExercise,
     reorderExercises,
     failedEdits,
     retryFailedEdits,

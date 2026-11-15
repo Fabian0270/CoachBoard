@@ -15,6 +15,7 @@ import {
   updateExercise,
   deleteExercise,
   addSetToExercise,
+  duplicateExercise,
   copyWorkoutDay,
   moveWorkoutDay,
   reorderExercises,
@@ -239,6 +240,20 @@ router.post('/:programId/workouts/:workoutId/exercises/:exerciseId/add-set', asy
     res.status(201).json(result)
   } catch (err) {
     fail(res, 'Failed to add set', err)
+  }
+})
+
+router.post('/:programId/workouts/:workoutId/exercises/:exerciseId/duplicate', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await duplicateExercise(
+      String(req.params.exerciseId),
+      String(req.params.workoutId),
+      String(req.params.programId),
+    )
+    if (!result) { res.status(404).json({ error: 'Exercise not found' }); return }
+    res.status(201).json(result)
+  } catch (err) {
+    fail(res, 'Failed to duplicate exercise', err)
   }
 })
 

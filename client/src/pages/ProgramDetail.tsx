@@ -101,7 +101,7 @@ export default function ProgramDetail() {
   }
 
   const {
-    addExercise, saveExerciseField, deleteExercise, deleteWorkout, addSet, reorderExercises,
+    addExercise, saveExerciseField, deleteExercise, deleteWorkout, addSet, duplicateExercise, reorderExercises,
     failedEdits, retryFailedEdits,
   } = useWorkoutActions(
     id, workoutByDate, setProgram, flashCell,
@@ -576,6 +576,11 @@ export default function ProgramDetail() {
             const cell = date ? document.querySelector<HTMLElement>(`[data-day="${date}"]`) : null
             if (cell) { e.preventDefault(); cell.focus() }
           }}
+          // With the exercise suggestions open, the first Esc closes that list
+          // (the name cell does it) and the day stays open.
+          onEscapeKeyDown={(e) => {
+            if (document.querySelector('[data-exercise-suggestions]')) e.preventDefault()
+          }}
           onKeyDown={(e) => {
             if (e.key !== 'PageDown' && e.key !== 'PageUp') return
             e.preventDefault()
@@ -633,6 +638,9 @@ export default function ProgramDetail() {
               // maps to something the coach can actually find on the page.
               unsavedKeys={new Set(Object.keys(failedEdits))}
               onAdd={() => addExercise(openDate)}
+              onDuplicate={(exerciseId) => {
+                if (openWorkout) void duplicateExercise(openDate, openWorkout.id, exerciseId)
+              }}
               onSaveField={(exerciseId, patch) =>
                 openWorkout
                   ? saveExerciseField(openDate, openWorkout.id, exerciseId, patch)

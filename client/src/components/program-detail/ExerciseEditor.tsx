@@ -10,7 +10,7 @@ import {
   DEFAULT_COL_WIDTH,
   buildColumns,
 } from '../../lib/programUtils'
-import ExerciseRow from './ExerciseRow'
+import ExerciseRow, { type RowKeyAction } from './ExerciseRow'
 
 interface ExerciseEditorProps {
   workout: Workout | null
@@ -19,7 +19,11 @@ interface ExerciseEditorProps {
   sameDayDates: { date: string; weekIndex: number }[]
   /** `${exerciseId}:${field}` for every edit that has not been stored yet. */
   unsavedKeys?: Set<string>
-  onAdd: () => void
+  onAdd: () => Promise<void>
+  /** Copy the exercise (with its set rows) directly under itself. */
+  onDuplicate: (exerciseId: string) => void
+  /** Exercise names to suggest, best first. Defaults to the built-in list. */
+  suggestions?: readonly string[]
   onSaveField: (exerciseId: string, patch: Partial<Exercise>) => Promise<boolean>
   onDeleteExercise: (exerciseId: string) => Promise<boolean>
   onDeleteWorkout: () => void
@@ -68,7 +72,7 @@ function buildGroups(exercises: Exercise[]) {
   return groups
 }
 
-export default function ExerciseEditor({ workout, enabledColumns, programId, sameDayDates, unsavedKeys, onAdd, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
+export default function ExerciseEditor({ workout, enabledColumns, programId, sameDayDates, unsavedKeys, onAdd, onDuplicate, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
   const exercises = workout?.exercises ?? []
   const columns = buildColumns(enabledColumns)
   const [widths, setWidth] = useColumnWidths(programId, columns)
@@ -240,6 +244,132 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
     }
   }
 
+  // ── Keyboard: where the cursor goes ─────────────────────────────────────
+  // Rows only know their own cells. Which cell is "next", and what a row key
+  // does to the rows around it, is decided here.
+  const exercisesRef = useRef(exercises)
+  exercisesRef.current = exercises
+  /** A cell to focus once the table has caught up with a change. */
+  const pendingFocus = useRef<
+    | { kind: 'cell'; id: string; col: string }
+    | { kind: 'new'; known: Set<string> }
+    | null
+  >(null)
+
+  const cellEl = (id: string, col: string) =>
+    tableWrapperRef.current?.querySelector<HTMLTextAreaElement | HTMLInputElement>(`[data-cell="${id}:${col}"]`) ?? null
+  /** The cells a row actually has: a set row under an exercise has no name. */
+  const rowCols = (id: string): string[] =>
+    columns.map((c) => c.key as string).filter((key) => cellEl(id, key) !== null)
+  const focusCell = (id: string, col: string): boolean => {
+    const el = cellEl(id, col) ?? cellEl(id, rowCols(id)[0] ?? '')
+    if (!el) return false
+    el.focus()
+    el.select()
+    return true
+  }
+
+  // Runs after every render: a pending focus waits for its row to exist.
+  useEffect(() => {
+    const want = pendingFocus.current
+    if (!want) return
+    if (want.kind === 'cell') {
+      if (focusCell(want.id, want.col)) pendingFocus.current = null
+      return
+    }
+    const fresh = exercises.find((ex) => !want.known.has(ex.id))
+    if (fresh && focusCell(fresh.id, 'name')) pendingFocus.current = null
+  })
+
+  const knownIds = () => new Set(exercisesRef.current.map((ex) => ex.id))
+
+  const adding = useRef(false)
+  /** Add an exercise and put the cursor in it. One at a time: a double click used to make two. */
+  const addAndFocus = async () => {
+    if (adding.current) return
+    adding.current = true
+    pendingFocus.current = { kind: 'new', known: knownIds() }
+    try {
+      await onAdd()
+    } finally {
+      adding.current = false
+    }
+  }
+
+  const addSetAndFocus = (exerciseId: string) => {
+    pendingFocus.current = { kind: 'new', known: knownIds() }
+    onAddSet(exerciseId)
+  }
+
+  const handleRowKey = (ex: Exercise, action: RowKeyAction, col: string) => {
+    const list = exercisesRef.current
+    const i = list.findIndex((x) => x.id === ex.id)
+    if (i === -1) return
+    switch (action) {
+      case 'next': {
+        const cols = rowCols(ex.id)
+        const at = cols.indexOf(col)
+        if (at !== -1 && at < cols.length - 1) { focusCell(ex.id, cols[at + 1]); return }
+        const below = list[i + 1]
+        if (below) { focusCell(below.id, rowCols(below.id)[0]); return }
+        // Last field of the last exercise: save it, then start a new one.
+        ;(document.activeElement as HTMLElement | null)?.blur()
+        void addAndFocus()
+        return
+      }
+      case 'up':
+      case 'down': {
+        const other = list[i + (action === 'up' ? -1 : 1)]
+        if (other) focusCell(other.id, col)
+        return
+      }
+      case 'add-set':
+        addSetAndFocus(ex.id)
+        return
+      case 'duplicate':
+        pendingFocus.current = { kind: 'new', known: knownIds() }
+        onDuplicate(ex.id)
+        return
+      case 'delete': {
+        // The row is going: park the cursor on the one that takes its place.
+        const other = list[i + 1] ?? list[i - 1]
+        pendingFocus.current = other ? { kind: 'cell', id: other.id, col } : null
+        if (!other) tableWrapperRef.current?.parentElement?.querySelector<HTMLElement>('[data-add-exercise]')?.focus()
+        return
+      }
+      case 'move-up':
+      case 'move-down': {
+        const dir = action === 'move-up' ? -1 : 1
+        const groupList = buildGroups(list)
+        const gi = groupList.findIndex((g) => g.exercises.some((x) => x.id === ex.id))
+        const group = groupList[gi]
+        const within = group.exercises.findIndex((x) => x.id === ex.id)
+        let order: string[]
+        if (within > 0) {
+          // A set row moves among the sets of its own exercise.
+          const to = within + dir
+          if (to < 0 || to >= group.exercises.length) return
+          const ids = group.exercises.map((x) => x.id)
+          ;[ids[within], ids[to]] = [ids[to], ids[within]]
+          const inGroup = new Set(ids)
+          let k = 0
+          order = list.map((x) => (inGroup.has(x.id) ? ids[k++] : x.id))
+        } else {
+          // The exercise moves as a whole, with all of its sets.
+          const to = gi + dir
+          if (to < 0 || to >= groupList.length) return
+          const moved = [...groupList]
+          ;[moved[gi], moved[to]] = [moved[to], moved[gi]]
+          order = moved.flatMap((g) => g.exercises.map((x) => x.id))
+        }
+        // Moving a row in the DOM drops focus; put it back where it was.
+        pendingFocus.current = { kind: 'cell', id: ex.id, col }
+        onReorder(order)
+        return
+      }
+    }
+  }
+
   const toggleDate = (date: string) => {
     setSelectedDates((prev) => {
       const next = new Set(prev)
@@ -333,7 +463,9 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
                           unsavedKeys={unsavedKeys}
                           onSave={(patch) => onSaveField(ex.id, patch)}
                           onDelete={() => onDeleteExercise(ex.id)}
-                          onAddSet={i === group.exercises.length - 1 ? () => onAddSet(ex.id) : undefined}
+                          onAddSet={i === group.exercises.length - 1 ? () => addSetAndFocus(ex.id) : undefined}
+                          onKey={(action, col) => handleRowKey(ex, action, col)}
+                          suggestions={suggestions}
                           onGroupDragStart={i === 0 ? startGroupDrag(ex.id, group.groupId) : undefined}
                           onSetDragStart={i > 0 && group.groupId ? startSetDrag(ex.id, group.groupId) : undefined}
                           onDragEnd={stopDrag}
@@ -363,7 +495,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, sam
       {/* Footer: add exercise / clear day / copy to weeks */}
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex gap-2">
-          <Button type="button" size="sm" variant="outline" onClick={onAdd} data-add-exercise>
+          <Button type="button" size="sm" variant="outline" onClick={() => void addAndFocus()} data-add-exercise>
             <Plus className="h-4 w-4 mr-1" />Add exercise
           </Button>
           {sameDayDates.length > 0 && exercises.length > 0 && !copyOpen && (

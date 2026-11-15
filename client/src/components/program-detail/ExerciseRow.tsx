@@ -4,6 +4,7 @@ import { GripVertical, Plus, Trash2 } from 'lucide-react'
 import { EXERCISE_NAMES } from 'coachboard-shared/exercises'
 import { type Exercise, type ColDef, exerciseValue } from '../../lib/programUtils'
 import { failedEditKeyForColumn } from '../../lib/failedEdits'
+import { useToast } from '../ui/toast'
 
 interface ExerciseRowProps {
   exercise: Exercise
@@ -13,6 +14,13 @@ interface ExerciseRowProps {
   /** Resolves false when the exercise could not be deleted and is still there. */
   onDelete: () => Promise<boolean>
   onAddSet?: () => void
+  /**
+   * A key that moves the cursor or acts on the whole row. The editor owns
+   * these, because where "next" is depends on the rows around this one.
+   */
+  onKey: (action: RowKeyAction, colKey: string) => void
+  /** Exercise names to suggest, best first. */
+  suggestions?: readonly string[]
   isSubSet?: boolean
   isInGroup?: boolean
   isDragging?: boolean
@@ -26,7 +34,31 @@ interface ExerciseRowProps {
   portalContainer?: HTMLElement | null
 }
 
-export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
+export type RowKeyAction =
+  | 'next'        // Enter: the next field, then the next exercise, then a new one
+  | 'up' | 'down' // the same field on the row above / below
+  | 'add-set'     // Ctrl+Enter
+  | 'duplicate'   // Ctrl+D
+  | 'delete'      // Ctrl+Delete — the row is about to go; move the cursor off it
+  | 'move-up' | 'move-down' // Alt+Up / Alt+Down
+
+/** Suggestions for what has been typed: names that start with it, then names that contain it. */
+export function matchSuggestions(names: readonly string[], typed: string, limit = 8): string[] {
+  const q = typed.trim().toLowerCase()
+  if (!q) return []
+  const starts: string[] = []
+  const contains: string[] = []
+  for (const n of names) {
+    const lower = n.toLowerCase()
+    if (lower === q) continue
+    if (lower.startsWith(q)) starts.push(n)
+    else if (lower.includes(q)) contains.push(n)
+  }
+  return [...starts, ...contains].slice(0, limit)
+}
+
+export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, onKey, suggestions = EXERCISE_NAMES, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
+  const toast = useToast()
   /**
    * Whether this cell holds a value the server has not accepted.
    *
@@ -85,12 +117,15 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
   // Anchor rect for the suggestion menu, which renders in a portal so it
   // escapes the day dialog's scroll/overflow clipping.
   const [menuRect, setMenuRect] = useState<{ left: number; top: number; width: number } | null>(null)
-  const nameQuery = (draft.name ?? '').trim().toLowerCase()
-  const nameMatches = nameFocused && nameQuery.length >= 1
-    ? EXERCISE_NAMES.filter(
-        (n) => n.toLowerCase().includes(nameQuery) && n.toLowerCase() !== nameQuery,
-      ).slice(0, 8)
-    : []
+  // The list opens when the coach TYPES in the name, not when the cursor merely
+  // lands there — otherwise every day would open with a list over its first
+  // exercise, and Esc would close that list instead of the day. Esc closes the
+  // list without closing the day; typing again reopens it.
+  const [listClosed, setListClosed] = useState(true)
+  // Nothing is highlighted until the coach presses an arrow key. Otherwise Enter
+  // after typing "Squat" would swap it for the first suggestion.
+  const [highlight, setHighlight] = useState(-1)
+  const nameMatches = nameFocused && !listClosed ? matchSuggestions(suggestions, draft.name ?? '') : []
 
   useEffect(() => {
     if (nameMatches.length === 0 || !portalContainer) {
@@ -146,8 +181,20 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
     if (key === 'name') {
       patch = { name: v }
     } else if (col.numeric) {
-      const num = v === '' ? null : Number(v)
-      if (num !== null && Number.isNaN(num)) return
+      // A decimal comma is how a Swedish keyboard types 102,5.
+      const text = v.trim().replace(',', '.')
+      const num = text === '' ? null : Number(text)
+      if (num !== null && (Number.isNaN(num) || num < 0)) {
+        // Put the stored value back rather than leave text in the cell that
+        // looks saved and is not.
+        setDraft((d) => ({ ...d, [key]: exerciseValue(exerciseRef.current, key) }))
+        toast.error(`${col.label} takes a number, so "${v}" was not saved.`)
+        return
+      }
+      if (num === exerciseRef.current.weight) {
+        setDraft((d) => ({ ...d, [key]: exerciseValue(exerciseRef.current, key) }))
+        return
+      }
       patch = { weight: num }
     } else {
       patch = { [key]: v || null } as Partial<Exercise>
@@ -174,6 +221,85 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reads refs only
   }, [])
+
+  const pickSuggestion = (col: ColDef, name: string) => {
+    edit(col.key, name)
+    draftRef.current = { ...draftRef.current, [col.key]: name }
+    commit(col)
+    setListClosed(true)
+    setHighlight(-1)
+  }
+
+  const removeRow = () => {
+    // Nothing typed in this row should be saved on its way out.
+    discardRef.current = true
+    void onDelete().then((gone) => { if (!gone) discardRef.current = false })
+  }
+
+  /**
+   * Keys inside a cell. Everything the mouse can do in the table has a key
+   * here; the list of them is in Settings → Help.
+   */
+  const onCellKey = (e: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>, col: ColDef) => {
+    const el = e.currentTarget
+    const plain = !e.ctrlKey && !e.altKey && !e.metaKey
+
+    // The suggestion list takes the arrows, Enter/Tab and Esc while it is open.
+    if (col.key === 'name' && nameMatches.length > 0 && plain) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        const n = nameMatches.length
+        setHighlight((h) => (e.key === 'ArrowDown' ? (h + 1) % n : (h <= 0 ? n : h) - 1))
+        return
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && highlight >= 0 && highlight < nameMatches.length) {
+        pickSuggestion(col, nameMatches[highlight])
+        if (e.key === 'Enter') { e.preventDefault(); onKey('next', col.key) }
+        return // Tab carries on to the next field by itself
+      }
+      if (e.key === 'Escape') {
+        // The dialog sees the open list and leaves the day open (see
+        // onEscapeKeyDown in ProgramDetail); this closes just the list.
+        setListClosed(true)
+        setHighlight(-1)
+        return
+      }
+    }
+
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey) {
+      e.preventDefault()
+      onKey(e.ctrlKey ? 'add-set' : 'next', col.key)
+      return
+    }
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'd') {
+      e.preventDefault()
+      onKey('duplicate', col.key)
+      return
+    }
+    if (e.ctrlKey && !e.altKey && e.key === 'Delete') {
+      e.preventDefault()
+      onKey('delete', col.key)
+      removeRow()
+      return
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      const up = e.key === 'ArrowUp'
+      if (e.altKey && !e.ctrlKey) {
+        e.preventDefault()
+        onKey(up ? 'move-up' : 'move-down', col.key)
+        return
+      }
+      if (!plain || e.shiftKey) return
+      // In a cell with several lines the arrows walk the lines first.
+      const v = el.value
+      const onEdgeLine = up
+        ? !v.slice(0, el.selectionStart ?? 0).includes('\n')
+        : !v.slice(el.selectionEnd ?? v.length).includes('\n')
+      if (!onEdgeLine) return
+      e.preventDefault()
+      onKey(up ? 'up' : 'down', col.key)
+    }
+  }
 
   const inputCls = "w-full bg-transparent px-2 py-1.5 text-sm outline-none focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary"
   const textareaStyle: React.CSSProperties = { fieldSizing: 'content' } as React.CSSProperties
@@ -217,9 +343,10 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                       rows={1}
                       value={draft[c.key] ?? ''}
                       data-cell={`${exercise.id}:${c.key}`}
-                      onChange={(e) => edit(c.key, e.target.value)}
+                      onChange={(e) => { edit(c.key, e.target.value); setListClosed(false); setHighlight(-1) }}
+                      onKeyDown={(e) => onCellKey(e, c)}
                       onFocus={() => setNameFocused(true)}
-                      onBlur={() => { commit(c); setNameFocused(false) }}
+                      onBlur={() => { commit(c); setNameFocused(false); setListClosed(true); setHighlight(-1) }}
                       placeholder={c.placeholder}
                       style={textareaStyle}
                       title={
@@ -234,22 +361,24 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                     />
                     {nameMatches.length > 0 && menuRect && portalContainer && createPortal(
                       <ul
+                        // Marks an open list for the dialog, which then keeps Esc
+                        // from closing the day.
+                        data-exercise-suggestions
+                        role="listbox"
                         style={{ position: 'absolute', left: menuRect.left, top: menuRect.top, width: menuRect.width }}
                         className="z-[60] mt-0.5 max-h-56 overflow-auto rounded-lg border bg-popover py-1 text-sm shadow-xl shadow-black/20"
                       >
-                        {nameMatches.map((name) => (
-                          <li key={name}>
+                        {nameMatches.map((name, i) => (
+                          <li key={name} role="option" aria-selected={i === highlight}>
                             <button
                               type="button"
+                              tabIndex={-1}
                               // mousedown fires before the textarea blur, so the pick lands.
                               onMouseDown={(e) => {
                                 e.preventDefault()
-                                edit(c.key, name)
-                                draftRef.current = { ...draftRef.current, [c.key]: name }
-                                commit(c)
-                                setNameFocused(false)
+                                pickSuggestion(c, name)
                               }}
-                              className="block w-full px-3 py-1.5 text-left hover:bg-accent"
+                              className={`block w-full px-3 py-1.5 text-left hover:bg-accent ${i === highlight ? 'bg-accent' : ''}`}
                             >
                               {name}
                             </button>
@@ -266,13 +395,15 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
         }
         const unsavedTitle = isUnsaved(c.key) ? 'Not saved yet — use "Try again" above' : undefined
         const cellContent = c.numeric ? (
+          // A text field, not type="number": a number field changes its value
+          // under the scroll wheel and the arrow keys, and refuses "102,5".
           <input
-            type="number"
-            min="0"
-            step="0.5"
+            type="text"
+            inputMode="decimal"
             value={draft[c.key] ?? ''}
             data-cell={`${exercise.id}:${c.key}`}
-                      onChange={(e) => edit(c.key, e.target.value)}
+            onChange={(e) => edit(c.key, e.target.value)}
+            onKeyDown={(e) => onCellKey(e, c)}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
             title={unsavedTitle}
@@ -283,7 +414,8 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
             rows={1}
             value={draft[c.key] ?? ''}
             data-cell={`${exercise.id}:${c.key}`}
-                      onChange={(e) => edit(c.key, e.target.value)}
+            onChange={(e) => edit(c.key, e.target.value)}
+            onKeyDown={(e) => onCellKey(e, c)}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
             title={unsavedTitle}
@@ -304,9 +436,11 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                 <button
                   type="button"
                   onClick={onAddSet}
+                  // Skipped by Tab, which walks the cells; the key is Ctrl+Enter.
+                  tabIndex={-1}
                   className="p-1 text-muted-foreground hover:text-primary"
                   aria-label="Add set"
-                  title="Add set"
+                  title="Add set (Ctrl+Enter)"
                 >
                   <Plus className="h-3 w-3" />
                 </button>
@@ -319,11 +453,9 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
       <td className="border-b border-border p-0 text-center align-middle">
         <button
           type="button"
-          onClick={() => {
-            // Nothing typed in this row should be saved on its way out.
-            discardRef.current = true
-            void onDelete().then((gone) => { if (!gone) discardRef.current = false })
-          }}
+          onClick={removeRow}
+          tabIndex={-1}
+          title="Delete exercise (Ctrl+Delete)"
           className="p-1 text-muted-foreground hover:text-destructive"
           aria-label="Delete exercise"
         >
