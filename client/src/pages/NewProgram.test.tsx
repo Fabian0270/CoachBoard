@@ -31,12 +31,25 @@ describe('New program — dates in one step', () => {
     expect((screen.getByLabelText(/Weeks/) as HTMLInputElement).value).toBe('4')
     expect(screen.getByText('2026-11-23 → 2026-12-20')).toBeTruthy()
 
-    await userEvent.type(screen.getByLabelText(/Program Name/), 'Winter block')
+    await userEvent.type(screen.getByLabelText(/Program name/), 'Winter block')
     await userEvent.click(screen.getByRole('button', { name: 'Create program' }))
     await waitFor(() => expect(bodies('POST', '/api/programs')).toHaveLength(1))
     expect(bodies('POST', '/api/programs')[0]).toMatchObject({
       athlete_id: 'a1', name: 'Winter block', start_date: '2026-11-23', end_date: '2026-12-20',
     })
+  })
+
+  it('suggests a name, uses it when none is typed, and sends the focus', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 10, 18, 10))
+    serve(routes())
+    renderScreen(<NewProgram />, { path: '/programs/new?athlete_id=a1' })
+    await userEvent.selectOptions(screen.getByLabelText('Training focus'), 'strength')
+    const name = screen.getByLabelText(/Program name/) as HTMLInputElement
+    await waitFor(() => expect(name.placeholder).toBe('Sara · Strength · Nov 2026'))
+    await userEvent.click(screen.getByRole('button', { name: 'Create program' }))
+    await waitFor(() => expect(bodies('POST', '/api/programs')).toHaveLength(1))
+    expect(bodies('POST', '/api/programs')[0]).toMatchObject({ name: 'Sara · Strength · Nov 2026', focus: 'strength' })
   })
 
   it("defaults to the coach's usual block length", async () => {

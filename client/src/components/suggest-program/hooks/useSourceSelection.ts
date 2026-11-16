@@ -41,7 +41,13 @@ export function useSourceSelection(params: {
     setSourcesError(null)
     getList<SelectableProgram>(`/api/programs?athlete_id=${encodeURIComponent(eid)}`)
       .then((all) => {
-        setSourcePrograms(all.filter((p) => p.status === 'completed' || p.status === 'archived'))
+        // Bookmarked programs first: bookmarking exists "for reuse", and this
+        // is where a program gets reused. Then the most recent first.
+        setSourcePrograms(
+          all
+            .filter((p) => p.status === 'completed' || p.status === 'archived')
+            .sort((a, b) => (b.bookmarked ?? 0) - (a.bookmarked ?? 0) || (b.start_date ?? '').localeCompare(a.start_date ?? '')),
+        )
       })
       .catch((err) => setSourcesError(`Failed to load programs. ${errorMessage(err)}`))
       .finally(() => setSourcesLoading(false))

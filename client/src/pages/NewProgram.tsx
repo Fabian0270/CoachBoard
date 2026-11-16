@@ -63,6 +63,15 @@ export default function NewProgram() {
     if (usualWeeks && !weeksTouched) setForm((f) => ({ ...f, weeks: String(usualWeeks) }))
   }, [usualWeeks, weeksTouched])
 
+  const [focus, setFocus] = useState('')
+  // A name to use when the coach does not type one: who, what, when.
+  const athleteName = athletes.find((a) => a.id === form.athlete_id)?.name
+  const focusLabel = { hypertrophy: 'Hypertrophy', strength: 'Strength', peaking: 'Peaking' }[focus] ?? 'Block'
+  const startMonth = form.start_date
+    ? new Date(`${form.start_date}T00:00:00Z`).toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' })
+    : ''
+  const suggestedName = [athleteName, focusLabel, startMonth].filter(Boolean).join(' · ')
+
   const weeks = Number(form.weeks)
   const dates = form.start_date && weeks >= 1 && weeks <= 52 ? blockDates(form.start_date, weeks) : null
 
@@ -73,7 +82,8 @@ export default function NewProgram() {
     try {
       const program = await sendJson<{ id: string }>('POST', '/api/programs', {
         athlete_id: form.athlete_id,
-        name: form.name,
+        name: form.name.trim() || suggestedName,
+        focus: focus || null,
         description: form.description,
         status: form.status,
         start_date: dates.start,
@@ -108,8 +118,29 @@ export default function NewProgram() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label htmlFor="name">Program Name *</Label>
-                <Input id="name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                <Label htmlFor="name">Program name</Label>
+                {/* Left empty, the suggestion in grey is used. */}
+                <Input
+                  id="name" maxLength={200}
+                  value={form.name}
+                  placeholder={suggestedName}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="focus">Training focus</Label>
+                <select
+                  id="focus"
+                  value={focus}
+                  onChange={(e) => setFocus(e.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">No focus</option>
+                  <option value="hypertrophy">Hypertrophy</option>
+                  <option value="strength">Strength</option>
+                  <option value="peaking">Peaking</option>
+                </select>
+                <p className="text-xs text-muted-foreground">Used to tailor future program suggestions. Can be changed later.</p>
               </div>
               <div className="space-y-1">
                 <Label htmlFor="description">Description</Label>
