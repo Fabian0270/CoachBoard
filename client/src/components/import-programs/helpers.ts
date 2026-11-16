@@ -36,14 +36,16 @@ export function overrideParams(o: ExternalParseOverrides): URLSearchParams {
   col('map_reps', o.reps)
   col('map_load', o.load)
   col('map_rpe', o.rpe)
+  col('map_notes', o.notes)
   if (o.rpeFromRir !== undefined) p.set('rpe_is_rir', o.rpeFromRir ? '1' : '0')
   return p
 }
 
-export const MAP_FIELDS: { key: 'exercise' | 'sets' | 'reps' | 'load' | 'rpe'; label: string; required?: boolean }[] = [
+export const MAP_FIELDS: { key: 'exercise' | 'sets' | 'reps' | 'load' | 'rpe' | 'notes'; label: string; required?: boolean }[] = [
   { key: 'exercise', label: 'Exercise', required: true },
   { key: 'sets', label: 'Sets', required: true },
   { key: 'reps', label: 'Reps', required: true },
   { key: 'load', label: 'Load' },
   { key: 'rpe', label: 'RPE / RIR' },
+  { key: 'notes', label: 'Notes / cues' },
 ]

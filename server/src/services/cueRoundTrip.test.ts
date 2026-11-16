@@ -156,6 +156,40 @@ describe('cue column on — export and import still line up', () => {
     // No cue, no suffix.
     expect(cells.filter((t) => t === 'Bench Press')).toHaveLength(3)
   })
+
+  it("a coach's style with its own notes column: the cue goes there, results read back right", async () => {
+    // Captured from a sheet that had a "Coach comments" column (C7b). The column
+    // sits between the prescription and the results, so a disagreement on its
+    // place would move every Load Used and RPE.
+    const layout: ExportLayoutTemplate = {
+      ...COACH_STYLE,
+      columns: [
+        { key: 'name', label: 'Movement' },
+        { key: 'sets', label: 'Sets' },
+        { key: 'reps', label: 'Reps' },
+        { key: 'notes', label: 'Coach comments' },
+        { key: 'load_used', label: 'Load Used' },
+        { key: 'rpe', label: 'Last Set RPE' },
+      ],
+    }
+    const id = await makeProgram({ name: 'Cues own column', cues: true, layout })
+    const ws = await sheetOf(await expectCleanRoundTrip(id, { name: 'Movement', loadUsed: 'Load Used', rpe: 'Last Set RPE' }))
+    const cells = allText(ws)
+    expect(cells.filter((t) => t === 'Coach comments')).toHaveLength(7 * 3)
+    expect(cells.filter((t) => t === 'pause 2 s at the bottom')).toHaveLength(3)
+    expect(cells.some((t) => t.startsWith('Squat - '))).toBe(false)
+  })
+
+  it('…and with cues off that column goes out empty, results still read back right', async () => {
+    const layout: ExportLayoutTemplate = {
+      ...COACH_STYLE,
+      columns: [...COACH_STYLE.columns.slice(0, 3), { key: 'notes', label: 'Coach comments' }, ...COACH_STYLE.columns.slice(3)],
+    }
+    const id = await makeProgram({ name: 'Cues own column off', cues: false, layout })
+    const cells = allText(await sheetOf(await expectCleanRoundTrip(id, { name: 'Movement', loadUsed: 'Load Used', rpe: 'Last Set RPE' })))
+    expect(cells).toContain('Coach comments')
+    expect(cells.some((t) => t.includes('pause 2 s'))).toBe(false)
+  })
 })
 
 describe('cue column off — the sheet is what it always was', () => {

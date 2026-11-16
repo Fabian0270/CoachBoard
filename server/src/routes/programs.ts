@@ -67,6 +67,7 @@ function externalOverridesFromQuery(q: Request['query']): ExternalParseOverrides
   const reps = asColumn(q.map_reps); if (reps !== undefined) o.reps = reps
   const load = asColumn(q.map_load); if (load !== undefined) o.load = load
   const rpe = asColumn(q.map_rpe); if (rpe !== undefined) o.rpe = rpe
+  const notes = asColumn(q.map_notes); if (notes !== undefined) o.notes = notes
   if (q.rpe_is_rir !== undefined) o.rpeFromRir = q.rpe_is_rir === '1' || q.rpe_is_rir === 'true'
   return Object.keys(o).length > 0 ? o : undefined
 }

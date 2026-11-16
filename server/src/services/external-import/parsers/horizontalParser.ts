@@ -4,7 +4,7 @@ import type {
   ExternalImportWarning,
 } from 'coachboard-shared'
 import { tokenize } from '../cellParsing.js'
-import { ALIASES, isResultHeader } from '../headerDetection.js'
+import { ALIASES, isResultHeader, isCueHeader } from '../headerDetection.js'
 import {
   normalizeReps,
   normalizeIntensity,
@@ -29,13 +29,14 @@ interface BlockFields {
   loadCap: number | null
   loadUsed: number | null
   rpe: number | null
+  notes: number | null
   rpeFromRir: boolean
 }
 
 function resolveBlockFields(headerCells: string[], blockStart: number, blockWidth: number): BlockFields {
   const f: BlockFields = {
     name: null, restTime: null, sets: null, reps: null,
-    intensity: null, loadCap: null, loadUsed: null, rpe: null, rpeFromRir: false,
+    intensity: null, loadCap: null, loadUsed: null, rpe: null, notes: null, rpeFromRir: false,
   }
   for (let off = 0; off < blockWidth; off++) {
     const toks = tokenize(headerCells[blockStart - 1 + off] ?? '')
@@ -44,6 +45,7 @@ function resolveBlockFields(headerCells: string[], blockStart: number, blockWidt
     // Order matters: specific tokens (used/cap/intensity/rpe) resolve before the
     // generic set/rep so the duplicated load columns don't collide.
     if (f.name === null && has('discipline', 'exercise', 'movement', 'lift', 'name')) f.name = off
+    else if (f.notes === null && isCueHeader(headerCells[blockStart - 1 + off] ?? '')) f.notes = off
     else if (f.rpe === null && has('rpe', 'effort', 'rir')) { f.rpe = off; f.rpeFromRir = toks.includes('rir') }
     else if (f.loadUsed === null && has('used')) f.loadUsed = off
     else if (f.loadCap === null && has('cap')) f.loadCap = off
@@ -168,6 +170,7 @@ export function parseHorizontal(
       const loadUsedText = get(fields.loadUsed)
       const rpeText = get(fields.rpe)
       const restText = get(fields.restTime)
+      const notesText = get(fields.notes)
 
       const hasData = !!(setsText || repsText || intensityText || loadCapText || loadUsedText || rpeText)
       if (!name || !hasData) continue
@@ -191,6 +194,7 @@ export function parseHorizontal(
         intensity: normalizeIntensity(intensityText),
         loadCap: normalizeLoadCap(loadCapText),
         restTime: restText || null,
+        notes: notesText || null,
         refillCols: {
           name: fields.name !== null ? base + fields.name : sharedNameCol,
           sets: fields.sets !== null ? base + fields.sets : null,
@@ -201,6 +205,7 @@ export function parseHorizontal(
           restTime: fields.restTime !== null ? base + fields.restTime : null,
           rpe: fields.rpe !== null ? base + fields.rpe : null,
           erpe: null,
+          notes: fields.notes !== null ? base + fields.notes : null,
         },
       })
     }
@@ -213,6 +218,7 @@ export function parseHorizontal(
     reps: fields.reps !== null ? b0 + fields.reps : null,
     load: fields.loadUsed !== null ? b0 + fields.loadUsed : null,
     rpe: fields.rpe !== null ? b0 + fields.rpe : null,
+    notes: fields.notes !== null ? b0 + fields.notes : null,
     rpeFromRir: fields.rpeFromRir,
   }
 

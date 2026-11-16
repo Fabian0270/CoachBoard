@@ -59,6 +59,7 @@ export function parseVertical(readRow: ReadRow, maxRow: number, overrides?: Exte
     if (overrides.reps !== undefined) mapping.reps = overrides.reps
     if (overrides.load !== undefined) mapping.load = overrides.load
     if (overrides.rpe !== undefined) mapping.rpe = overrides.rpe
+    if (overrides.notes !== undefined) mapping.notes = overrides.notes
     if (overrides.rpeFromRir !== undefined) mapping.rpeFromRir = overrides.rpeFromRir
   }
 
@@ -143,7 +144,8 @@ export function parseVertical(readRow: ReadRow, maxRow: number, overrides?: Exte
         loadIsResult,
         rpeIsResult,
         sheetRow: r,
-        refillCols: { name: mapping.exercise, sets: mapping.sets, reps: mapping.reps, load: mapping.load, rpe: mapping.rpe, erpe: null },
+        notes: col(cells, mapping.notes) || null,
+        refillCols: { name: mapping.exercise, sets: mapping.sets, reps: mapping.reps, load: mapping.load, rpe: mapping.rpe, erpe: null, notes: mapping.notes },
       })
       continue
     }

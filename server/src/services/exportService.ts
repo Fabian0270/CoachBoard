@@ -79,10 +79,15 @@ function formatRpe(value: string | null, notation: 'plain' | 'at'): string {
   return value
 }
 
-function getValue(ex: ExerciseRow, key: ExportColumnKey, rpeNotation: 'plain' | 'at', cueAfterName = false): string | number {
+function getValue(
+  ex: ExerciseRow, key: ExportColumnKey, rpeNotation: 'plain' | 'at',
+  cues: { show: boolean; afterName: boolean },
+): string | number {
   switch (key) {
-    case 'name': return cueAfterName ? nameWithCue(ex.name ?? '', ex.notes) : ex.name ?? ''
-    case 'notes': return ex.notes ?? ''
+    case 'name': return cues.afterName ? nameWithCue(ex.name ?? '', ex.notes) : ex.name ?? ''
+    // A coach's style that has a Notes column keeps it with cues off — empty,
+    // since a cue the coach switched off is never exported.
+    case 'notes': return cues.show ? ex.notes ?? '' : ''
     case 'rest_time': return ex.rest_time ?? ''
     case 'sets': return ex.sets ?? ''
     case 'reps': return ex.reps ?? ''
@@ -106,8 +111,8 @@ function resolveColumns(program: ProgramRow, template: ExportLayoutTemplate | nu
   colors: { banner: string; dayHeader: string; body: string | null }
   fonts: { headerBold: boolean; headerItalic: boolean; nameBold: boolean }
   rpeNotation: 'plain' | 'at'
-  /** Cues are on but the layout has no Notes column (a coach's own style): write them after the name. */
-  cueAfterName: boolean
+  /** show: the cue column is on. afterName: on, but the layout has no Notes column — write each cue after its name. */
+  cues: { show: boolean; afterName: boolean }
 } {
   const headerColor = template?.colors.columnHeader || DEFAULT_HEADER_COLOR
   const trackingColor = template?.colors.trackingHeader || DEFAULT_TRACKING_COLOR
@@ -141,7 +146,7 @@ function resolveColumns(program: ProgramRow, template: ExportLayoutTemplate | nu
       nameBold: template ? !!template.fonts.nameBold : true,
     },
     rpeNotation: template?.rpeNotation ?? 'plain',
-    cueAfterName: enabled.has('notes') && !keys.includes('notes'),
+    cues: { show: enabled.has('notes'), afterName: enabled.has('notes') && !keys.includes('notes') },
   }
 }
 
@@ -248,7 +253,7 @@ function renderHorizontal(
   numWeeks: number,
   dayLabel: (d: number) => string,
 ): void {
-  const { columns, colors, fonts, rpeNotation, cueAfterName } = resolved
+  const { columns, colors, fonts, rpeNotation, cues } = resolved
   const fixedColumnCount = 1
   const columnCount = columns.length
   const weekColumnStart = (weekIndex: number) => fixedColumnCount + 1 + weekIndex * (columnCount + 1)
@@ -311,7 +316,7 @@ function renderHorizontal(
         const col = weekColumnStart(weekIndex)
         columns.forEach((c, i) => {
           const cell = ws.getCell(row, col + i)
-          cell.value = isSubSet && c.key === 'name' ? '' : getValue(exercise, c.key, rpeNotation, cueAfterName)
+          cell.value = isSubSet && c.key === 'name' ? '' : getValue(exercise, c.key, rpeNotation, cues)
           if (c.key === 'name' && !isSubSet && fonts.nameBold) cell.font = { bold: true }
         })
       }
@@ -344,7 +349,7 @@ function renderVertical(
   numWeeks: number,
   dayLabel: (d: number) => string,
 ): void {
-  const { columns, colors, fonts, rpeNotation, cueAfterName } = resolved
+  const { columns, colors, fonts, rpeNotation, cues } = resolved
 
   columns.forEach((c, i) => { ws.getColumn(i + 1).width = c.width })
 
@@ -385,7 +390,7 @@ function renderVertical(
         const isSubSet = !!(prev && exercise.group_id && exercise.group_id === prev.group_id)
         columns.forEach((c, i) => {
           const cell = ws.getCell(row, i + 1)
-          cell.value = isSubSet && c.key === 'name' ? '' : getValue(exercise, c.key, rpeNotation, cueAfterName)
+          cell.value = isSubSet && c.key === 'name' ? '' : getValue(exercise, c.key, rpeNotation, cues)
           if (colors.body) cell.fill = fill(colors.body)
           if (c.key === 'name' && !isSubSet && fonts.nameBold) cell.font = { bold: true }
           cell.alignment = { horizontal: i === 0 ? 'left' : 'center', vertical: 'middle' }

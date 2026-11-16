@@ -27,7 +27,7 @@ export type ParseResult = Omit<
 }
 
 export const emptyMapping = (): ExternalColumnMapping =>
-  ({ exercise: null, sets: null, reps: null, load: null, rpe: null, rpeFromRir: false })
+  ({ exercise: null, sets: null, reps: null, load: null, rpe: null, notes: null, rpeFromRir: false })
 
 export function makeReadRow(ws: ExcelJS.Worksheet, maxCol: number): ReadRow {
   return (r) => {
@@ -43,6 +43,6 @@ export function hasParseOverride(o?: ExternalParseOverrides): boolean {
   return !!o && (
     o.headerRow !== undefined || o.rpeFromRir !== undefined ||
     o.exercise !== undefined || o.sets !== undefined || o.reps !== undefined ||
-    o.load !== undefined || o.rpe !== undefined
+    o.load !== undefined || o.rpe !== undefined || o.notes !== undefined
   )
 }

@@ -7,7 +7,7 @@ import { tokenize, RANGE } from '../cellParsing.js'
 import { DAY_LABEL } from '../layoutDetection.js'
 import { normalizeReps, normalizeIntensity, normalizeLoad } from '../valueNormalizers.js'
 import { emptyMapping, type ParseResult, type ReadRow } from '../shared.js'
-import { isResultHeader } from '../headerDetection.js'
+import { isResultHeader, isCueHeader } from '../headerDetection.js'
 
 // ---------------------------------------------------------------------------
 // Block-grid layout (Feature 4c). Like the horizontal
@@ -30,6 +30,7 @@ export interface GridFields {
   rpe: number | null
   erpe: number | null   // executed RPE — ignored on import, but tracked so the
                         // re-fill engine can clear stale executed values
+  notes: number | null  // the coach's notes / comments / cues column
   rpeFromRir: boolean
   /** Whether the load / RPE header says it is the athlete's ("Load used", "Last set RPE"). */
   loadIsResult: boolean
@@ -38,7 +39,7 @@ export interface GridFields {
 
 export function resolveGridFields(headerCells: string[], blockStart: number, blockWidth: number): GridFields {
   const f: GridFields = {
-    name: null, sets: null, reps: null, load: null, rpe: null, erpe: null, rpeFromRir: false,
+    name: null, sets: null, reps: null, load: null, rpe: null, erpe: null, notes: null, rpeFromRir: false,
     loadIsResult: false, rpeIsResult: false,
   }
   for (let off = 0; off < blockWidth; off++) {
@@ -50,6 +51,7 @@ export function resolveGridFields(headerCells: string[], blockStart: number, blo
     // re-fill engine. Order: name, then specific RPE before the generic
     // set/rep/load so a stray token never steals a numeric column.
     if (f.name === null && has('movement', 'exercise', 'lift', 'name', 'discipline')) f.name = off
+    else if (f.notes === null && isCueHeader(headerCells[blockStart - 1 + off] ?? '')) f.notes = off
     else if (toks.includes('erpe')) { if (f.erpe === null) f.erpe = off; continue }
     else if (f.rpe === null && has('rpe', 'effort', 'rir')) { f.rpe = off; f.rpeFromRir = toks.includes('rir') }
     else if (f.reps === null && has('reps', 'rep', 'repetitions')) f.reps = off
@@ -162,6 +164,7 @@ export function parseBlockGrid(
       const repsText = get(fields.reps)
       const loadText = get(fields.load)
       const rpeText = get(fields.rpe)
+      const notesText = get(fields.notes)
 
       const hasData = !!(setsText || repsText || loadText || rpeText)
       if (!name || !hasData) continue
@@ -181,6 +184,7 @@ export function parseBlockGrid(
         rpeIsResult: fields.rpeIsResult,
         sheetRow: r,
         intensity,
+        notes: notesText || null,
         refillCols: {
           name: fields.name !== null ? base + fields.name : null,
           sets: fields.sets !== null ? base + fields.sets : null,
@@ -188,6 +192,7 @@ export function parseBlockGrid(
           load: fields.load !== null ? base + fields.load : null,
           rpe: fields.rpe !== null ? base + fields.rpe : null,
           erpe: fields.erpe !== null ? base + fields.erpe : null,
+          notes: fields.notes !== null ? base + fields.notes : null,
         },
       })
     }
@@ -200,6 +205,7 @@ export function parseBlockGrid(
     reps: fields.reps !== null ? b0 + fields.reps : null,
     load: fields.load !== null ? b0 + fields.load : null,
     rpe: fields.rpe !== null ? b0 + fields.rpe : null,
+    notes: fields.notes !== null ? b0 + fields.notes : null,
     rpeFromRir: fields.rpeFromRir,
   }
 

@@ -249,7 +249,7 @@ function copyRowPrefix(src: ExcelJS.Worksheet, lastRow: number, lastCol: number)
   return dst
 }
 
-interface RelCols { name: number | null; sets: number | null; reps: number | null; load: number | null; loadCap: number | null; intensity: number | null; restTime: number | null; rpe: number | null; erpe: number | null }
+interface RelCols { name: number | null; sets: number | null; reps: number | null; load: number | null; loadCap: number | null; intensity: number | null; restTime: number | null; rpe: number | null; erpe: number | null; notes: number | null }
 
 // ---------------------------------------------------------------------------
 // Row axis (vertical layout): weeks stacked top-to-bottom, sharing columns.
@@ -294,7 +294,7 @@ function deriveRowGeometry(tEx: ExternalExerciseRow[], ws: ExcelJS.Worksheet): R
   const days: RowDay[] = []
   for (const e of week0) {
     const c = e.refillCols!
-    const slot: RowSlot = { relRow: e.sheetRow - top, cols: { name: c.name, sets: c.sets, reps: c.reps, load: c.load, loadCap: c.loadCap ?? null, intensity: c.intensity ?? null, restTime: c.restTime ?? null, rpe: c.rpe, erpe: c.erpe } }
+    const slot: RowSlot = { relRow: e.sheetRow - top, cols: { name: c.name, sets: c.sets, reps: c.reps, load: c.load, loadCap: c.loadCap ?? null, intensity: c.intensity ?? null, restTime: c.restTime ?? null, rpe: c.rpe, erpe: c.erpe, notes: c.notes ?? null } }
     let d = days.find((x) => x.dayIndex === e.dayIndex)
     if (!d) { d = { dayIndex: e.dayIndex, slots: [] }; days.push(d) }
     d.slots.push(slot)
@@ -392,6 +392,7 @@ async function renderRowAxis(
         }
         set(slot.cols.rpe, ex ? fmtRpe(rpeValue(ex)) : null)
         set(slot.cols.erpe, null)
+        set(slot.cols.notes, ex ? ex.notes ?? null : null)
       })
     })
     // Renumber the week banner in this block.
@@ -476,6 +477,7 @@ function deriveColumnGeometry(tEx: ExternalExerciseRow[]): ColumnGeometry | null
       restTime: c.restTime !== null && c.restTime !== undefined ? c.restTime - start0 : null,
       rpe: c.rpe !== null ? c.rpe - start0 : null,
       erpe: c.erpe !== null ? c.erpe - start0 : null,
+      notes: c.notes !== null && c.notes !== undefined ? c.notes - start0 : null,
     }
     let day = days.find((d) => d.dayIndex === e.dayIndex)
     if (!day) { day = { dayIndex: e.dayIndex, slots: [] }; days.push(day) }
@@ -593,15 +595,20 @@ export async function renderScaffold(
   rows: ExerciseRow[],
 ): Promise<Buffer | null> {
   if (!program.start_date) return null
-  // A coach's own sheet has no Notes column CoachBoard knows of, so with cues on
-  // each cue is written after its exercise name ("Squat - pause 2 s"). Off, the
-  // sheet is exactly what it was.
-  const exercises = cuesOn(program) ? rows.map((ex) => ({ ...ex, name: nameWithCue(ex.name, ex.notes) })) : rows
   const buffer = Buffer.from(templateBase64, 'base64')
 
   const preview = await parseExternalFile(buffer)
   const tEx = preview.exercises.filter((e) => e.refillCols && e.refillCols.sets !== null)
   if (tEx.length === 0) return null
+
+  // Cues on: into the sheet's own notes / comments column when it has one,
+  // otherwise after each exercise name ("Squat - pause 2 s"). Off: never written,
+  // and a notes column the sheet has is left empty rather than keeping the
+  // template's old text.
+  const sheetHasNotes = tEx.some((e) => e.refillCols?.notes != null)
+  const exercises = !cuesOn(program)
+    ? rows.map((ex) => ({ ...ex, notes: null }))
+    : sheetHasNotes ? rows : rows.map((ex) => ({ ...ex, name: nameWithCue(ex.name, ex.notes), notes: null }))
 
   const prog = buildProgramContent(program, workouts, exercises)
   if (!prog || prog.weekCount === 0) return null
@@ -840,6 +847,7 @@ export async function renderScaffold(
         }
         set(slot.rel.rpe, ex ? fmtRpe(rpeValue(ex)) : null)
         set(slot.rel.erpe, null) // executed RPE always blank in a fresh block
+        set(slot.rel.notes, ex ? ex.notes ?? null : null)
       })
     })
 

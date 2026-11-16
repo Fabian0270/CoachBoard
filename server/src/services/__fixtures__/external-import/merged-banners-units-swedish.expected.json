@@ -6,6 +6,7 @@
     "reps": 3,
     "load": 4,
     "rpe": 5,
+    "notes": null,
     "rpeFromRir": false
   },
   "weeks": 2,

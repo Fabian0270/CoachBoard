@@ -302,6 +302,36 @@ describe('renderScaffold — the cue column', () => {
     expect(names(ws)).toContain('Pull-ups')
   })
 
+  // The same block-grid shape with a Notes column at the end of each week block.
+  async function buildNotesTemplate(): Promise<string> {
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('Block 1')
+    ws.getCell(4, 2).value = 'DAY 1'; ws.getCell(4, 3).value = 'Week 1'
+    ws.getCell(4, 10).value = 'DAY 1'; ws.getCell(4, 11).value = 'Week 2'
+    const cols = ['Movement', 'SETS', 'REPS', 'LOAD', 'RPE', 'eRPE', 'Notes']
+    cols.forEach((c, i) => { ws.getCell(5, 2 + i).value = c; ws.getCell(5, 10 + i).value = c })
+    ;['Squat', 1, 3, 180, '@6', 6, 'old cue'].forEach((v, i) => { ws.getCell(6, 2 + i).value = v; ws.getCell(6, 10 + i).value = v })
+    ;['Bench', 3, 8, 110, '@6', 6, 'old cue'].forEach((v, i) => { ws.getCell(7, 2 + i).value = v; ws.getCell(7, 10 + i).value = v })
+    return Buffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer).toString('base64')
+  }
+
+  it("writes the cue into the sheet's own Notes column when it has one, and not after the name", async () => {
+    const on = { ...program, enabled_columns: JSON.stringify(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'notes']) }
+    const ws = await load((await renderScaffold(await buildNotesTemplate(), on, workouts, exercises))!)
+    expect(ws.getCell(6, 2).value).toBe('Front Squat')
+    expect(ws.getCell(6, 8).value).toBe('pause 2 s')
+    expect(ws.getCell(7, 2).value).toBe('Pull-ups')
+    expect(ws.getCell(7, 8).value ?? null).toBeNull()
+    expect(names(ws).some((n) => n.startsWith('Front Squat - ') || n === 'old cue')).toBe(false)
+  })
+
+  it("off, the sheet's Notes column is cleared — neither the cue nor the template's old text", async () => {
+    const off = { ...program, enabled_columns: JSON.stringify(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe']) }
+    const ws = await load((await renderScaffold(await buildNotesTemplate(), off, workouts, exercises))!)
+    expect(ws.getCell(5, 8).value).toBe('Notes')
+    expect(names(ws).some((n) => n.includes('pause 2 s') || n === 'old cue')).toBe(false)
+  })
+
   it('leaves the names exactly as they are when it is off', async () => {
     const off = { ...program, enabled_columns: JSON.stringify(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe']) }
     for (const p of [program, off]) {

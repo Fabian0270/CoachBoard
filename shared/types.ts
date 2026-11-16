@@ -235,7 +235,7 @@ export interface ImportPreview {
 // CoachBoard's own export. Parser discovers structure rather than replaying it.
 // ---------------------------------------------------------------------------
 
-export type ExternalColumnKey = 'exercise' | 'sets' | 'reps' | 'load' | 'rpe'
+export type ExternalColumnKey = 'exercise' | 'sets' | 'reps' | 'load' | 'rpe' | 'notes'
 
 export interface ExternalColumnMapping {
   // 1-based worksheet column index detected for each key, or null if not found
@@ -244,6 +244,8 @@ export interface ExternalColumnMapping {
   reps: number | null
   load: number | null
   rpe: number | null
+  /** The coach's own notes / comments / cues column, read into the cue column. */
+  notes: number | null
   rpeFromRir: boolean   // true when the RPE column was actually an RIR column (converted)
 }
 
@@ -272,6 +274,8 @@ export interface ExternalExerciseRow {
   intensity?: string | null  // "Intensity/Weight" — prescribed
   loadCap?: number | null    // "Load Cap" — prescribed weight
   restTime?: string | null   // "Rest Time"
+  /** The coach's cue from a notes / comments column. Turns the program's cue column on. */
+  notes?: string | null
   // Server-internal: absolute 1-based worksheet columns for each writable field
   // on this row (sheetRow). Used only by the scaffold export engine to locate and
   // rewrite the original file's cells; ignored by capture/commit and the client.
@@ -287,6 +291,7 @@ export interface ExternalExerciseRow {
     restTime?: number | null  // "Rest Time" column
     rpe: number | null
     erpe: number | null
+    notes?: number | null     // the sheet's own notes / comments column
   }
 }
 
@@ -303,6 +308,7 @@ export interface ExternalParseOverrides {
   reps?: number | null
   load?: number | null
   rpe?: number | null
+  notes?: number | null
   rpeFromRir?: boolean            // treat the RPE column as RIR (convert to RPE)
 }
 
