@@ -190,6 +190,29 @@ export function useWorkoutActions(
     }
   }
 
+  /**
+   * The coach's own note for a day. Saving one on an empty day creates the day.
+   * Resolves false when it did not save (and says why).
+   */
+  const saveDayNote = async (date: string, notes: string): Promise<boolean> => {
+    if (!id) return false
+    const existing = workoutByDate.get(date)
+    if (!existing && notes.trim() === '') return true
+    flashCell(date, 'saving')
+    try {
+      const workout = existing ?? (await ensureWorkout(date))
+      if (!workout) throw new Error('The day could not be created.')
+      const saved = await sendJson<Workout>('PUT', `/api/programs/${id}/workouts/${workout.id}`, { notes: notes.trim() || null })
+      updateWorkout(workout.id, (w) => ({ ...w, notes: saved.notes }))
+      flashCell(date, 'saved')
+      return true
+    } catch (err) {
+      flashCell(date, 'error')
+      onSaveError?.(`Could not save the note for this day. ${errorMessage(err)}`)
+      return false
+    }
+  }
+
   /** Copy an exercise (with its set rows) directly under itself. */
   const duplicateExercise = async (date: string, workoutId: string, exerciseId: string): Promise<void> => {
     if (!id) return
@@ -231,6 +254,7 @@ export function useWorkoutActions(
     deleteExercise,
     addSet,
     duplicateExercise,
+    saveDayNote,
     reorderExercises,
     failedEdits,
     retryFailedEdits,

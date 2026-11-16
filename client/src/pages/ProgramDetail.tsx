@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { useToast } from '../components/ui/toast'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Trash2, Copy, Pencil, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
+import { Trash2, Copy, Pencil, StickyNote, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
 import { BackLink } from '../components/PageHeader'
 import DayAttachments from '../components/discord/DayAttachments'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
@@ -32,6 +32,9 @@ import {
   DAY_LABELS,
   weeksBetween,
   planDurationChange,
+  toIsoDate,
+  addDays,
+  parseIsoDate,
   type Program,
 } from '../lib/programUtils'
 import { errorMessage, getJson, sendJson } from '../lib/api'
@@ -154,7 +157,7 @@ function ProgramPage() {
   }
 
   const {
-    addExercise, saveExerciseField, deleteExercise, addSet, duplicateExercise, reorderExercises,
+    addExercise, saveExerciseField, deleteExercise, addSet, duplicateExercise, saveDayNote, reorderExercises,
     failedEdits, retryFailedEdits,
   } = useWorkoutActions(
     id, workoutByDate, setProgram, flashCell,
@@ -820,7 +823,7 @@ function ProgramPage() {
                             onFocus={() => setCurrentDay(cell.date)}
                             onKeyDown={(e) => onDayKeyDown(e, cell.date)}
                             onClick={() => { hidePreview(); setOpenDate(cell.date) }}
-                            onMouseEnter={exercises.length > 0 ? (e) => showPreviewSoon(cell.date, e.currentTarget) : undefined}
+                            onMouseEnter={exercises.length > 0 || workout?.notes ? (e) => showPreviewSoon(cell.date, e.currentTarget) : undefined}
                             onMouseLeave={hidePreview}
                             onDragStart={hidePreview}
                             aria-label={`${dayTitle(cell.date)}${isToday ? ', today' : ''}, ${exercises.length === 0 ? 'empty' : `${exercises.length} exercise${exercises.length === 1 ? '' : 's'}`}${logged ? ', logged' : notLogged ? ', not logged yet' : ''}${onClipboard ? `, ${onClipboard === 'cut' ? 'cut' : 'copied'}` : ''}`}
@@ -835,6 +838,9 @@ function ProgramPage() {
                                 <span className="num">{cell.label}</span>
                               )}
                               <span className="flex items-center gap-0.5">
+                                {workout?.notes && (
+                                  <StickyNote className="h-2.5 w-2.5 text-muted-foreground" aria-label="Has a note" />
+                                )}
                                 {logged && (
                                   <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-success" title="The athlete has logged results on this day">
                                     <Check className="h-2.5 w-2.5" />Logged
@@ -994,6 +1000,8 @@ function ProgramPage() {
               onDuplicate={(exerciseId) => {
                 if (openWorkout) void duplicateExercise(openDate, openWorkout.id, exerciseId)
               }}
+              previous={workoutByDate.get(toIsoDate(addDays(parseIsoDate(openDate), -7))) ?? null}
+              onSaveNote={(notes) => saveDayNote(openDate, notes)}
               onSaveField={(exerciseId, patch) =>
                 openWorkout
                   ? saveExerciseField(openDate, openWorkout.id, exerciseId, patch)

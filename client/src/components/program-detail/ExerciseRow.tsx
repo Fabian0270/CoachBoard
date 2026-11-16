@@ -22,6 +22,8 @@ interface ExerciseRowProps {
   onKey: (action: RowKeyAction, colKey: string) => void
   /** The coach's own exercise names, most used first. Offered before the built-in list. */
   suggestions?: readonly string[]
+  /** What this row was a week earlier, e.g. "Last week: 5×5 · RPE 8 → did 140 @8". */
+  lastWeek?: string
   isSubSet?: boolean
   isInGroup?: boolean
   isDragging?: boolean
@@ -45,7 +47,7 @@ export type RowKeyAction =
 
 const NO_NAMES: readonly string[] = []
 
-export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, onKey, suggestions = NO_NAMES, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
+export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, onKey, suggestions = NO_NAMES, lastWeek, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
   const toast = useToast()
   /**
    * Whether this cell holds a value the server has not accepted.
@@ -319,6 +321,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                     <GripVertical className="h-3 w-3" />
                   </span>
                   <span className="text-xs text-muted-foreground/40 select-none">↳</span>
+                  {lastWeek && <span className="min-w-0 truncate text-[10.5px] text-muted-foreground" title={lastWeek}>{lastWeek}</span>}
                 </div>
               ) : (
                 <div className="flex items-start">
@@ -379,6 +382,11 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                         ))}
                       </ul>,
                       portalContainer,
+                    )}
+                    {lastWeek && (
+                      <div className="truncate px-1 pb-1 text-[10.5px] leading-tight text-muted-foreground" title={lastWeek}>
+                        {lastWeek}
+                      </div>
                     )}
                   </div>
                 </div>

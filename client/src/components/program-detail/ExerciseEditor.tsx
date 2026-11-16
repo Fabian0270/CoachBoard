@@ -23,6 +23,10 @@ interface ExerciseEditorProps {
   onAdd: () => Promise<void>
   /** Copy the exercise (with its set rows) directly under itself. */
   onDuplicate: (exerciseId: string) => void
+  /** The same weekday one week earlier, to show what was done there. */
+  previous?: Workout | null
+  /** Save the coach's note for the day. Resolves false when it did not save. */
+  onSaveNote: (notes: string) => Promise<boolean>
   /** The coach's own exercise names, most used first. Offered before the built-in list. */
   suggestions?: readonly string[]
   onSaveField: (exerciseId: string, patch: Partial<Exercise>) => Promise<boolean>
@@ -86,7 +90,7 @@ export interface CopyDay {
 }
 export interface CopyWeek { weekIndex: number; days: CopyDay[] }
 
-export default function ExerciseEditor({ workout, enabledColumns, programId, copyGrid, unsavedKeys, onAdd, onDuplicate, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
+export default function ExerciseEditor({ workout, enabledColumns, programId, copyGrid, unsavedKeys, onAdd, onDuplicate, previous, onSaveNote, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
   const exercises = workout?.exercises ?? []
   const columns = buildColumns(enabledColumns)
   const [widths, setWidth] = useColumnWidths(programId, columns)
@@ -417,6 +421,53 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
   }
 
   const groups = buildGroups(exercises)
+
+  // Last week, row by row: the nth row named "Squat" today lines up with the
+  // nth row named "Squat" a week earlier, so set rows line up with set rows.
+  // Progressing a lift week to week meant opening last week from memory.
+  const lastWeekFor = (() => {
+    const before = new Map<string, Exercise[]>()
+    for (const ex of previous?.exercises ?? []) {
+      const key = ex.name.trim().toLowerCase()
+      if (!key) continue
+      before.set(key, [...(before.get(key) ?? []), ex])
+    }
+    const seen = new Map<string, number>()
+    const out = new Map<string, string>()
+    for (const ex of exercises) {
+      const key = ex.name.trim().toLowerCase()
+      if (!key) continue
+      const n = seen.get(key) ?? 0
+      seen.set(key, n + 1)
+      const match = before.get(key)?.[n]
+      if (match) out.set(ex.id, describeLastWeek(match))
+    }
+    return out
+  })()
+
+  // The day's note: kept as typed until it leaves the field, like the cells.
+  const [note, setNote] = useState(workout?.notes ?? '')
+  const noteSaved = useRef(workout?.notes ?? '')
+  useEffect(() => {
+    // Follow a note that changed elsewhere (an undo), unless one is being typed.
+    if (document.activeElement?.id !== 'day-note' && (workout?.notes ?? '') !== noteSaved.current) {
+      noteSaved.current = workout?.notes ?? ''
+      setNote(noteSaved.current)
+    }
+  }, [workout?.notes])
+  const saveNote = async () => {
+    if (note.trim() === noteSaved.current.trim()) return
+    if (await onSaveNote(note)) noteSaved.current = note.trim()
+  }
+  const noteRef = useRef(note)
+  noteRef.current = note
+  // Saved on the way out too, like the cells: closing or paging the day while
+  // the cursor is in the note must not lose it.
+  const saveNoteRef = useRef(onSaveNote)
+  saveNoteRef.current = onSaveNote
+  useEffect(() => () => {
+    if (noteRef.current.trim() !== noteSaved.current.trim()) void saveNoteRef.current(noteRef.current)
+  }, [])
   /** Ticked days that would lose what the athlete logged, by name. */
   const tickedWithResults = copyGrid.flatMap((w) =>
     w.days.filter((d) => d.hasResults && selectedDates.has(d.date)).map((d) => `Week ${w.weekIndex + 1} ${d.weekday}`),
@@ -494,6 +545,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
                           onDelete={() => onDeleteExercise(ex.id)}
                           onAddSet={i === group.exercises.length - 1 ? () => addSetAndFocus(ex.id) : undefined}
                           onKey={(action, col) => handleRowKey(ex, action, col)}
+                          lastWeek={lastWeekFor.get(ex.id)}
                           suggestions={suggestions}
                           onGroupDragStart={i === 0 ? startGroupDrag(ex.id, group.groupId) : undefined}
                           onSetDragStart={i > 0 && group.groupId ? startSetDrag(ex.id, group.groupId) : undefined}
@@ -519,6 +571,20 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="shrink-0">
+        <label htmlFor="day-note" className="sr-only">Note for this day</label>
+        <textarea
+          id="day-note"
+          rows={1}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          onBlur={() => void saveNote()}
+          placeholder="Note for this day — only you see it; it is not in the exported sheet"
+          style={{ fieldSizing: 'content' } as React.CSSProperties}
+          className="block w-full resize-none rounded-md border border-dashed border-border bg-transparent px-2.5 py-1.5 text-sm leading-snug outline-none placeholder:text-muted-foreground/60 focus:border-solid focus:ring-1 focus:ring-primary"
+        />
       </div>
 
       {/* Footer: add exercise / clear day / copy to weeks */}
@@ -633,6 +699,17 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
       )}
     </div>
   )
+}
+
+/** "Last week: 5×5 @140 · RPE 8 → did 140 @8" */
+function describeLastWeek(ex: Exercise): string {
+  const planned = [
+    ex.sets || ex.reps ? `${ex.sets ?? '–'}×${ex.reps ?? '–'}` : '',
+    ex.weight != null ? `@${ex.weight}` : '',
+    ex.intensity ? `· ${ex.intensity}` : '',
+  ].filter(Boolean).join(' ')
+  const did = [ex.load_used ? ex.load_used : '', ex.rpe ? `@${ex.rpe}` : ''].filter(Boolean).join(' ')
+  return `Last week: ${planned || '—'}${did ? ` → did ${did}` : ''}`
 }
 
 function PlaceholderRow({ colCount, onDrop }: { colCount: number; onDrop: () => void }) {
