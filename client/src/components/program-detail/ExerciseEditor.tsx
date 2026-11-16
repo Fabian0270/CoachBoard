@@ -11,6 +11,7 @@ import {
   buildColumns,
 } from '../../lib/programUtils'
 import ExerciseRow, { type RowKeyAction } from './ExerciseRow'
+import { loadHint, type StoredMax } from '../../lib/loadHint'
 
 interface ExerciseEditorProps {
   workout: Workout | null
@@ -25,6 +26,8 @@ interface ExerciseEditorProps {
   onDuplicate: (exerciseId: string) => void
   /** The same weekday one week earlier, to show what was done there. */
   previous?: Workout | null
+  /** The athlete's stored maxes, for suggested loads. Empty: no suggestions. */
+  maxes?: StoredMax[]
   /** Save the coach's note for the day. Resolves false when it did not save. */
   onSaveNote: (notes: string) => Promise<boolean>
   /** The coach's own exercise names, most used first. Offered before the built-in list. */
@@ -90,7 +93,7 @@ export interface CopyDay {
 }
 export interface CopyWeek { weekIndex: number; days: CopyDay[] }
 
-export default function ExerciseEditor({ workout, enabledColumns, programId, copyGrid, unsavedKeys, onAdd, onDuplicate, previous, onSaveNote, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
+export default function ExerciseEditor({ workout, enabledColumns, programId, copyGrid, unsavedKeys, onAdd, onDuplicate, previous, maxes = NO_MAXES, onSaveNote, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
   const exercises = workout?.exercises ?? []
   const columns = buildColumns(enabledColumns)
   const [widths, setWidth] = useColumnWidths(programId, columns)
@@ -546,6 +549,8 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
                           onAddSet={i === group.exercises.length - 1 ? () => addSetAndFocus(ex.id) : undefined}
                           onKey={(action, col) => handleRowKey(ex, action, col)}
                           lastWeek={lastWeekFor.get(ex.id)}
+                          // A set row has no name of its own; it is the exercise above it.
+                          loadHint={maxes.length ? loadHint({ ...ex, name: group.exercises[0].name }, maxes) : null}
                           suggestions={suggestions}
                           onGroupDragStart={i === 0 ? startGroupDrag(ex.id, group.groupId) : undefined}
                           onSetDragStart={i > 0 && group.groupId ? startSetDrag(ex.id, group.groupId) : undefined}
@@ -711,6 +716,8 @@ function describeLastWeek(ex: Exercise): string {
   const did = [ex.load_used ? ex.load_used : '', ex.rpe ? `@${ex.rpe}` : ''].filter(Boolean).join(' ')
   return `Last week: ${planned || '—'}${did ? ` → did ${did}` : ''}`
 }
+
+const NO_MAXES: StoredMax[] = []
 
 function PlaceholderRow({ colCount, onDrop }: { colCount: number; onDrop: () => void }) {
   return (

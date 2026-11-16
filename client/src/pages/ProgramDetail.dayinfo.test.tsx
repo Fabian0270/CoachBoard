@@ -62,6 +62,51 @@ describe('Day editor — last week', () => {
   })
 })
 
+describe('Day editor — suggested load', () => {
+  const withLoadCap = { ...program, enabled_columns: ['intensity', 'load_cap'] }
+  const maxes = [{ id: 'm1', athlete_id: 'a1', lift_name: 'Squat', weight: 180, unit: 'kg', recorded_at: '2026-06-01', notes: null }]
+
+  it('offers a load from the max in the empty Load Cap, and fills it in only when taken', async () => {
+    serve({
+      '/api/programs/p1': { body: withLoadCap },
+      '/api/athletes/a1/maxes': { body: maxes },
+      'PUT /api/programs/p1/workouts/w2/exercises/b1': (_u, init) => ({ body: { ...withLoadCap.workouts[1].exercises[0], ...(JSON.parse(String(init?.body)) as object) } }),
+    })
+    await openDay('2026-06-22')
+    // Squat 5×5 at RPE 8.5 from a 180 kg max.
+    const cap = (await screen.findByPlaceholderText(/^≈ /)) as HTMLInputElement
+    const kg = Number(cap.placeholder.replace('≈ ', ''))
+    expect(kg).toBeGreaterThan(100)
+    expect(cap.value).toBe('')
+    expect(putBodies('/exercises/b1')).toHaveLength(0)
+
+    await userEvent.click(screen.getByRole('button', { name: /Use the suggested load/ }))
+    await waitFor(() => expect(putBodies('/exercises/b1')).toEqual([{ weight: kg }]))
+  })
+
+  it('Ctrl+L takes it from anywhere in the row', async () => {
+    serve({
+      '/api/programs/p1': { body: withLoadCap },
+      '/api/athletes/a1/maxes': { body: maxes },
+      'PUT /api/programs/p1/workouts/w2/exercises/b1': (_u, init) => ({ body: { ...withLoadCap.workouts[1].exercises[0], ...(JSON.parse(String(init?.body)) as object) } }),
+    })
+    await openDay('2026-06-22')
+    await screen.findByPlaceholderText(/^≈ /)
+    // The cursor starts in the Squat row's name.
+    await userEvent.keyboard('{Control>}l{/Control}')
+    await waitFor(() => expect(putBodies('/exercises/b1')).toHaveLength(1))
+    expect(typeof putBodies('/exercises/b1')[0].weight).toBe('number')
+  })
+
+  it('offers nothing for an exercise with no max on file', async () => {
+    serve({ '/api/programs/p1': { body: withLoadCap }, '/api/athletes/a1/maxes': { body: maxes } })
+    await openDay('2026-06-22')
+    await screen.findByPlaceholderText(/^≈ /)
+    // Squat has a hint; Bench (no target, no max) does not.
+    expect(screen.getAllByPlaceholderText(/^≈ /)).toHaveLength(1)
+  })
+})
+
 describe('Day editor — the day note', () => {
   it('shows the saved note and saves a change when leaving the field', async () => {
     serve({

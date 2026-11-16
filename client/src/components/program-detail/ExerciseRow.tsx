@@ -6,6 +6,7 @@ import { type Exercise, type ColDef, exerciseValue } from '../../lib/programUtil
 import { failedEditKeyForColumn } from '../../lib/failedEdits'
 import { useToast } from '../ui/toast'
 import { matchSuggestions } from '../../lib/exerciseSuggestions'
+import type { LoadHint } from '../../lib/loadHint'
 
 interface ExerciseRowProps {
   exercise: Exercise
@@ -24,6 +25,8 @@ interface ExerciseRowProps {
   suggestions?: readonly string[]
   /** What this row was a week earlier, e.g. "Last week: 5×5 · RPE 8 → did 140 @8". */
   lastWeek?: string
+  /** A suggested Load Cap from the athlete's max, offered while the cell is empty. */
+  loadHint?: LoadHint | null
   isSubSet?: boolean
   isInGroup?: boolean
   isDragging?: boolean
@@ -47,7 +50,7 @@ export type RowKeyAction =
 
 const NO_NAMES: readonly string[] = []
 
-export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, onKey, suggestions = NO_NAMES, lastWeek, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
+export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, onKey, suggestions = NO_NAMES, lastWeek, loadHint, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
   const toast = useToast()
   /**
    * Whether this cell holds a value the server has not accepted.
@@ -217,6 +220,19 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reads refs only
   }, [])
 
+  // The hint is offered only while Load Cap is empty: the coach's own number,
+  // once there, is never second-guessed.
+  const hintOffered = !!loadHint && (draft.load_cap ?? '').trim() === '' && columns.some((c) => c.key === 'load_cap')
+  /** Put the suggested load in Load Cap and save it. */
+  const applyLoadHint = () => {
+    const col = columns.find((c) => c.key === 'load_cap')
+    if (!hintOffered || !col || !loadHint) return
+    const v = String(loadHint.kg)
+    edit(col.key, v)
+    draftRef.current = { ...draftRef.current, [col.key]: v }
+    commit(col)
+  }
+
   const pickSuggestion = (col: ColDef, name: string) => {
     edit(col.key, name)
     draftRef.current = { ...draftRef.current, [col.key]: name }
@@ -264,6 +280,11 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
     if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey) {
       e.preventDefault()
       onKey(e.ctrlKey ? 'add-set' : 'next', col.key)
+      return
+    }
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
+      e.preventDefault()
+      applyLoadHint()
       return
     }
     if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'd') {
@@ -425,8 +446,35 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
           />
         )
         const mainTd = (
-          <td key={c.key} className="border-b border-r border-border p-0 align-top">
-            {cellContent}
+          <td key={c.key} className={`border-b border-r border-border p-0 align-top${c.key === 'load_cap' && hintOffered ? ' relative' : ''}`}>
+            {c.key === 'load_cap' && hintOffered && loadHint ? (
+              <>
+                {/* The suggestion sits in the empty cell as its placeholder. */}
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={draft[c.key] ?? ''}
+                  data-cell={`${exercise.id}:${c.key}`}
+                  onChange={(e) => edit(c.key, e.target.value)}
+                  onKeyDown={(e) => onCellKey(e, c)}
+                  onBlur={() => commit(c)}
+                  placeholder={`≈ ${loadHint.kg}`}
+                  title={`Suggested from ${loadHint.basis}. Ctrl+L or "Use" fills it in.`}
+                  className={inputCls + ' num pr-9 placeholder:text-primary/70' + unsavedCls(c.key)}
+                />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={applyLoadHint}
+                  title={`Use ${loadHint.kg} kg — ${loadHint.basis} (Ctrl+L)`}
+                  aria-label={`Use the suggested load, ${loadHint.kg} kg`}
+                  className="absolute right-1 top-1.5 rounded px-1 text-[10px] font-semibold text-primary hover:bg-primary/10"
+                >
+                  Use
+                </button>
+              </>
+            ) : cellContent}
           </td>
         )
         if (c.key === 'sets') {

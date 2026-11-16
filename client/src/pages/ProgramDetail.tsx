@@ -37,7 +37,8 @@ import {
   parseIsoDate,
   type Program,
 } from '../lib/programUtils'
-import { errorMessage, getJson, sendJson } from '../lib/api'
+import { errorMessage, getJson, getList, sendJson } from '../lib/api'
+import type { StoredMax } from '../lib/loadHint'
 import { localToday } from '../lib/dates'
 import LoadError from '../components/LoadError'
 
@@ -206,6 +207,19 @@ function ProgramPage() {
       }),
     }))
   }, [grid, openDate, workoutByDate])
+
+  // The athlete's maxes, for the suggested loads in the day editor. A hint, so
+  // a failed read only means no suggestions — nothing claims there are no maxes.
+  const [athleteMaxes, setAthleteMaxes] = useState<StoredMax[]>([])
+  const athleteId = program?.athlete_id ?? null
+  useEffect(() => {
+    if (!athleteId) { setAthleteMaxes([]); return }
+    let cancelled = false
+    getList<StoredMax>(`/api/athletes/${encodeURIComponent(athleteId)}/maxes`)
+      .then((rows) => { if (!cancelled) setAthleteMaxes(rows) })
+      .catch(() => { if (!cancelled) setAthleteMaxes([]) })
+    return () => { cancelled = true }
+  }, [athleteId])
 
   // The coach's own exercise names, for the suggestions in the day editor.
   // Loaded once per visit; on failure the built-in list still suggests.
@@ -1002,6 +1016,7 @@ function ProgramPage() {
               }}
               previous={workoutByDate.get(toIsoDate(addDays(parseIsoDate(openDate), -7))) ?? null}
               onSaveNote={(notes) => saveDayNote(openDate, notes)}
+              maxes={athleteMaxes}
               onSaveField={(exerciseId, patch) =>
                 openWorkout
                   ? saveExerciseField(openDate, openWorkout.id, exerciseId, patch)
