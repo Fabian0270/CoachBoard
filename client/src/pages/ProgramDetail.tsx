@@ -345,10 +345,6 @@ function ProgramPage() {
       void days.paste(date).then(() => focusDay(date))
       return
     }
-    if (ctrl && e.key.toLowerCase() === 'z') {
-      if (days.undoLast()) e.preventDefault()
-      return
-    }
     if (e.key === 'Delete' && !e.ctrlKey && !e.altKey) {
       e.preventDefault()
       void days.clearDay(date).then(() => focusDay(date))
@@ -356,6 +352,38 @@ function ProgramPage() {
     }
     if (e.key === 'Escape' && days.clipboard) days.clearClipboard()
   }
+
+  /** An exercise's name for history labels; a set row takes its exercise's. */
+  const nameOf = (exerciseId: string): string => {
+    for (const w of program?.workouts ?? []) {
+      const i = w.exercises.findIndex((ex) => ex.id === exerciseId)
+      if (i === -1) continue
+      for (let k = i; k >= 0; k--) if (w.exercises[k].name.trim()) return w.exercises[k].name.trim()
+    }
+    return 'the exercise'
+  }
+
+  // Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z) anywhere on the program, the open day
+  // included. Typing not yet saved keeps the field's own undo, and another
+  // dialog or a menu keeps the keys to itself.
+  const daysRef = useRef(days)
+  daysRef.current = days
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      const k = e.key.toLowerCase()
+      const isUndo = k === 'z' && !e.shiftKey
+      const isRedo = (k === 'y' && !e.shiftKey) || (k === 'z' && e.shiftKey)
+      if (!isUndo && !isRedo) return
+      if ([...document.querySelectorAll('[role="dialog"]')].some((d) => !d.hasAttribute('data-day-dialog'))) return
+      if (document.querySelector('[role="menu"]')) return
+      if (daysRef.current.keyBelongsToField()) return
+      e.preventDefault()
+      void (isUndo ? daysRef.current.undo() : daysRef.current.redo())
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // ── A whole week at a time ──────────────────────────────────────────────
   const [copyWeekFrom, setCopyWeekFrom] = useState<number | null>(null)
@@ -1047,14 +1075,8 @@ function ProgramPage() {
             const step = (e.ctrlKey ? 7 : 1) * (e.key === 'PageDown' ? 1 : -1)
             goToDay(step)
           }}
-          // Ctrl+Z reaches the last undoable action while its Undo is on offer.
-          // The toast holding that button is outside this dialog, where Tab
-          // cannot go.
-          onKeyDownCapture={(e) => {
-            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z' && days.undoLast()) {
-              e.preventDefault()
-            }
-          }}
+          // Marks the day editor for the page's Ctrl+Z, which works inside it.
+          data-day-dialog=""
         >
           <DialogHeader className="shrink-0 pr-8">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -1105,38 +1127,68 @@ function ProgramPage() {
               // Marks the exact cells that did not save, so the banner's count
               // maps to something the coach can actually find on the page.
               unsavedKeys={new Set(Object.keys(failedEdits))}
-              onAdd={() => addExercise(openDate)}
+              onAdd={async () => {
+                const before = days.snapshotDays([openDate])
+                if (await addExercise(openDate)) days.record('Added an exercise', before)
+              }}
               suggestions={ownExerciseNames}
               onDuplicate={(exerciseId) => {
-                if (openWorkout) void duplicateExercise(openDate, openWorkout.id, exerciseId)
+                if (!openWorkout) return
+                const before = days.snapshotDays([openDate])
+                void duplicateExercise(openDate, openWorkout.id, exerciseId).then((ok) => {
+                  if (ok) days.record(`Duplicated ${nameOf(exerciseId)}`, before)
+                })
               }}
               previous={workoutByDate.get(toIsoDate(addDays(parseIsoDate(openDate), -7))) ?? null}
-              onSaveNote={(notes) => saveDayNote(openDate, notes)}
+              onSaveNote={async (notes) => {
+                const before = days.snapshotDays([openDate])
+                const ok = await saveDayNote(openDate, notes)
+                if (ok) days.record('Changed the day note', before)
+                return ok
+              }}
               maxes={athleteMaxes}
               onPasteRows={(anchorId, start, text) => void pasteRows(openDate, anchorId, start, text)}
-              onSaveField={(exerciseId, patch) =>
-                openWorkout
-                  ? saveExerciseField(openDate, openWorkout.id, exerciseId, patch)
-                  : Promise.resolve(false)
-              }
+              onSaveField={async (exerciseId, patch) => {
+                if (!openWorkout) return false
+                // What the edited fields held before. The rest of the day is
+                // read when the step is undone (see recordLazy), so two cells
+                // saved in quick succession each undo only themselves.
+                const row = openWorkout.exercises.find((ex) => ex.id === exerciseId)
+                const old = Object.fromEntries(Object.keys(patch).map((k) => [k, row?.[k as keyof typeof row] ?? null]))
+                const date = openDate
+                const ok = await saveExerciseField(date, openWorkout.id, exerciseId, patch)
+                if (ok) {
+                  days.recordLazy(`Changed ${nameOf(exerciseId)}`, [date], () =>
+                    days.snapshotDays([date]).map((d) => d.workout
+                      ? { ...d, workout: { ...d.workout, exercises: d.workout.exercises.map((ex) => (ex.id === exerciseId ? { ...ex, ...old } : ex)) } }
+                      : d))
+                }
+                return ok
+              }}
               onDeleteExercise={async (exerciseId) => {
                 if (!openWorkout) return false
-                // Kept as it was, to put back if the coach presses Undo.
-                const row = openWorkout.exercises.find((ex) => ex.id === exerciseId)
+                const label = `${nameOf(exerciseId)} deleted`
+                const before = days.snapshotDays([openDate])
                 const gone = await deleteExercise(openDate, openWorkout.id, exerciseId)
-                if (gone && row) {
-                  days.offerExerciseUndo(openWorkout.id, [row], `${row.name.trim() || 'Exercise'} deleted`)
-                }
+                if (gone) days.record(label, before, true)
                 return gone
               }}
               onDeleteWorkout={() => {
                 void days.clearDay(openDate).then((cleared) => { if (cleared) setOpenDate(null) })
               }}
               onAddSet={(exerciseId) => {
-                if (openWorkout) addSet(openDate, openWorkout.id, exerciseId)
+                if (!openWorkout) return
+                const before = days.snapshotDays([openDate])
+                void addSet(openDate, openWorkout.id, exerciseId).then((ok) => {
+                  if (ok) days.record(`Added a set to ${nameOf(exerciseId)}`, before)
+                })
               }}
               onReorder={(exerciseIds) => {
-                if (openWorkout) reorderExercises(openDate, openWorkout.id, exerciseIds)
+                if (!openWorkout) return
+                const before = days.snapshotDays([openDate])
+                void reorderExercises(openDate, openWorkout.id, exerciseIds).then((ok) => {
+                  if (ok) days.record('Reordered the exercises', before)
+                })
               }}
               // Resolves false when nothing was copied, and the panel then
               // stays open with its ticks, so a retry is one click.

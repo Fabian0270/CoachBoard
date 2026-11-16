@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Program, Workout, Exercise } from '../lib/programUtils'
+import type { Program, Workout } from '../lib/programUtils'
 import { errorMessage, getJson, sendJson } from '../lib/api'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
@@ -30,8 +30,22 @@ export function dayHasResults(workout: Workout | null | undefined): boolean {
   )
 }
 
-/** How long Ctrl+Z still reaches the last action. Matches the toast that offers it. */
-const UNDO_WINDOW_MS = 8000
+/** How long the toast offering Undo / Redo stays up. */
+const UNDO_TOAST_MS = 8000
+
+/** One step of the program's history: the days a change touched, as they were before it. */
+interface HistoryEntry {
+  label: string
+  dates: string[]
+  /**
+   * The days as they were before the change — or a function that works that
+   * out when the step is undone. A cell edit uses the function: by the time it
+   * is undone every later step has been undone too, so "the day now, with this
+   * cell's old values" is exact, whereas a snapshot taken when the save landed
+   * can miss an edit saved a moment earlier that the page had not drawn yet.
+   */
+  before: DaySnapshot[] | (() => DaySnapshot[])
+}
 
 interface Options {
   programId: string | undefined
@@ -51,55 +65,125 @@ export function useDayOperations({ programId, workoutByDate, setProgram, mediaId
   /** The day on the clipboard, and whether pasting moves it or copies it. */
   const [clipboard, setClipboard] = useState<{ date: string; mode: 'copy' | 'cut' } | null>(null)
 
-  // ── Undo ────────────────────────────────────────────────────────────────
-  // The last undoable action, reachable with Ctrl+Z for as long as its toast is
-  // up. The toast's button is the mouse path; this is the keyboard one, needed
-  // because an open day traps Tab inside the dialog and the toast is outside it.
-  const lastUndo = useRef<{ run: () => void; until: number } | null>(null)
+  // ── History: Ctrl+Z / Ctrl+Y ────────────────────────────────────────────
+  // Every change to the program — a saved cell, an added or deleted exercise,
+  // a cleared, moved, copied or pasted day, a note, a fill — is recorded as the
+  // days it touched, as they were just before. Undo puts those days back and
+  // keeps what it replaced, so Redo can put that back in turn. One mechanism
+  // (restoreDays on the server) for every kind of change, so an undo cannot
+  // drift out of step with what it undoes. Kept for as long as the program is
+  // open; the page starts over for each program.
+  const history = useRef<HistoryEntry[]>([])
+  const redoStack = useRef<HistoryEntry[]>([])
+  const busy = useRef(false)
+  /** The toast offering Undo or Redo of the latest step; only one at a time. */
+  const dismissToast = useRef<() => void>(() => {})
 
+  // Read through refs: an undo runs later, from a toast or a key press, and
+  // must see the program as it is then, not as it was when the toast appeared.
+  const workoutByDateRef = useRef(workoutByDate)
+  workoutByDateRef.current = workoutByDate
+  const mediaIdsForRef = useRef(mediaIdsFor)
+  mediaIdsForRef.current = mediaIdsFor
+
+  // Text typed into a field and not yet saved belongs to that field's own undo:
+  // Ctrl+Z there takes the typing back first. Once it is saved it is a step.
+  const typedInto = useRef<EventTarget | null>(null)
   useEffect(() => {
-    // Typing after the action means Ctrl+Z is now about the typing: let the
-    // text field have it. The toast's Undo button still works.
-    const disarm = () => { lastUndo.current = null }
-    document.addEventListener('input', disarm, true)
-    return () => document.removeEventListener('input', disarm, true)
+    const onInput = (e: Event) => { typedInto.current = e.target }
+    document.addEventListener('input', onInput, true)
+    return () => document.removeEventListener('input', onInput, true)
   }, [])
 
-  const offerUndo = (message: string, run: () => Promise<void>) => {
-    let used = false
-    // Declared before the toast exists; Ctrl+Z takes the toast down with it, so
-    // a dead Undo button is never left on screen.
-    let dismiss: () => void = () => {}
-    const once = () => {
-      if (used) return
-      used = true
-      lastUndo.current = null
-      dismiss()
-      void run()
-    }
-    lastUndo.current = { run: once, until: Date.now() + UNDO_WINDOW_MS }
-    dismiss = toast.info(message, { action: { label: 'Undo', onClick: once }, duration: UNDO_WINDOW_MS })
-  }
-
-  /** Undo the last action if it is still on offer. Returns whether it did. */
-  const undoLast = (): boolean => {
-    const u = lastUndo.current
-    if (!u || Date.now() > u.until) return false
-    u.run()
-    return true
-  }
-
   const snapshot = (date: string): DaySnapshot => {
-    const w = workoutByDate.get(date)
+    const w = workoutByDateRef.current.get(date)
     if (!w) return { date, workout: null }
     return {
       date,
       workout: {
         id: w.id, name: w.name, notes: w.notes, completed_at: w.completed_at, created_at: w.created_at,
-        exercises: w.exercises, mediaIds: mediaIdsFor(w.id),
+        exercises: w.exercises, mediaIds: mediaIdsForRef.current(w.id),
       },
     }
   }
+  const snapshotDays = (dates: string[]): DaySnapshot[] => [...new Set(dates)].map(snapshot)
+
+  /**
+   * Record a change that has just been made. `before` is the days it touched,
+   * snapshotted before it. With `announce`, a toast offers Undo; a newer step
+   * takes the older toast down, so its Undo always means the latest change.
+   */
+  const record = (label: string, before: DaySnapshot[], announce = false) => {
+    if (before.length === 0) return
+    push({ label, dates: before.map((d) => d.date), before }, announce)
+  }
+
+  /** Record a step whose "before" is worked out when it is undone. See HistoryEntry. */
+  const recordLazy = (label: string, dates: string[], before: () => DaySnapshot[]) => push({ label, dates, before }, false)
+
+  const push = (entry: HistoryEntry, announce: boolean) => {
+    const label = entry.label
+    history.current.push(entry)
+    redoStack.current = []
+    typedInto.current = null
+    dismissToast.current()
+    dismissToast.current = announce
+      ? toast.info(label, { action: { label: 'Undo', onClick: () => void undo() }, duration: UNDO_TOAST_MS })
+      : () => {}
+  }
+
+  /** Step back. Resolves false when there was nothing to undo or it failed. */
+  const undo = async (): Promise<boolean> => {
+    if (busy.current) return false
+    const entry = history.current.pop()
+    if (!entry) return false
+    busy.current = true
+    try {
+      const current = snapshotDays(entry.dates)
+      const before = typeof entry.before === 'function' ? entry.before() : entry.before
+      if (!(await restore(before))) { history.current.push(entry); return false }
+      redoStack.current.push({ ...entry, before: current })
+      dismissToast.current()
+      dismissToast.current = toast.info(`Undone: ${entry.label}`, {
+        action: { label: 'Redo', onClick: () => void redo() }, duration: UNDO_TOAST_MS,
+      })
+      return true
+    } finally {
+      busy.current = false
+    }
+  }
+
+  /** Step forward again after an undo. */
+  const redo = async (): Promise<boolean> => {
+    if (busy.current) return false
+    const entry = redoStack.current.pop()
+    if (!entry) return false
+    busy.current = true
+    try {
+      const current = snapshotDays(entry.dates)
+      const after = typeof entry.before === 'function' ? entry.before() : entry.before
+      if (!(await restore(after, 'redo'))) { redoStack.current.push(entry); return false }
+      history.current.push({ ...entry, before: current })
+      dismissToast.current()
+      dismissToast.current = toast.info(`Redone: ${entry.label}`, {
+        action: { label: 'Undo', onClick: () => void undo() }, duration: UNDO_TOAST_MS,
+      })
+      return true
+    } finally {
+      busy.current = false
+    }
+  }
+
+  /**
+   * Whether Ctrl+Z at this moment belongs to a text field (typing not yet
+   * saved) rather than to the program's history.
+   */
+  const keyBelongsToField = (): boolean => {
+    const a = document.activeElement
+    return !!a && a === typedInto.current && (a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement)
+  }
+
+  const offerUndo = (message: string, before: DaySnapshot[]) => record(message, before, true)
 
   const refresh = async () => {
     if (!programId) return
@@ -111,13 +195,15 @@ export function useDayOperations({ programId, workoutByDate, setProgram, mediaId
     onMediaChanged()
   }
 
-  const restore = async (days: DaySnapshot[]) => {
-    if (!programId) return
+  const restore = async (days: DaySnapshot[], what: 'undo' | 'redo' = 'undo'): Promise<boolean> => {
+    if (!programId) return false
     try {
       setProgram(await sendJson<Program>('PUT', `/api/programs/${programId}/days/restore`, { days }))
       onMediaChanged()
+      return true
     } catch (err) {
-      toast.error(`Could not undo that. ${errorMessage(err)}`)
+      toast.error(`Could not ${what} that. ${errorMessage(err)}`)
+      return false
     }
   }
 
@@ -160,7 +246,7 @@ export function useDayOperations({ programId, workoutByDate, setProgram, mediaId
     setProgram((p) => (p ? { ...p, workouts: p.workouts.filter((x) => !gone.has(x.id)) } : p))
     onMediaChanged()
     setClipboard((c) => (c && filled.includes(c.date) ? null : c))
-    offerUndo(done, () => restore(before))
+    offerUndo(done, before)
     return true
   }
 
@@ -187,7 +273,7 @@ export function useDayOperations({ programId, workoutByDate, setProgram, mediaId
       occupied && !replace
         ? `Swapped ${labelFor(source)} and ${labelFor(target)}`
         : `Moved ${labelFor(source)} to ${labelFor(target)}`,
-      () => restore(before),
+      before,
     )
     return true
   }
@@ -227,7 +313,7 @@ export function useDayOperations({ programId, workoutByDate, setProgram, mediaId
       return false
     }
     await refresh()
-    offerUndo(done, () => restore(before))
+    offerUndo(done, before)
     return true
   }
 
@@ -246,7 +332,7 @@ export function useDayOperations({ programId, workoutByDate, setProgram, mediaId
       return false
     }
     await refresh()
-    offerUndo(done, () => restore(before))
+    offerUndo(done, before)
     return true
   }
 
@@ -271,22 +357,6 @@ export function useDayOperations({ programId, workoutByDate, setProgram, mediaId
     return copyDays([{ source: clip.date, target: date }], `${labelFor(clip.date)} pasted onto ${labelFor(date)}`)
   }
 
-  /** Offer to put deleted exercise rows back into their day. */
-  const offerExerciseUndo = (workoutId: string, rows: Exercise[], message: string) => {
-    offerUndo(message, async () => {
-      if (!programId) return
-      try {
-        const data = await sendJson<{ exercises: Exercise[] }>(
-          'POST', `/api/programs/${programId}/workouts/${workoutId}/exercises/restore`, { exercises: rows },
-        )
-        setProgram((p) => p
-          ? { ...p, workouts: p.workouts.map((w) => (w.id === workoutId ? { ...w, exercises: data.exercises } : w)) }
-          : p)
-      } catch (err) {
-        toast.error(`Could not undo that. ${errorMessage(err)}`)
-      }
-    })
-  }
 
   return {
     clipboard,
@@ -299,8 +369,12 @@ export function useDayOperations({ programId, workoutByDate, setProgram, mediaId
     moveDay,
     copyDays,
     confirmLosingResults,
-    offerExerciseUndo,
     withUndo,
-    undoLast,
+    snapshotDays,
+    record,
+    recordLazy,
+    undo,
+    redo,
+    keyBelongsToField,
   }
 }

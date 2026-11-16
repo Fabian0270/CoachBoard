@@ -65,23 +65,25 @@ export function useWorkoutActions(
     return promise
   }
 
-  const addExercise = async (date: string): Promise<void> => {
-    if (!id) return
+  const addExercise = async (date: string): Promise<boolean> => {
+    if (!id) return false
     flashCell(date, 'saving')
     try {
       const workout = await ensureWorkout(date)
-      if (!workout) { flashCell(date, 'error'); return }
+      if (!workout) { flashCell(date, 'error'); return false }
       const res = await fetch(`/api/programs/${id}/workouts/${workout.id}/exercises`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: '', order_index: workout.exercises.length }),
       })
-      if (!res.ok) { flashCell(date, 'error'); return }
+      if (!res.ok) { flashCell(date, 'error'); return false }
       const ex: Exercise = await res.json()
       updateWorkout(workout.id, (w) => ({ ...w, exercises: [...w.exercises, ex] }))
       flashCell(date, 'saved')
+      return true
     } catch {
       flashCell(date, 'error')
+      return false
     }
   }
 
@@ -173,20 +175,22 @@ export function useWorkoutActions(
     }
   }
 
-  const addSet = async (date: string, workoutId: string, exerciseId: string): Promise<void> => {
-    if (!id) return
+  const addSet = async (date: string, workoutId: string, exerciseId: string): Promise<boolean> => {
+    if (!id) return false
     flashCell(date, 'saving')
     try {
       const res = await fetch(
         `/api/programs/${id}/workouts/${workoutId}/exercises/${exerciseId}/add-set`,
         { method: 'POST' },
       )
-      if (!res.ok) { flashCell(date, 'error'); return }
+      if (!res.ok) { flashCell(date, 'error'); return false }
       const data: { exercises: Exercise[] } = await res.json()
       updateWorkout(workoutId, (w) => ({ ...w, exercises: data.exercises }))
       flashCell(date, 'saved')
+      return true
     } catch {
       flashCell(date, 'error')
+      return false
     }
   }
 
@@ -214,8 +218,8 @@ export function useWorkoutActions(
   }
 
   /** Copy an exercise (with its set rows) directly under itself. */
-  const duplicateExercise = async (date: string, workoutId: string, exerciseId: string): Promise<void> => {
-    if (!id) return
+  const duplicateExercise = async (date: string, workoutId: string, exerciseId: string): Promise<boolean> => {
+    if (!id) return false
     flashCell(date, 'saving')
     try {
       const data = await sendJson<{ exercises: Exercise[] }>(
@@ -224,14 +228,16 @@ export function useWorkoutActions(
       )
       updateWorkout(workoutId, (w) => ({ ...w, exercises: data.exercises }))
       flashCell(date, 'saved')
+      return true
     } catch (err) {
       flashCell(date, 'error')
       onSaveError?.(`Could not duplicate that exercise. ${errorMessage(err)}`)
+      return false
     }
   }
 
-  const reorderExercises = async (date: string, workoutId: string, exerciseIds: string[]): Promise<void> => {
-    if (!id) return
+  const reorderExercises = async (date: string, workoutId: string, exerciseIds: string[]): Promise<boolean> => {
+    if (!id) return false
     flashCell(date, 'saving')
     try {
       const res = await fetch(`/api/programs/${id}/workouts/${workoutId}/exercises/reorder`, {
@@ -239,12 +245,14 @@ export function useWorkoutActions(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ exerciseIds }),
       })
-      if (!res.ok) { flashCell(date, 'error'); return }
+      if (!res.ok) { flashCell(date, 'error'); return false }
       const data: { exercises: Exercise[] } = await res.json()
       updateWorkout(workoutId, (w) => ({ ...w, exercises: data.exercises }))
       flashCell(date, 'saved')
+      return true
     } catch {
       flashCell(date, 'error')
+      return false
     }
   }
 

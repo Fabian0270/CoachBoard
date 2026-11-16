@@ -274,7 +274,11 @@ describe('Program calendar — a whole week', () => {
 describe('Day editor — deleting an exercise can be undone', () => {
   const restoreRoute = {
     'DELETE /api/programs/p1/workouts/w2/exercises/e3': { status: 204 as const },
-    'POST /api/programs/p1/workouts/w2/exercises/restore': { body: { exercises: [bench] } },
+  }
+  /** The day the undo put back, by its exercises. */
+  const restoredDay = () => {
+    const [{ days }] = sent('PUT', '/days/restore') as unknown as [{ days: { date: string; workout: { id: string; exercises: { id: string; name: string }[] } }[] }]
+    return days.map((d) => `${d.date}:${d.workout.id}:${d.workout.exercises.map((e) => `${e.id}:${e.name}`).join(',')}`)
   }
 
   it('offers Undo, which puts the row back with its id', async () => {
@@ -290,9 +294,8 @@ describe('Day editor — deleting an exercise can be undone', () => {
     // which this stylesheet-less environment cannot know (checked in the
     // packaged build instead).
     await userEvent.setup({ pointerEventsCheck: 0 }).click(screen.getByRole('button', { name: 'Undo', hidden: true }))
-    await waitFor(() => expect(sent('POST', '/exercises/restore')).toHaveLength(1))
-    const [{ exercises }] = sent('POST', '/exercises/restore') as unknown as [{ exercises: { id: string; name: string }[] }]
-    expect(exercises.map((e) => `${e.id}:${e.name}`)).toEqual(['e3:Bench'])
+    await waitFor(() => expect(sent('PUT', '/days/restore')).toHaveLength(1))
+    expect(restoredDay()).toEqual([`${TUE1}:w2:e3:Bench`])
     // The day is still open: pressing Undo in the toast is not a click outside it.
     expect(screen.getByRole('dialog')).toBeTruthy()
     expect(await screen.findByDisplayValue('Bench')).toBeTruthy()
@@ -307,7 +310,64 @@ describe('Day editor — deleting an exercise can be undone', () => {
     await userEvent.keyboard('{Control>}{Delete}{/Control}')
     await screen.findByText('Bench deleted')
     await userEvent.keyboard('{Control>}z{/Control}')
-    await waitFor(() => expect(sent('POST', '/exercises/restore')).toHaveLength(1))
+    await waitFor(() => expect(sent('PUT', '/days/restore')).toHaveLength(1))
+    expect(restoredDay()).toEqual([`${TUE1}:w2:e3:Bench`])
+  })
+})
+
+describe('Program — Ctrl+Z and Ctrl+Y step through the changes', () => {
+  it('undoes a saved cell, then the step before it, and redoes', async () => {
+    // A server that keeps what it is sent, as the real one does.
+    let stored = { ...bench }
+    server({
+      'PUT /api/programs/p1/workouts/w2/exercises/e3': (_u, init) => {
+        stored = { ...stored, ...(JSON.parse(String(init?.body)) as object) }
+        return { body: stored }
+      },
+    })
+    await open()
+    day(TUE1).focus()
+    await userEvent.keyboard('{Enter}')
+    await screen.findByDisplayValue('Bench')
+    // Two edits, each saved by moving on with Enter.
+    await userEvent.keyboard('{Enter}5{Enter}8{Enter}')
+    await waitFor(() => expect(sent('PUT', '/exercises/e3')).toEqual([{ sets: '5' }, { reps: '8' }]))
+    // The cursor is in a cell, but nothing typed there is unsaved: Ctrl+Z is
+    // the program's.
+    await userEvent.keyboard('{Control>}z{/Control}')
+    await waitFor(() => expect(sent('PUT', '/days/restore')).toHaveLength(1))
+    // The latest step only: reps back to 6, sets still 5.
+    const first = sent('PUT', '/days/restore')[0] as { days: { workout: { exercises: { sets: string; reps: string }[] } }[] }
+    expect(first.days[0].workout.exercises[0]).toMatchObject({ sets: '5', reps: '6' })
+
+    await userEvent.keyboard('{Control>}z{/Control}')
+    await waitFor(() => expect(sent('PUT', '/days/restore')).toHaveLength(2))
+    const second = sent('PUT', '/days/restore')[1] as { days: { workout: { exercises: { sets: string; reps: string }[] } }[] }
+    expect(second.days[0].workout.exercises[0]).toMatchObject({ sets: '4', reps: '6' })
+    expect(await screen.findByText(/Undone: Changed Bench/)).toBeTruthy()
+
+    await userEvent.keyboard('{Control>}y{/Control}')
+    await waitFor(() => expect(sent('PUT', '/days/restore')).toHaveLength(3))
+    expect(await screen.findByText(/Redone: Changed Bench/)).toBeTruthy()
+  })
+
+  it('leaves typing not yet saved to the field', async () => {
+    server()
+    await open()
+    day(TUE1).focus()
+    await userEvent.keyboard('{Enter}')
+    await screen.findByDisplayValue('Bench')
+    await userEvent.keyboard('{Enter}9')
+    await userEvent.keyboard('{Control>}z{/Control}')
+    expect(sent('PUT', '/days/restore')).toHaveLength(0)
+  })
+
+  it('does nothing with nothing to undo', async () => {
+    server()
+    await open()
+    day(TUE1).focus()
+    await userEvent.keyboard('{Control>}z{/Control}')
+    expect(sent('PUT', '/days/restore')).toHaveLength(0)
   })
 })
 
