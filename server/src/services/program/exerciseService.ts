@@ -251,6 +251,7 @@ async function addSetInTransaction(
 
 export interface PastedFields {
   name?: string
+  notes?: string | null
   sets?: string | null
   reps?: string | null
   weight?: number | null
