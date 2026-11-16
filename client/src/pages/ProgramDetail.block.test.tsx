@@ -179,6 +179,39 @@ describe('Block view', () => {
     expect(cell('Bench, week 2, Reps').value).toBe('10')
   })
 
+  it('…also on a week with no day yet, where the day is created first (seen in the packaged build)', async () => {
+    const { state, calls, hold } = fakeProgram()
+    await open()
+    const release = hold()
+    await userEvent.click(cell('Squat, week 3, Sets'))
+    await userEvent.keyboard('3{Enter}8{Enter}')
+    release()
+    await waitFor(() => {
+      const monday = state.workouts.find((w) => w.scheduled_date === '2026-06-29')
+      expect(monday?.exercises.map((e) => [e.name, e.sets, e.reps])).toEqual([['Squat', '3', '8']])
+    })
+    expect(calls.filter((c) => c.endsWith('/exercises/paste'))).toHaveLength(1)
+  })
+
+  it('after Ctrl+Z took a created exercise away, typing there creates it again', async () => {
+    const { state, calls } = fakeProgram()
+    await open()
+    await userEvent.click(cell('Bench, week 2, Sets'))
+    await userEvent.keyboard('3{Enter}')
+    await waitFor(() => expect(state.workouts[1].exercises.map((e) => e.name)).toEqual(['Squat', 'Bench']))
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    await userEvent.keyboard('{Control>}z{/Control}')
+    await waitFor(() => expect(state.workouts.find((w) => w.id === 'w2')!.exercises.map((e) => e.name)).toEqual(['Squat']))
+    await waitFor(() => expect(cell('Bench, week 2, Sets').placeholder).toBe('+'))
+
+    await userEvent.click(cell('Bench, week 2, Reps'))
+    await userEvent.keyboard('12{Enter}')
+    await waitFor(() => expect(state.workouts.find((w) => w.id === 'w2')!.exercises.map((e) => [e.name, e.reps])).toEqual([
+      ['Squat', '5'], ['Bench', '12'],
+    ]))
+    expect(calls.filter((c) => c.endsWith('/exercises/paste'))).toHaveLength(2)
+  })
+
   it('a missing further set is added as a set of its exercise', async () => {
     const { state, calls } = fakeProgram()
     // Week 1's Squat has a second set; week 2's has one.

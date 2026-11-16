@@ -649,6 +649,25 @@ function ProgramPage() {
     }
   }
 
+  /**
+   * Whether an exercise created a moment ago is still there (an undo may have
+   * taken it away since). Asked of the server when the page does not show it:
+   * right after a creation the page has the new program but has not drawn it
+   * yet, and reading only what is drawn created the exercise a second time —
+   * seen in the packaged build, not in the tests.
+   */
+  const stillExists = async (date: string, exerciseId: string): Promise<boolean> => {
+    if (workoutByDateRef.current.get(date)?.exercises.some((e) => e.id === exerciseId)) return true
+    if (!id) return false
+    try {
+      const fresh = await getJson<Program>(`/api/programs/${encodeURIComponent(id)}`)
+      return fresh.workouts.some((w) => w.exercises.some((e) => e.id === exerciseId))
+    } catch {
+      // Unknown: try the save, which says so if the exercise is gone.
+      return true
+    }
+  }
+
   const saveBlockCell = async (row: BlockRow, rows: BlockRow[], week: number, patch: Partial<Exercise>): Promise<boolean> => {
     const date = allDates[week * 7 + shownWeekday]
     const ex = row.cells[week]
@@ -660,9 +679,7 @@ function ProgramPage() {
     const inFlight = creating.current.get(key)
     if (inFlight) {
       const made = await inFlight
-      // Still there? An undo may have taken it away since.
-      const stillThere = made && workoutByDateRef.current.get(date)?.exercises.some((e) => e.id === made.exerciseId)
-      if (stillThere) return saveCell(date, made.workoutId, made.exerciseId, patch)
+      if (made && (await stillExists(date, made.exerciseId))) return saveCell(date, made.workoutId, made.exerciseId, patch)
       creating.current.delete(key)
       if (made) return saveBlockCell(row, rows, week, patch)
     }
