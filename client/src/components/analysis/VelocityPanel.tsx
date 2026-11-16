@@ -76,11 +76,12 @@ const fmtKg = (kg: number) => `${Math.round(kg * 2) / 2} kg`
  * Said out loud on every estimate because it is the whole accuracy question: the
  * same set reads 245 kg on a population slope and 250 on this athlete's own.
  */
+// Neutral wording: this used to call every athlete "he" (BP5).
 const SLOPE_SOURCE: Record<SlopeSource, string> = {
-  profile: 'on his own load–velocity profile',
-  calibrated: 'calibrated to his recorded max',
+  profile: "on the athlete's own load–velocity profile",
+  calibrated: "calibrated to the athlete's recorded max",
   published: 'on the published slope for this lift',
-  estimated: 'on a generic slope — records a max or a second load to make it his',
+  estimated: "on a generic slope — record a max or a second load to make it the athlete's own",
 }
 
 const WARNING_TEXT: Record<LvWarning, string> = {
@@ -521,7 +522,7 @@ export default function VelocityPanel({
                   </span>
                   {pctOfRecorded != null && knownMax != null && (
                     <span className="block text-muted-foreground">
-                      His recorded max is {fmtKg(knownMax)}, so this set was{' '}
+                      {athleteName ? `${athleteName}'s` : 'The'} recorded max is {fmtKg(knownMax)}, so this set was{' '}
                       {Math.round(pctOfRecorded * 100)}% of it
                       {agreementNote(estimate.e1rm, knownMax)}.
                     </span>
@@ -728,8 +729,8 @@ function agreementNote(estimated: number, recorded: number): string {
   const gap = (estimated - recorded) / recorded
   if (Math.abs(gap) < 0.03) return ' — the estimate agrees with it'
   return estimated > recorded
-    ? ` — the bar says he is about ${Math.round(gap * 100)}% ahead of that`
-    : ` — the bar reads ${Math.round(-gap * 100)}% under it, so either he is down today or the max is stale`
+    ? ` — the bar reads about ${Math.round(gap * 100)}% ahead of that`
+    : ` — the bar reads ${Math.round(-gap * 100)}% under it, so either today is a down day or the max is stale`
 }
 
 /** What to do about it, in one sentence. */

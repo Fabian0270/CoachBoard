@@ -3,6 +3,7 @@ import { Film, FolderOpen, Search, Upload } from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
+import { errorMessage, getJson } from '../../lib/api'
 
 /**
  * Where a clip being analysed came from.
@@ -36,18 +37,26 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
   const [query, setQuery] = useState('')
   const [dragging, setDragging] = useState(false)
 
+  /** Why the synced videos could not be read. Never shown as "no videos yet" (BP6). */
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+
   useEffect(() => {
     let cancelled = false
-    fetch('/api/discord/media?filter=all&limit=200')
-      .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((data: { items: DiscordMediaItem[] }) => {
+    setLoadError(null)
+    getJson<{ items: DiscordMediaItem[] }>('/api/discord/media?filter=all&limit=200')
+      .then((data) => {
         if (!cancelled) setItems(data.items.filter((m) => m.isVideo && m.playable))
       })
-      .catch(() => !cancelled && setItems([]))
+      .catch((err) => {
+        if (cancelled) return
+        setItems(null)
+        setLoadError(errorMessage(err))
+      })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [attempt])
 
   const takeFile = (file: File | undefined) => {
     if (!file) return
@@ -118,7 +127,13 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
           )}
         </div>
 
-        {items === null && <p className="text-sm text-muted-foreground">Loading videos…</p>}
+        {loadError ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-destructive">Could not load the synced videos. {loadError}</span>
+            <Button size="sm" variant="outline" onClick={() => setAttempt((n) => n + 1)}>Try again</Button>
+            <span className="text-muted-foreground">A file from your computer still works.</span>
+          </div>
+        ) : items === null && <p className="text-sm text-muted-foreground">Loading videos…</p>}
 
         {items?.length === 0 && (
           <p className="text-sm text-muted-foreground">

@@ -17,7 +17,7 @@ import {
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
-import { errorMessage, getList } from '../lib/api'
+import { ApiError, errorMessage, getJson, getList, sendJson } from '../lib/api'
 import AnalysisStage, {
   type CalibrationLine,
   type SeedPoint,
@@ -52,6 +52,7 @@ import {
   measuredMvt,
 } from 'coachboard-shared/vbt'
 import RepTable from '../components/analysis/RepTable'
+import LoadError from '../components/LoadError'
 import VelocityPanel, {
   rememberedLift,
   type SetContextState,
@@ -159,6 +160,9 @@ export default function VideoAnalysis() {
 
   const [source, setSource] = useState<AnalysisSource | null>(null)
   const [notFound, setNotFound] = useState(false)
+  /** A deep link that failed for another reason than the clip being gone. */
+  const [linkError, setLinkError] = useState<string | null>(null)
+  const [linkAttempt, setLinkAttempt] = useState(0)
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [range, setRange] = useState<{ from: number; to: number } | null>(null)
@@ -275,14 +279,20 @@ export default function VideoAnalysis() {
   useEffect(() => {
     if (!mediaId) return
     let cancelled = false
-    fetch(`/api/discord/media/${mediaId}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('not found'))))
-      .then((data: DiscordMediaItem) => !cancelled && setSource({ kind: 'discord', item: data }))
-      .catch(() => !cancelled && setNotFound(true))
+    setLinkError(null)
+    // Only a 404 means the video is gone (BP6). Every failure used to say so,
+    // sending a coach to look for a clip that was there all along.
+    getJson<DiscordMediaItem>(`/api/discord/media/${encodeURIComponent(mediaId)}`)
+      .then((data) => !cancelled && setSource({ kind: 'discord', item: data }))
+      .catch((err) => {
+        if (cancelled) return
+        if (err instanceof ApiError && err.status === 404) setNotFound(true)
+        else setLinkError(errorMessage(err))
+      })
     return () => {
       cancelled = true
     }
-  }, [mediaId])
+  }, [mediaId, linkAttempt])
 
   // A local file is held as an object URL for as long as it is being analysed.
   // Revoked on swap or unmount, or the bytes stay pinned in memory for the life
@@ -699,31 +709,25 @@ export default function VideoAnalysis() {
       // better a save the coach can retry than a row pointing at no video.
       const stored = source?.kind === 'local' ? await uploadVideo(source.file) : null
 
-      const res = await fetch('/api/analysis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mediaId: source?.kind === 'discord' ? source.item.id : null,
-          athleteId,
-          sourceLabel: sourceLabel,
-          track: samples,
-          calibration: calibration ? { ...calibration, plateDiameterMm: plateMm } : null,
-          metrics: reps,
-          notes: null,
-          // Only when the velocity panel was actually on screen. With no reps
-          // detected it is hidden, and storing the lift it happens to remember
-          // would be recording a guess the coach never saw.
-          lift: reps.length > 0 ? setContext.lift : null,
-          loadKg: loadKg,
-          calledRpe: setContext.calledRpe,
-          // Stored so reopening reads the set the same way this page did.
-          metric: reps.length > 0 ? metric : null,
-          videoPath: stored?.relPath ?? null,
-          videoBytes: stored?.bytes ?? null,
-        }),
+      const saved = await sendJson<{ id: string }>('POST', '/api/analysis', {
+        mediaId: source?.kind === 'discord' ? source.item.id : null,
+        athleteId,
+        sourceLabel: sourceLabel,
+        track: samples,
+        calibration: calibration ? { ...calibration, plateDiameterMm: plateMm } : null,
+        metrics: reps,
+        notes: null,
+        // Only when the velocity panel was actually on screen. With no reps
+        // detected it is hidden, and storing the lift it happens to remember
+        // would be recording a guess the coach never saw.
+        lift: reps.length > 0 ? setContext.lift : null,
+        loadKg: loadKg,
+        calledRpe: setContext.calledRpe,
+        // Stored so reopening reads the set the same way this page did.
+        metric: reps.length > 0 ? metric : null,
+        videoPath: stored?.relPath ?? null,
+        videoBytes: stored?.bytes ?? null,
       })
-      if (!res.ok) throw new Error('Save failed')
-      const saved = (await res.json()) as { id: string }
       setSavedId(saved.id)
       setSavedContext(contextNow())
       setOfferSave(false)
@@ -753,8 +757,9 @@ export default function VideoAnalysis() {
       // above is a write that should already have landed by the time a modal
       // takes over the window.
       await offerMeasuredMvt()
-    } catch {
-      toast.error('Could not save that analysis.')
+    } catch (err) {
+      // The reason used to be dropped, leaving the coach nothing to act on (BP6).
+      toast.error(`Could not save that analysis. ${errorMessage(err)}`)
     } finally {
       setSaving(false)
     }
@@ -851,6 +856,7 @@ export default function VideoAnalysis() {
     setCurrentTime(0)
     setSource(null)
     setNotFound(false)
+    setLinkError(null)
     if (mediaId) navigate('/analysis', { replace: true })
   }
 
@@ -1082,6 +1088,14 @@ export default function VideoAnalysis() {
     // and a lost preview — on every render.
   }, [showPose, busy, source])
 
+  if (linkError) {
+    return (
+      <div className="space-y-4 p-8">
+        <LoadError what="that video" message={linkError} onRetry={() => setLinkAttempt((n) => n + 1)} />
+        <Button variant="outline" onClick={chooseAnother}>Choose another video</Button>
+      </div>
+    )
+  }
   if (notFound) {
     return (
       <div className="p-8">
