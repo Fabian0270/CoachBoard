@@ -105,7 +105,7 @@ function AttentionCard({ unreviewedVideos }: { unreviewedVideos: number }) {
         {lines.length > 0 && <span className="num rounded-full bg-warning/15 px-1.5 text-[11px] text-warning">{lines.length}</span>}
       </div>
       {lines.length === 0 ? (
-        <p className="px-5 pb-4 text-sm text-muted-foreground">Nothing needs you right now.</p>
+        <p className="px-5 pb-4 text-sm text-muted-foreground">Nothing needs your attention right now.</p>
       ) : (
         <ul className="divide-y px-5 pb-2">
           {(showAll ? lines : lines.slice(0, SHOWN)).map((l) => (

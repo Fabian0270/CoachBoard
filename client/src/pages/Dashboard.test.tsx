@@ -56,14 +56,14 @@ describe('Dashboard — needs attention', () => {
   it('says so when nothing needs the coach', async () => {
     serve(routes({ body: [] }))
     renderScreen(<Dashboard />)
-    expect(within(await card()).getByText('Nothing needs you right now.')).toBeTruthy()
+    expect(within(await card()).getByText('Nothing needs your attention right now.')).toBeTruthy()
   })
 
   it('never says all is well when the check failed', async () => {
     const server = serve(routes({ status: 500, body: { error: 'Database locked' } }))
     renderScreen(<Dashboard />)
     expect(await screen.findByText(/Could not check what needs your attention/)).toBeTruthy()
-    expect(screen.queryByText('Nothing needs you right now.')).toBeNull()
+    expect(screen.queryByText('Nothing needs your attention right now.')).toBeNull()
     server.set('/api/dashboard/attention', { body: items })
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
     expect(await screen.findByText('has no active program')).toBeTruthy()
