@@ -52,6 +52,23 @@ describe('loadHint', () => {
   it('works out a percentage, rounded to 2.5 kg', () => {
     expect(loadHint({ name: 'Bench Press', reps: '3', intensity: '77%' }, maxes)?.kg).toBe(92.5)
   })
+  it('reads "-10%" as 10% lighter than the set above, not 10% of the max', () => {
+    for (const t of ['-10%', '- 10 %', '−10%', '–10%']) expect(parseTarget(t)).toEqual({ change: -10 })
+    expect(parseTarget('+5%')).toEqual({ change: 5 })
+    // A range is still a range.
+    expect(parseTarget('70-75%')).toEqual({ pct: 72.5 })
+    const backoff = loadHint({ name: 'Squat', reps: '5', intensity: '-10%' }, maxes, 150)
+    expect(backoff).toEqual({ kg: 135, basis: '10% lighter than the set above (150 kg)' })
+    // Rounded to 2.5 kg like every suggestion: 90% of 142.5 is 128.25.
+    expect(loadHint({ name: 'Squat', reps: '5', intensity: '-10%' }, maxes, 142.5)?.kg).toBe(127.5)
+    expect(loadHint({ name: 'Squat', reps: '5', intensity: '+5%' }, maxes, 100)?.kg).toBe(105)
+  })
+  it('suggests no back-off without a set above to take it from, max or not', () => {
+    expect(loadHint({ name: 'Squat', reps: '5', intensity: '-10%' }, maxes)).toBeNull()
+    expect(loadHint({ name: 'Squat', reps: '5', intensity: '-10%' }, [], null)).toBeNull()
+    // …and needs no max when there is one.
+    expect(loadHint({ name: 'Leg Press', reps: '10', intensity: '-10%' }, [], 200)?.kg).toBe(180)
+  })
   it('gives nothing without a target, a max, or reps for an RPE', () => {
     expect(loadHint({ name: 'Squat', reps: '5', intensity: null }, maxes)).toBeNull()
     expect(loadHint({ name: 'Leg Press', reps: '10', intensity: 'RPE 8' }, maxes)).toBeNull()

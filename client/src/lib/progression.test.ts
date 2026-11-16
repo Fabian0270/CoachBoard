@@ -33,6 +33,10 @@ describe('stepIntensity', () => {
     expect(stepIntensity('75%', 0, 2.5)).toBe('77.5%')
     expect(stepIntensity('70 % x3', 0, 5)).toBe('75 % x3')
   })
+  it('leaves a back-off ("-10%") as written: it follows the set above, which is stepped itself', () => {
+    expect(stepIntensity('-10%', 0, 2.5)).toBeNull()
+    expect(stepIntensity('-10%', 0, 2.5 - 10)).toBeNull()
+  })
   it('leaves what has no target alone', () => {
     expect(stepIntensity('tempo', 1, 1)).toBeNull()
     expect(stepIntensity('75%', 1, 0)).toBeNull()

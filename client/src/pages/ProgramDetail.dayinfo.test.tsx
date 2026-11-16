@@ -98,6 +98,26 @@ describe('Day editor — suggested load', () => {
     expect(typeof putBodies('/exercises/b1')[0].weight).toBe('number')
   })
 
+  it('a back-off set ("-10%") is 10% under the set above it, not 10% of the max', async () => {
+    // Top set at a fixed 150, then a back-off set; a second back-off under it
+    // chains from the first's suggestion. Then Rows, whose "-10%" has no Rows
+    // set above it and so gets nothing.
+    const backoff = {
+      ...withLoadCap,
+      workouts: [day('w1', '2026-06-15', [
+        ex('a1', 'w1', { sets: '1', reps: '3', intensity: 'RPE 8', weight: 150, group_id: 'g' }),
+        ex('a2', 'w1', { sets: '3', reps: '5', intensity: '-10%', group_id: 'g', order_index: 1 }),
+        ex('a3', 'w1', { sets: '2', reps: '5', intensity: '-10%', group_id: 'g', order_index: 2 }),
+        ex('a4', 'w1', { name: 'Rows', sets: '3', reps: '10', intensity: '-10%', order_index: 3 }),
+      ])],
+    }
+    serve({ '/api/programs/p1': { body: backoff }, '/api/athletes/a1/maxes': { body: maxes } })
+    await openDay('2026-06-15')
+    const hints = await screen.findAllByPlaceholderText(/^≈ /)
+    expect(hints.map((el) => (el as HTMLInputElement).placeholder)).toEqual(['≈ 135', '≈ 122.5'])
+    expect(hints[0].title).toBe('Suggested from 10% lighter than the set above (150 kg). Ctrl+L or "Use" fills it in.')
+  })
+
   it('offers nothing for an exercise with no max on file', async () => {
     serve({ '/api/programs/p1': { body: withLoadCap }, '/api/athletes/a1/maxes': { body: maxes } })
     await openDay('2026-06-22')

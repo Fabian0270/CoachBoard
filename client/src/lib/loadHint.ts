@@ -26,10 +26,25 @@ export interface LoadHint {
 
 const num = (s: string) => Number(s.replace(',', '.'))
 
-/** The target in an Intensity cell: an RPE, or a percentage of 1RM. Ranges give their middle. */
-export function parseTarget(intensity: string | null | undefined): { rpe: number } | { pct: number } | null {
+/** "-10%", "− 10 %", "+5%": a sign at the very start, so a range ("70-75%") never reads as one. */
+export const SIGNED_PCT = /^([-−–+])\s*(\d+(?:[.,]\d+)?)\s*%/
+
+/**
+ * The target in an Intensity cell: an RPE, a percentage of 1RM, or a change
+ * from the set above. Ranges give their middle.
+ *
+ * A percentage with a sign in front ("-10%", "+5%") is how coaches write a
+ * back-off: 10% lighter than the set above, not 10% of the max. It is also the
+ * form imported sheets' back-offs ("-0.10") are stored in.
+ */
+export function parseTarget(intensity: string | null | undefined): { rpe: number } | { pct: number } | { change: number } | null {
   const text = (intensity ?? '').trim()
   if (!text) return null
+  const signed = text.match(SIGNED_PCT)
+  if (signed) {
+    const v = num(signed[2])
+    return v > 0 && v < 100 ? { change: signed[1] === '+' ? v : -v } : null
+  }
   const range = '(\\d+(?:[.,]\\d+)?)(?:\\s*[-–]\\s*(\\d+(?:[.,]\\d+)?))?'
   const mid = (m: RegExpMatchArray) => (m[2] ? (num(m[1]) + num(m[2])) / 2 : num(m[1]))
 
@@ -77,12 +92,25 @@ export function maxFor(exerciseName: string, maxes: StoredMax[]): StoredMax | nu
 
 const round = (kg: number, step = 2.5) => Math.round(kg / step) * step
 
+/**
+ * `above` is the load of the set directly above when it is the same movement
+ * (its Load Cap, or its own suggestion): what a back-off is worked out from.
+ */
 export function loadHint(
   ex: { name: string; reps: string | null; intensity: string | null },
   maxes: StoredMax[],
+  above: number | null = null,
 ): LoadHint | null {
   const target = parseTarget(ex.intensity)
   if (!target) return null
+  if ('change' in target) {
+    if (above === null || above <= 0) return null
+    const pct = Math.abs(target.change)
+    return {
+      kg: round((above * (100 + target.change)) / 100),
+      basis: `${pct}% ${target.change < 0 ? 'lighter' : 'heavier'} than the set above (${above} kg)`,
+    }
+  }
   const max = maxFor(ex.name, maxes)
   if (!max) return null
   if ('pct' in target) {

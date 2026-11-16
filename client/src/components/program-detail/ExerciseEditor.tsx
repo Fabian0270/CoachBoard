@@ -11,7 +11,7 @@ import {
   buildColumns,
 } from '../../lib/programUtils'
 import ExerciseRow, { type RowKeyAction } from './ExerciseRow'
-import { loadHint, type StoredMax } from '../../lib/loadHint'
+import { loadHint, type LoadHint, type StoredMax } from '../../lib/loadHint'
 import { isCellBlock } from '../../lib/pasteGrid'
 
 interface ExerciseEditorProps {
@@ -432,6 +432,29 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
 
   const groups = buildGroups(exercises)
 
+  // The suggested load for each row, top to bottom. A back-off ("-10%") is
+  // worked out from the set directly above when it is the same movement: its
+  // Load Cap, or its own suggestion when it has none, so a chain of back-offs
+  // follows the top set. It used to be read as a percentage of the max.
+  const hintFor = (() => {
+    const out = new Map<string, LoadHint | null>()
+    let prev: { ex: Exercise; name: string } | null = null
+    for (const group of groups) {
+      for (const ex of group.exercises) {
+        // A set row has no name of its own; it is the exercise above it.
+        const name = group.exercises[0].name
+        const same = !!prev && (
+          (!!ex.group_id && prev.ex.group_id === ex.group_id) ||
+          (!!name.trim() && prev.name.trim().toLowerCase() === name.trim().toLowerCase())
+        )
+        const above = same && prev ? prev.ex.weight ?? out.get(prev.ex.id)?.kg ?? null : null
+        out.set(ex.id, loadHint({ ...ex, name }, maxes, above))
+        prev = { ex, name }
+      }
+    }
+    return out
+  })()
+
   // Last week, row by row: the nth row named "Squat" today lines up with the
   // nth row named "Squat" a week earlier, so set rows line up with set rows.
   // Progressing a lift week to week meant opening last week from memory.
@@ -569,8 +592,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
                           onKey={(action, col) => handleRowKey(ex, action, col)}
                           onPasteBlock={onPasteRows ? (col, text) => onPasteRows(ex.id, col as ColKey, text) : undefined}
                           lastWeek={lastWeekFor.get(ex.id)}
-                          // A set row has no name of its own; it is the exercise above it.
-                          loadHint={maxes.length ? loadHint({ ...ex, name: group.exercises[0].name }, maxes) : null}
+                          loadHint={hintFor.get(ex.id) ?? null}
                           suggestions={suggestions}
                           onGroupDragStart={i === 0 ? startGroupDrag(ex.id, group.groupId) : undefined}
                           onSetDragStart={i > 0 && group.groupId ? startSetDrag(ex.id, group.groupId) : undefined}

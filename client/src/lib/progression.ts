@@ -1,3 +1,4 @@
+import { SIGNED_PCT } from './loadHint'
 import type { Exercise, Workout } from './programUtils'
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,9 @@ const fmt = (n: number) => String(Math.round(n * 100) / 100).replace(/\.0+$/, ''
 /** The same intensity text with its RPE or % number moved; null when there is none to move. */
 export function stepIntensity(intensity: string | null, rpeDelta: number, pctDelta: number): string | null {
   if (!intensity) return null
+  // A back-off ("-10%") is relative to the set above, which is stepped on its
+  // own; stepping the back-off too made the drop grow week by week.
+  if (SIGNED_PCT.test(intensity.trim())) return null
   const pct = intensity.match(/(\d+(?:[.,]\d+)?)(\s*%)/)
   if (pct) {
     if (pctDelta === 0) return null
