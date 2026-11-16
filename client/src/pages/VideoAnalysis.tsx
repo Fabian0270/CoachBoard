@@ -1323,6 +1323,8 @@ export default function VideoAnalysis() {
                   metric={metric}
                   calibrated={pixelsPerMetre !== null}
                   anchors={anchors}
+                  track={samples}
+                  pixelsPerMetre={pixelsPerMetre}
                   excluded={excludedReps}
                   onToggle={toggleRep}
                 />

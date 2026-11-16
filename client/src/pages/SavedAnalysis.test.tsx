@@ -42,7 +42,7 @@ describe('Saved bar path set', () => {
     open()
     const table = await screen.findByRole('table', { name: 'Reps' })
     expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
-      'Rep', 'Mean •', 'Propulsive', 'Peak', 'Range', 'Duration', '≈ RPE', 'Quality', 'Strike off',
+      'Rep', 'Mean •', 'Propulsive', 'Peak', 'Range', 'Sideways', 'Duration', '≈ RPE', 'Quality', 'Strike off',
     ])
     expect(within(table).getByLabelText('probably mistracked')).toBeTruthy()
   })

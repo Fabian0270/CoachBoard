@@ -1,5 +1,5 @@
 import { Undo2, X } from 'lucide-react'
-import { looksMistracked, type RepMetrics } from 'coachboard-shared/videoAnalysis'
+import { looksMistracked, repDrift, type RepDrift, type RepMetrics, type Sample } from 'coachboard-shared/videoAnalysis'
 import {
   readRep,
   rpeFromLastRepVelocity,
@@ -27,11 +27,23 @@ interface RepTableProps {
   anchors: LrvAnchor[]
   /** Reps struck off but still listed (the live page, where striking is undone in place). */
   excluded?: Set<number>
+  /** The tracked path, for each rep's sideways drift (BP8). */
+  track?: Sample[] | null
+  pixelsPerMetre?: number | null
   /** Strike a rep off, or count it again. Absent: no strike buttons. */
   onToggle?: (index: number) => void
 }
 
-export default function RepTable({ reps, lift, metric, calibrated, anchors, excluded, onToggle }: RepTableProps) {
+/** "4 cm, ends 2 cm →": the furthest it strayed, and where the top ended up against the bottom. */
+export function fmtDrift(d: RepDrift): string {
+  const unit = d.maxM != null ? 'cm' : 'px'
+  const val = (px: number, m: number | null) => (m != null ? Math.round(Math.abs(m) * 100) : Math.round(Math.abs(px)))
+  const net = val(d.netPx, d.netM)
+  const ends = net === 0 ? 'centred' : `${net} ${unit} ${d.netPx > 0 ? '→' : '←'}`
+  return `${val(d.maxPx, d.maxM)} ${unit}, ends ${ends}`
+}
+
+export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle }: RepTableProps) {
   const head = (m: VelocityMetric, label: string) => (
     <th className={`py-1 pr-4 font-medium ${metric === m ? 'text-foreground' : ''}`} title={metric === m ? 'The set is read from this one' : undefined}>
       {label}{metric === m && ' •'}
@@ -47,6 +59,11 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, excl
             {head('propulsive', 'Propulsive')}
             {head('peak', 'Peak')}
             <th className="py-1 pr-4 font-medium">Range</th>
+            {track && (
+              <th className="py-1 pr-4 font-medium" title="Furthest the bar strayed sideways from the line straight up from the bottom, and where the top ended up (arrows: left or right in the picture)">
+                Sideways
+              </th>
+            )}
             <th className="py-1 pr-4 font-medium">Duration</th>
             {/* Dropped without a scale rather than shown as dashes: neither an
                 RPE table nor a velocity zone means anything in px/s. */}
@@ -67,6 +84,7 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, excl
             const v = readRep(r, metric)
             const reading = !out && v !== null ? rpeFromLastRepVelocity(lift, v, { anchors }) : null
             const zone = !out && v !== null ? zoneFor(v) : null
+            const drift = track ? repDrift(track, r, pixelsPerMetre) : null
             return (
               <tr key={r.index} className={`border-b last:border-0 ${out ? 'text-muted-foreground line-through opacity-60' : ''}`}>
                 <td className="py-1 pr-4">
@@ -94,6 +112,7 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, excl
                   {r.peakVelocity !== null ? `${r.peakVelocity.toFixed(2)} m/s` : `${Math.round(r.peakVelocityPxS)} px/s`}
                 </td>
                 <td className="py-1 pr-4">{r.romM !== null ? `${(r.romM * 100).toFixed(0)} cm` : `${Math.round(r.romPx)} px`}</td>
+                {track && <td className="num whitespace-nowrap py-1 pr-4">{drift ? fmtDrift(drift) : '—'}</td>}
                 <td className="py-1 pr-4">{(r.durationMs / 1000).toFixed(2)} s</td>
                 {calibrated && (
                   <>

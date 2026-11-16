@@ -470,6 +470,37 @@ export function repMetrics(
   }
 }
 
+/** How far the bar moved sideways during one rep's concentric (BP8). */
+export interface RepDrift {
+  /** Furthest from the vertical line through the bottom, either side. */
+  maxPx: number
+  /** Where the top ended up against the bottom: positive is right in the picture. */
+  netPx: number
+  maxM: number | null
+  netM: number | null
+}
+
+/**
+ * Sideways travel during a rep's concentric, read from the tracked path between
+ * its start and its top.
+ *
+ * Worked out from the path rather than stored with the rep, so every saved set
+ * has it, including those saved before it existed. The start is the trimmed
+ * one (see repMetrics), which only drops time standing still at the bottom,
+ * so the bar is where the bottom left it. Null when the path has fewer than two
+ * samples in the rep.
+ */
+export function repDrift(track: Sample[], rep: { startT: number; endT: number }, pixelsPerMetre: number | null): RepDrift | null {
+  const inRep = track.filter((s) => s.t >= rep.startT - 1e-6 && s.t <= rep.endT + 1e-6)
+  if (inRep.length < 2) return null
+  const x0 = inRep[0].x
+  let maxPx = 0
+  for (const s of inRep) maxPx = Math.max(maxPx, Math.abs(s.x - x0))
+  const netPx = inRep[inRep.length - 1].x - x0
+  const toM = (px: number) => (pixelsPerMetre && pixelsPerMetre > 0 ? px / pixelsPerMetre : null)
+  return { maxPx, netPx, maxM: toM(maxPx), netM: toM(netPx) }
+}
+
 /** Vertical distance over elapsed time between two samples, px/s. 0 for no time. */
 function displacementRate(samples: Sample[], from: number, to: number): number {
   const dt = samples[to].t - samples[from].t

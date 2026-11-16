@@ -437,6 +437,8 @@ export default function SavedAnalysis() {
             metric={metric}
             calibrated={calibrated}
             anchors={anchors}
+            track={analysis.track}
+            pixelsPerMetre={pixelsPerMetre}
             onToggle={metrics.length > 1 ? (index) => void strikeRep(index) : undefined}
           />
         </div>
