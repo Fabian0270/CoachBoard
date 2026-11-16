@@ -362,6 +362,14 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
         if (other) focusCell(other.id, col)
         return
       }
+      case 'left':
+      case 'right': {
+        // Within the row; Enter is what carries on to the next exercise.
+        const cols = rowCols(ex.id)
+        const to = cols[cols.indexOf(col) + (action === 'left' ? -1 : 1)]
+        if (to) focusCell(ex.id, to)
+        return
+      }
       case 'add-set':
         addSetAndFocus(ex.id)
         return

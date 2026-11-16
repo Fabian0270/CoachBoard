@@ -127,6 +127,35 @@ describe('Day editor — keyboard only', () => {
     expect(cell()).toBe('e1:sets')
   })
 
+  it('Left and Right move to the field before and after, within the row', async () => {
+    liveServer()
+    await openDay()
+    await userEvent.keyboard('{Enter}')        // Sets, its value selected
+    await userEvent.keyboard('{ArrowRight}')
+    expect(cell()).toBe('e1:reps')
+    await userEvent.keyboard('{ArrowLeft}{ArrowLeft}')
+    expect(cell()).toBe('e1:name')
+    // Nothing before the first field, and Right stops at the last.
+    await userEvent.keyboard('{ArrowLeft}')
+    expect(cell()).toBe('e1:name')
+    await userEvent.keyboard('{Enter}{Enter}{ArrowRight}')
+    expect(cell()).toBe('e1:reps')
+  })
+
+  it('inside text the arrows move the cursor first, and leave the field from its start or end', async () => {
+    liveServer()
+    await openDay()
+    await userEvent.keyboard('{Enter}')        // Sets
+    await userEvent.keyboard('12')             // typed over: "12", cursor at the end
+    await userEvent.keyboard('{ArrowLeft}')
+    expect(cell()).toBe('e1:sets')             // the cursor moved, not the field
+    await userEvent.keyboard('{ArrowLeft}')
+    expect(cell()).toBe('e1:sets')             // now at the start
+    await userEvent.keyboard('{ArrowLeft}')
+    expect(cell()).toBe('e1:name')
+    await waitFor(() => expect(putBodies()).toContainEqual({ sets: '12' }))
+  })
+
   it('Tab walks the cells and skips the small row buttons', async () => {
     liveServer()
     await openDay()

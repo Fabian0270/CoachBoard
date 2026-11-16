@@ -46,12 +46,27 @@ interface ExerciseRowProps {
 export type RowKeyAction =
   | 'next'        // Enter: the next field, then the next exercise, then a new one
   | 'up' | 'down' // the same field on the row above / below
+  | 'left' | 'right' // the field before / after, in the same row
   | 'add-set'     // Ctrl+Enter
   | 'duplicate'   // Ctrl+D
   | 'delete'      // Ctrl+Delete — the row is about to go; move the cursor off it
   | 'move-up' | 'move-down' // Alt+Up / Alt+Down
 
 const NO_NAMES: readonly string[] = []
+
+/**
+ * Whether ← / → should go to the next field rather than move the cursor in
+ * this one: the cell was just arrived in (its whole value selected, as Enter
+ * and the arrows leave it) or is empty, or the cursor is already at that end
+ * of the text. Inside the text the arrows move the cursor as always.
+ */
+export function arrowLeavesCell(el: HTMLInputElement | HTMLTextAreaElement, left: boolean): boolean {
+  const len = el.value.length
+  const start = el.selectionStart ?? 0
+  const end = el.selectionEnd ?? len
+  if (start === 0 && end === len) return true
+  return left ? start === 0 && end === 0 : start === len && end === len
+}
 
 export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, onKey, onPasteBlock, suggestions = NO_NAMES, lastWeek, loadHint, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
   const toast = useToast()
@@ -331,6 +346,12 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
       if (!onEdgeLine) return
       e.preventDefault()
       onKey(up ? 'up' : 'down', col.key)
+      return
+    }
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && plain && !e.shiftKey) {
+      if (!arrowLeavesCell(el, e.key === 'ArrowLeft')) return
+      e.preventDefault()
+      onKey(e.key === 'ArrowLeft' ? 'left' : 'right', col.key)
     }
   }
 

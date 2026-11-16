@@ -4,6 +4,7 @@ import { type ColDef, type Exercise, type Workout, DAY_LABELS, exerciseValue } f
 import { buildBlockRows, weekdayCounts, type BlockRow } from '../../lib/blockLayout'
 import { failedEditKeyForColumn } from '../../lib/failedEdits'
 import { useToast } from '../ui/toast'
+import { arrowLeavesCell } from './ExerciseRow'
 
 // ---------------------------------------------------------------------------
 // The block view (1E): one weekday, exercises down the side, every week across
@@ -25,7 +26,7 @@ const WIDTH: Partial<Record<ColDef['key'], number>> = {
 const LONG_DAY = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
 type Patch = Partial<Pick<Exercise, 'sets' | 'reps' | 'weight' | 'rest_time' | 'intensity' | 'load_used' | 'rpe' | 'notes'>>
-type Move = 'next' | 'up' | 'down'
+type Move = 'next' | 'up' | 'down' | 'left' | 'right'
 
 interface BlockViewProps {
   workoutByDate: Map<string, Workout>
@@ -84,6 +85,17 @@ export default function BlockView({
     const n = columns.length
     if (dir === 'up') { if (r > 0) focus(`${r - 1}:${w}:${c}`); return }
     if (dir === 'down') { focus(r + 1 < rows.length ? `${r + 1}:${w}:${c}` : 'new'); return }
+    // Sideways along the row, across the week boundaries; never onto another row.
+    if (dir === 'left') {
+      if (c > 0) focus(`${r}:${w}:${c - 1}`)
+      else if (w > 0) focus(`${r}:${w - 1}:${n - 1}`)
+      return
+    }
+    if (dir === 'right') {
+      if (c + 1 < n) focus(`${r}:${w}:${c + 1}`)
+      else if (w + 1 < weeks) focus(`${r}:${w + 1}:0`)
+      return
+    }
     if (c + 1 < n) focus(`${r}:${w}:${c + 1}`)
     else if (w + 1 < weeks) focus(`${r}:${w + 1}:0`)
     else focus(r + 1 < rows.length ? `${r + 1}:0:0` : 'new')
@@ -306,6 +318,10 @@ function BlockCell({ id, col, value, label, missing, unsaved, onFocus, onCommit,
         if (e.key === 'Enter') { e.preventDefault(); onMove('next') }
         else if (e.key === 'ArrowUp') { e.preventDefault(); onMove('up') }
         else if (e.key === 'ArrowDown') { e.preventDefault(); onMove('down') }
+        else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && arrowLeavesCell(e.currentTarget, e.key === 'ArrowLeft')) {
+          e.preventDefault()
+          onMove(e.key === 'ArrowLeft' ? 'left' : 'right')
+        }
         else if (e.key === 'Escape') { e.currentTarget.blur() }
       }}
       className={`num w-full bg-transparent px-1.5 py-1 text-[12.5px] outline-none placeholder:text-muted-foreground/30 focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary ${

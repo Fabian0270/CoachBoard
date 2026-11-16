@@ -162,6 +162,19 @@ describe('Block view', () => {
     expect(document.activeElement).toBe(cell('Bench, week 2, Sets'))
   })
 
+  it('Left and Right walk the row, across from one week into the next', async () => {
+    fakeProgram()
+    await open()
+    await userEvent.click(cell('Squat, week 1, Load Cap'))
+    ;(document.activeElement as HTMLInputElement).select()
+    await userEvent.keyboard('{ArrowRight}')
+    expect(document.activeElement).toBe(cell('Squat, week 2, Sets'))
+    await userEvent.keyboard('{ArrowLeft}')
+    expect(document.activeElement).toBe(cell('Squat, week 1, Load Cap'))
+    await userEvent.keyboard('{ArrowLeft}')
+    expect(document.activeElement).toBe(cell('Squat, week 1, Intensity/Weight'))
+  })
+
   it('typing into a week without the exercise creates it there, once, in its place', async () => {
     const { state, calls, hold } = fakeProgram()
     await open()
