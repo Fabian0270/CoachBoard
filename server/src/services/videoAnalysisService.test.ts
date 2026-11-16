@@ -176,6 +176,14 @@ describe('updateAnalysisContext', () => {
     expect(back?.track).toEqual(saved.track)
   })
 
+  it("keeps the coach's note on the set, and clears it when blanked (BP23)", async () => {
+    const { updateAnalysisContext } = await import('./videoAnalysisService.js')
+    const saved = await saveAnalysis(input())
+    expect((await updateAnalysisContext(saved.id, { notes: '  Drive the hips through  ' }))?.notes).toBe('Drive the hips through')
+    expect((await getAnalysis(saved.id))?.notes).toBe('Drive the hips through')
+    expect((await updateAnalysisContext(saved.id, { notes: '   ' }))?.notes).toBeNull()
+  })
+
   it('reports a miss', async () => {
     const { updateAnalysisContext } = await import('./videoAnalysisService.js')
     expect(await updateAnalysisContext('does-not-exist', { loadKg: 100 })).toBeNull()

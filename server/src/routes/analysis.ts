@@ -341,6 +341,8 @@ const contextSchema = z
       .nullable()
       .optional(),
     metric: z.enum(['mean', 'peak', 'propulsive']).nullable().optional(),
+    // The coach's note on the set (BP23), the cue they would give the athlete.
+    notes: z.string().max(2000).nullable().optional(),
     // The set's reps after one was struck off on the saved page (BP4), or put
     // back by Undo. Shaped as on save; each needs its index, which the rep
     // table, the strike and the Undo all key on.

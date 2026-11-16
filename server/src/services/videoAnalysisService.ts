@@ -195,6 +195,8 @@ export async function updateAnalysisContext(
     metric?: string | null
     /** The set's reps, after one was struck off (or put back). */
     metrics?: Record<string, unknown>[]
+    /** The coach's note on the set. Blank is stored as null. */
+    notes?: string | null
   },
 ): Promise<VideoAnalysisDto | null> {
   const res = await getDb()
@@ -206,6 +208,7 @@ export async function updateAnalysisContext(
       ...(change.calledRpe !== undefined ? { called_rpe: change.calledRpe } : {}),
       ...(change.metric !== undefined ? { metric: change.metric } : {}),
       ...(change.metrics !== undefined ? { metrics: JSON.stringify(change.metrics) } : {}),
+      ...(change.notes !== undefined ? { notes: change.notes?.trim() || null } : {}),
       updated_at: new Date().toISOString(),
     })
     .where('id', '=', id)

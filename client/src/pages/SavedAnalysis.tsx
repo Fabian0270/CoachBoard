@@ -216,7 +216,7 @@ export default function SavedAnalysis() {
   const [editing, setEditing] = useState(false)
   const [savingContext, setSavingContext] = useState(false)
   const startEditing = () => setEditing(true)
-  const saveContext = async (change: { lift: string | null; loadKg: number | null; calledRpe: number | null }) => {
+  const saveContext = async (change: { lift: string | null; loadKg: number | null; calledRpe: number | null; notes: string | null }) => {
     if (!analysis) return
     setSavingContext(true)
     try {
@@ -334,6 +334,13 @@ export default function SavedAnalysis() {
           </Button>
         )}
       </div>
+
+      {/* The coach's note on the set (BP23); changed under "Edit set". */}
+      {analysis.notes && (
+        <p className="max-w-3xl whitespace-pre-wrap rounded-md border-l-2 border-primary/60 bg-primary/5 px-3 py-2 text-sm">
+          {analysis.notes}
+        </p>
+      )}
 
       {/* The path is always available; the video is a bonus when the coach still
           has the file. Nothing was stored to make this work. */}
@@ -454,7 +461,7 @@ export default function SavedAnalysis() {
           </div>
           {editing ? (
             <SetContextEditor
-              initial={{ lift: analysis.lift, loadKg: analysis.loadKg, calledRpe: analysis.calledRpe }}
+              initial={{ lift: analysis.lift, loadKg: analysis.loadKg, calledRpe: analysis.calledRpe, notes: analysis.notes }}
               saving={savingContext}
               onCancel={() => setEditing(false)}
               onSave={saveContext}
@@ -500,12 +507,13 @@ function SetContextEditor({
   onCancel,
   onSave,
 }: {
-  initial: { lift: string | null; loadKg: number | null; calledRpe: number | null }
+  initial: { lift: string | null; loadKg: number | null; calledRpe: number | null; notes: string | null }
   saving: boolean
   onCancel: () => void
-  onSave: (change: { lift: string | null; loadKg: number | null; calledRpe: number | null }) => void
+  onSave: (change: { lift: string | null; loadKg: number | null; calledRpe: number | null; notes: string | null }) => void
 }) {
   const [lift, setLift] = useState(initial.lift ?? '')
+  const [note, setNote] = useState(initial.notes ?? '')
   const [loadText, setLoadText] = useState(initial.loadKg != null ? String(initial.loadKg) : '')
   const [rpe, setRpe] = useState(initial.calledRpe != null ? String(initial.calledRpe) : '')
   const parsedLoad = loadText.trim() ? num(loadText) : null
@@ -540,13 +548,23 @@ function SetContextEditor({
           ))}
         </select>
       </label>
+      <label className="block space-y-1">
+        <span className="text-muted-foreground">Note on this set</span>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          maxLength={2000}
+          className="w-full rounded-md border bg-background px-2 py-1 text-sm"
+        />
+      </label>
       {!loadValid && <p className="text-xs text-destructive">Load must be a number of kilograms up to 1000.</p>}
       <div className="flex justify-end gap-2 pt-1">
         <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
         <Button
           size="sm"
           disabled={saving || !loadValid}
-          onClick={() => onSave({ lift: lift || null, loadKg: parsedLoad, calledRpe: rpe ? Number(rpe) : null })}
+          onClick={() => onSave({ lift: lift || null, loadKg: parsedLoad, calledRpe: rpe ? Number(rpe) : null, notes: note.trim() || null })}
         >
           Save
         </Button>

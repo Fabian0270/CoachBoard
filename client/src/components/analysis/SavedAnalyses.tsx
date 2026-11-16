@@ -44,6 +44,10 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
   const confirm = useConfirm()
   const [rows, setRows] = useState<VideoAnalysisDto[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  // The list stopped at `limit` with no way to see the rest (BP20).
+  const [showAll, setShowAll] = useState(false)
+  const [athleteFilter, setAthleteFilter] = useState('')
+  const [liftFilter, setLiftFilter] = useState('')
 
   const load = useCallback(() => {
     // withTrack=0: a path is up to 20 000 points and none of it is shown here.
@@ -99,9 +103,38 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
     )
   }
 
+  // Filters offer only what is in the list.
+  const athleteOptions = [...new Map(rows.filter((r) => r.athleteId).map((r) => [r.athleteId!, r.athleteName ?? 'Unnamed'])).entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]))
+  const liftOptions = [...new Set(rows.map((r) => r.lift).filter(isVbtLift))]
+  const filtered = rows.filter((r) =>
+    (!athleteFilter || (athleteFilter === 'none' ? !r.athleteId : r.athleteId === athleteFilter)) &&
+    (!liftFilter || r.lift === liftFilter))
+  const shown = showAll ? filtered : filtered.slice(0, limit)
+  const selectCls = 'rounded-md border bg-background px-2 py-1 text-xs'
+
   return (
+    <div className="space-y-2">
+      {(rows.length > limit || athleteOptions.length > 1 || liftOptions.length > 1) && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {!athleteId && (
+            <select aria-label="Filter by athlete" value={athleteFilter} onChange={(e) => setAthleteFilter(e.target.value)} className={selectCls}>
+              <option value="">All athletes</option>
+              {athleteOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              {rows.some((r) => !r.athleteId) && <option value="none">Unassigned</option>}
+            </select>
+          )}
+          <select aria-label="Filter by lift" value={liftFilter} onChange={(e) => setLiftFilter(e.target.value)} className={selectCls}>
+            <option value="">All lifts</option>
+            {liftOptions.map((l) => <option key={l} value={l}>{liftLabel(l)}</option>)}
+          </select>
+          <span className="text-muted-foreground">
+            {shown.length} of {filtered.length}{filtered.length !== rows.length ? ` (${rows.length} in all)` : ''}
+          </span>
+        </div>
+      )}
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[38rem] text-sm">
+      <table className="w-full min-w-[38rem] text-sm" aria-label="Saved analyses">
         <thead>
           <tr className="border-b text-left text-muted-foreground">
             <th className="py-1 pr-4 font-medium">Date</th>
@@ -110,11 +143,15 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
             <th className="py-1 pr-4 font-medium">Load</th>
             <th className="py-1 pr-4 font-medium">Reps</th>
             <th className="py-1 pr-4 font-medium">Last rep</th>
+            <th className="py-1 pr-4 font-medium">Note</th>
             <th className="py-1 font-medium"></th>
           </tr>
         </thead>
         <tbody>
-          {rows.slice(0, limit).map((row) => {
+          {shown.length === 0 && (
+            <tr><td colSpan={8} className="py-3 text-muted-foreground">Nothing matches those filters.</td></tr>
+          )}
+          {shown.map((row) => {
             const metrics = row.metrics ?? []
             // Read with the metric the set was saved with, so this list, the
             // saved view and the live panel never show one set three ways.
@@ -138,6 +175,7 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
                 <td className="py-1 pr-4">{row.loadKg != null ? `${row.loadKg} kg` : '—'}</td>
                 <td className="py-1 pr-4">{metrics.length || '—'}</td>
                 <td className="py-1 pr-4">{last != null ? `${last.toFixed(2)} m/s` : '—'}</td>
+                <td className="max-w-[16rem] truncate py-1 pr-4 text-muted-foreground" title={row.notes ?? undefined}>{row.notes ?? ''}</td>
                 <td className="py-1">
                   <div className="flex items-center justify-end gap-1">
                     {/* Every row opens: the saved view rebuilds the path from
@@ -183,6 +221,12 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
           })}
         </tbody>
       </table>
+    </div>
+      {filtered.length > limit && (
+        <button type="button" onClick={() => setShowAll((v) => !v)} className="text-xs font-medium text-muted-foreground hover:text-foreground">
+          {showAll ? 'Show fewer' : `Show all ${filtered.length}`}
+        </button>
+      )}
     </div>
   )
 }

@@ -198,6 +198,8 @@ export default function VideoAnalysis() {
   const [athleteChoice, setAthleteChoice] = useState<string | null>(null)
   const [roster, setRoster] = useState<{ id: string; name: string; height_cm: number | null }[]>([])
   const [savedCount, setSavedCount] = useState(0)
+  /** The coach's note on the set (BP23): the cue they would give, kept with the analysis. */
+  const [note, setNote] = useState('')
   /** What the set was — the lift and load every velocity readout is judged against. */
   const [setContext, setSetContext] = useState<SetContextState>({
     lift: rememberedLift(),
@@ -439,6 +441,7 @@ export default function VideoAnalysis() {
       loadKg,
       calledRpe: setContext.calledRpe,
       metric: reps.length > 0 ? metric : null,
+      notes: note.trim() || null,
     })
 
   const toggleRep = (index: number) =>
@@ -708,7 +711,7 @@ export default function VideoAnalysis() {
         track: samples,
         calibration: calibration ? { ...calibration, plateDiameterMm: plateMm } : null,
         metrics: reps,
-        notes: null,
+        notes: note.trim() || null,
         // Only when the velocity panel was actually on screen. With no reps
         // detected it is hidden, and storing the lift it happens to remember
         // would be recording a guess the coach never saw.
@@ -849,6 +852,7 @@ export default function VideoAnalysis() {
     setSource(null)
     setNotFound(false)
     setLinkError(null)
+    setNote('')
     if (mediaId) navigate('/analysis', { replace: true })
   }
 
@@ -1228,6 +1232,23 @@ export default function VideoAnalysis() {
               pathPoints={samples ? samples.length : null}
             />
 
+            {/* The coach's cue for the set (BP23). Kept with the analysis and
+                shown on the saved page and in the lists. Changing it after
+                saving offers "Update saved set", like the lift and load. */}
+            {samples && (
+              <label className="block space-y-1 text-sm">
+                <span className="text-muted-foreground">Note on this set</span>
+                <textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={2}
+                  maxLength={2000}
+                  placeholder="The cue for the athlete, e.g. drive the hips through, keep the bar over mid-foot"
+                  className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                />
+              </label>
+            )}
+
             {/* Asked, never assumed: an analysis is only stored if the coach
                 says so, so a throwaway look at a clip leaves nothing behind. */}
             {offerSave && samples && (
@@ -1290,7 +1311,7 @@ export default function VideoAnalysis() {
             {savedId &&
               (savedContext !== null && savedContext !== contextNow() ? (
                 <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-sm">
-                  <span>The lift, load, RPE or athlete changed since you saved.</span>
+                  <span>The lift, load, RPE, athlete or note changed since you saved.</span>
                   <Button size="sm" variant="outline" onClick={updateSavedContext} disabled={updatingSaved}>
                     {updatingSaved ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                     Update saved set

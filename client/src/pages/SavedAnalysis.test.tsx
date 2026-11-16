@@ -93,6 +93,27 @@ describe('Saved bar path set', () => {
     expect(await screen.findByRole('table', { name: 'Reps' })).toBeTruthy()
   })
 
+  it("shows the coach's note, and Edit set changes it (BP23)", async () => {
+    const bodies: Record<string, unknown>[] = []
+    serve(routes({
+      'GET /api/analysis/s1': { body: { ...analysis, notes: 'Drive the hips through' } },
+      'PATCH /api/analysis/s1': (_u: URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        bodies.push(body)
+        return { body: { ...analysis, notes: body.notes } }
+      },
+    }) as never)
+    open()
+    expect(await screen.findByText('Drive the hips through')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: /Edit set/ }))
+    const box = screen.getByRole('textbox', { name: 'Note on this set' })
+    await userEvent.clear(box)
+    await userEvent.type(box, 'Keep the chest up')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('Keep the chest up')).toBeTruthy()
+    expect(bodies[0]).toMatchObject({ notes: 'Keep the chest up', lift: 'back-squat', loadKg: 180 })
+  })
+
   it('only a missing analysis says it no longer exists', async () => {
     serve(routes({ 'GET /api/analysis/s1': { status: 404, body: { error: 'Analysis not found' } } }) as never)
     open()
