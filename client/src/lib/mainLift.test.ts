@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mainLiftKey, bestStoredMax } from 'coachboard-shared/vbt'
+import { competitionLiftKey, mainLiftKey, bestStoredMax } from 'coachboard-shared/vbt'
 
 // The server grouped exercises into squat / bench / deadlift by substring, so
 // variations were counted as the competition lift in drafts, reports and the
@@ -20,6 +20,25 @@ describe('mainLiftKey', () => {
     'Dumbbell Bench', 'Bench Pull', 'Sumo Squat', 'Leg Press', 'Barbell Row',
   ])('%s is not a competition lift', (name) => {
     expect(mainLiftKey(name)).toBeNull()
+  })
+})
+
+// The e1RM and volume numbers count the competition lifts only (D43, D47).
+describe('competitionLiftKey', () => {
+  it.each([
+    ['Squat', 'squat'], ['Back Squat', 'squat'], ['Competition Squat', 'squat'], ['Comp Squat', 'squat'], ['Knäböj', 'squat'],
+    ['Bench', 'bench'], ['Bench Press', 'bench'], ['Competition Bench', 'bench'], ['Bänkpress', 'bench'],
+    ['Deadlift', 'deadlift'], ['Sumo Deadlift', 'deadlift'], ['Conventional Deadlift', 'deadlift'], ['Marklyft', 'deadlift'],
+    ['  squat ', 'squat'],
+  ])('%s is %s', (name, key) => {
+    expect(competitionLiftKey(name)).toBe(key)
+  })
+
+  it.each([
+    'Pause Squat', 'Tempo Squat', 'Low Bar Squat', 'Front Squat', 'Paused Bench', 'Close Grip Bench',
+    'Larsen Press', 'Romanian Deadlift', 'Deficit Deadlift', 'Pause Deadlift', 'Rows',
+  ])('%s is a variation, not the competition lift', (name) => {
+    expect(competitionLiftKey(name)).toBeNull()
   })
 })
 

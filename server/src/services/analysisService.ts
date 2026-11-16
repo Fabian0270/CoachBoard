@@ -1,7 +1,7 @@
 import { getDb } from '../db.js'
 import { findProgramForExport } from './programService.js'
 import { estimate1RM } from 'coachboard-shared/rpe'
-import { mainLiftKey } from 'coachboard-shared/vbt'
+import { competitionLiftKey } from 'coachboard-shared/vbt'
 import type {
   E1RMDataPoint,
   LiftE1RMTrend,
@@ -10,8 +10,8 @@ import type {
   AthleteMax,
 } from 'coachboard-shared'
 
-// Grouping by competition lift uses the shared matcher: a bare substring test put
-// Front, Pin and Box Squat into the squat e1RM trend. See mainLiftKey.
+// Only the competition lifts feed the e1RM (D47): a pause or tempo squat is a
+// variation, not the squat. See competitionLiftKey.
 
 function mondayOf(date: Date): Date {
   const d = new Date(date)
@@ -86,7 +86,7 @@ export function computeE1RMTrends(
   for (const ex of exercises) {
     if (!ex.load_used || !ex.rpe || !ex.reps) continue
 
-    const keyword = mainLiftKey(ex.name)
+    const keyword = competitionLiftKey(ex.name)
     if (!keyword) continue
 
     const repsMatch = ex.reps.match(/\d+/)

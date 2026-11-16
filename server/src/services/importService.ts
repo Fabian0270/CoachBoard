@@ -3,7 +3,7 @@ import { DEFAULT_ENABLED_COLUMNS } from 'coachboard-shared'
 import { sheetNameIs } from 'coachboard-shared/exportLayout'
 import type { ImportMatch, ImportWarning, ImportPreview, E1RMEstimate } from 'coachboard-shared'
 import { estimate1RM } from 'coachboard-shared/rpe'
-import { mainLiftKey } from 'coachboard-shared/vbt'
+import { competitionLiftKey } from 'coachboard-shared/vbt'
 import {
   DAY_NAMES,
   MINIMAL_DESCRIPTOR,
@@ -390,9 +390,9 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
   for (const m of matched) {
     if (!m.load_used || !m.rpe) continue
 
-    // The shared matcher, so a Romanian deadlift or a front squat cannot stand
-    // in for the competition lift's estimate. See mainLiftKey.
-    const keyword = mainLiftKey(m.exerciseName)
+    // Only the competition lifts give an estimate (D47): a pause squat or a
+    // Romanian deadlift cannot stand in for one. See competitionLiftKey.
+    const keyword = competitionLiftKey(m.exerciseName)
     if (!keyword) continue
 
     const ex = exerciseMap.get(m.exerciseId)

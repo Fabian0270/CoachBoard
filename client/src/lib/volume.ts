@@ -1,3 +1,4 @@
+import { competitionLiftKey } from 'coachboard-shared/vbt'
 import { dayLoadHints, type StoredMax } from './loadHint'
 import type { Workout } from './programUtils'
 
@@ -22,19 +23,9 @@ export type VolumeLift = 'squat' | 'bench' | 'deadlift' | 'other'
 export const VOLUME_LIFTS: VolumeLift[] = ['squat', 'bench', 'deadlift', 'other']
 export const VOLUME_LABELS: Record<VolumeLift, string> = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift', other: 'Other' }
 
-/** The competition lifts, by exact name (English and Swedish). */
-const BIG_THREE: Record<Exclude<VolumeLift, 'other'>, string[]> = {
-  squat: ['squat', 'competition squat', 'knäböj', 'tävlingsknäböj'],
-  bench: ['bench', 'bench press', 'competition bench', 'competition bench press', 'bänk', 'bänkpress', 'tävlingsbänk', 'tävlingsbänkpress'],
-  deadlift: ['deadlift', 'sumo deadlift', 'competition deadlift', 'marklyft', 'sumomarklyft', 'sumo marklyft', 'tävlingsmarklyft'],
-}
-
+/** Squat, Bench, Deadlift by exact competition-lift name (D43, D47); everything else is Other. */
 export function volumeLift(name: string): VolumeLift {
-  const n = name.trim().toLowerCase().replace(/\s+/g, ' ')
-  for (const lift of ['squat', 'bench', 'deadlift'] as const) {
-    if (BIG_THREE[lift].includes(n)) return lift
-  }
-  return 'other'
+  return competitionLiftKey(name) ?? 'other'
 }
 
 export interface VolumeCell {
