@@ -100,6 +100,14 @@ jobs:
           # Force an unsigned build until an Apple Developer ID cert is wired in.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
+      # Launch what was just built, with an empty data folder, and check it
+      # starts, opens its database, answers its API and serves the client. Both
+      # packaging bugs so far were invisible to typecheck, tests and CI and only
+      # showed up by running the app; this stops such a build here, before its
+      # installer is uploaded or reaches the auto-updater. See the script.
+      - name: Smoke-test the packaged app
+        run: node scripts/smoke-test.mjs dist-electron/mac-arm64/CoachBoard.app/Contents/MacOS/CoachBoard
+
       # The .zip and latest-mac.yml are the auto-update payload and manifest;
       # electron-updater reads the manifest from the release, so a release with
       # only the .dmg attached looks complete but can never serve an update.
@@ -132,6 +140,14 @@ jobs:
       # unsigned NSIS installer until a Windows cert is configured.
       - name: Package Windows build
         run: npm run package
+
+      # Launch what was just built, with an empty data folder, and check it
+      # starts, opens its database, answers its API and serves the client. Both
+      # packaging bugs so far were invisible to typecheck, tests and CI and only
+      # showed up by running the app; this stops such a build here, before its
+      # installer is uploaded or reaches the auto-updater. See the script.
+      - name: Smoke-test the packaged app
+        run: node scripts/smoke-test.mjs dist-electron/win-unpacked/CoachBoard.exe
 
       # latest.yml is what the installed app polls to discover a new version.
       - name: Upload Windows artifact
