@@ -7,7 +7,7 @@ import PageHeader from '../components/PageHeader'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Plus, CopyPlus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus, Star, Search } from 'lucide-react'
+import { Plus, CopyPlus, Dumbbell, MoreHorizontal, Check, Pencil, X, UserPlus, Star, Search } from 'lucide-react'
 import { Input } from '../components/ui/input'
 import { matchesSearch } from '../lib/search'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog'
@@ -15,6 +15,7 @@ import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgr
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
 import BookmarkStar from '../components/BookmarkStar'
 import DuplicateProgramDialog from '../components/DuplicateProgramDialog'
+import NewProgramChooser from '../components/NewProgramChooser'
 import { cn } from '../lib/utils'
 
 interface Athlete { id: string; name: string }
@@ -69,7 +70,6 @@ export default function ProgramComparison() {
   const [assignTo, setAssignTo] = useState<string>('')
   const [savingAssign, setSavingAssign] = useState(false)
   const menuRef = useRef<HTMLLIElement>(null)
-  const newMenuRef = useRef<HTMLDivElement>(null)
 
   const loadData = useCallback(async () => {
     setLoadError(null)
@@ -107,12 +107,6 @@ export default function ProgramComparison() {
     return () => document.removeEventListener('click', close)
   }, [menuOpen])
 
-  useEffect(() => {
-    if (!newMenuOpen) return
-    const close = () => setNewMenuOpen(false)
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [newMenuOpen])
 
   const handleAssign = async () => {
     if (!assigning || !assignTo) return
@@ -242,30 +236,9 @@ export default function ProgramComparison() {
         description={programs.length > 0 ? `${programs.length} program${programs.length === 1 ? '' : 's'}` : undefined}
         actions={
         <>
-          <Button variant="outline" onClick={() => setImportOpen(true)}>
-            <FileUp className="h-4 w-4 mr-2" />Import programs
+          <Button onClick={() => setNewMenuOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />New program
           </Button>
-          <div className="relative" ref={newMenuRef}>
-            <Button onClick={(e) => { e.stopPropagation(); setNewMenuOpen((v) => !v) }}>
-              <Plus className="h-4 w-4 mr-2" />New Program<ChevronDown className="h-4 w-4 ml-2" />
-            </Button>
-            {newMenuOpen && (
-              <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-lg border bg-popover py-1 shadow-xl shadow-black/20" onClick={(e) => e.stopPropagation()}>
-                <Link to="/programs/new" onClick={() => setNewMenuOpen(false)}>
-                  <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent">
-                    <Plus className="h-4 w-4" />New program
-                  </button>
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => { setNewMenuOpen(false); setSuggestOpen(true) }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-                >
-                  <Sparkles className="h-4 w-4" />Generate next program
-                </button>
-              </div>
-            )}
-          </div>
         </>
         }
       />
@@ -487,6 +460,12 @@ export default function ProgramComparison() {
         open={suggestOpen}
         onOpenChange={setSuggestOpen}
         onCreated={(draftId) => navigate(`/programs/${draftId}`)}
+      />
+      <NewProgramChooser
+        open={newMenuOpen}
+        onOpenChange={setNewMenuOpen}
+        onGenerate={() => setSuggestOpen(true)}
+        onImport={() => setImportOpen(true)}
       />
       <DuplicateProgramDialog
         program={duplicating}

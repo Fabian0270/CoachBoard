@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -22,7 +22,7 @@ import {
 import { WEIGHT_CLASSES, isPowerlifting } from 'coachboard-shared'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
 import type { DiscordUserItem } from 'coachboard-shared/discord'
-import { Plus, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
+import { Plus, Trash2, Pencil } from 'lucide-react'
 import { cn, initials } from '../lib/utils'
 import { BackLink } from '../components/PageHeader'
 
@@ -37,6 +37,7 @@ function InfoField({ label, mono, className, children }: { label: string; mono?:
 }
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
+import NewProgramChooser from '../components/NewProgramChooser'
 import LoadError from '../components/LoadError'
 import { ApiError, errorMessage, getJson, getList } from '../lib/api'
 
@@ -78,7 +79,6 @@ export default function AthleteDetail() {
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
-  const newMenuRef = useRef<HTMLDivElement>(null)
 
   // Any failure used to read as "Athlete not found — they may have been
   // deleted" (or a page stuck on Loading), and a failed program list as "No
@@ -114,12 +114,6 @@ export default function AthleteDetail() {
     return () => { cancelled = true }
   }, [id, attempt])
 
-  useEffect(() => {
-    if (!newMenuOpen) return
-    const close = () => setNewMenuOpen(false)
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [newMenuOpen])
 
   // Linked Discord account(s) for this athlete — shown read-only in Info.
   useEffect(() => {
@@ -342,34 +336,18 @@ export default function AthleteDetail() {
         <TabsContent value="programs">
           <SlideIn>
           <div className="space-y-3">
-            <div className="relative inline-block" ref={newMenuRef}>
-              <Button size="sm" onClick={(e) => { e.stopPropagation(); setNewMenuOpen((v) => !v) }}>
-                <Plus className="h-4 w-4 mr-2" />New Program<ChevronDown className="h-4 w-4 ml-2" />
-              </Button>
-              {newMenuOpen && (
-                <div className="absolute left-0 top-full mt-1 z-20 min-w-[200px] rounded-lg border bg-popover py-1 shadow-xl shadow-black/20" onClick={(e) => e.stopPropagation()}>
-                  <Link to={`/programs/new?athlete_id=${id}`} onClick={() => setNewMenuOpen(false)}>
-                    <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent">
-                      <Plus className="h-4 w-4" />New program
-                    </button>
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={() => { setNewMenuOpen(false); setSuggestOpen(true) }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-                  >
-                    <Sparkles className="h-4 w-4" />Generate next program
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setNewMenuOpen(false); setImportOpen(true) }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-                  >
-                    <FileUp className="h-4 w-4" />Import program
-                  </button>
-                </div>
-              )}
-            </div>
+            <Button size="sm" onClick={() => setNewMenuOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />New program
+            </Button>
+            {id && (
+              <NewProgramChooser
+                open={newMenuOpen}
+                onOpenChange={setNewMenuOpen}
+                athleteId={id}
+                onGenerate={() => setSuggestOpen(true)}
+                onImport={() => setImportOpen(true)}
+              />
+            )}
             {programsError ? (
               <LoadError what="this athlete's programs" message={programsError} onRetry={() => { if (id) void loadPrograms(id) }} />
             ) : programs.length === 0 ? (

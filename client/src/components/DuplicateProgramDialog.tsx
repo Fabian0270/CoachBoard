@@ -19,10 +19,13 @@ export default function DuplicateProgramDialog({
   program,
   open,
   onOpenChange,
+  defaultAthleteId,
 }: {
   program: { id: string; name: string; athlete_id: string | null } | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Who the copy is for, when known (starting a program from an athlete's page). */
+  defaultAthleteId?: string
 }) {
   const navigate = useNavigate()
   const toast = useToast()
@@ -32,11 +35,11 @@ export default function DuplicateProgramDialog({
 
   useEffect(() => {
     if (!open || !program) return
-    setForm({ athlete: program.athlete_id ?? TEMPLATE, name: `${program.name} (copy)`, start: nextMonday(), keepResults: false, scaleLoads: true })
+    setForm({ athlete: defaultAthleteId ?? program.athlete_id ?? TEMPLATE, name: `${program.name} (copy)`, start: nextMonday(), keepResults: false, scaleLoads: true })
     getList<{ id: string; name: string }>('/api/athletes')
       .then(setAthletes)
       .catch((err) => toast.error(`Could not load your athletes. ${errorMessage(err)}`))
-  }, [open, program, toast])
+  }, [open, program, toast, defaultAthleteId])
 
   if (!program) return null
   const toAthlete = form.athlete === TEMPLATE ? null : form.athlete
