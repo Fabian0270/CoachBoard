@@ -83,7 +83,8 @@ function VolumeCard({ program, maxes }: { program: Program; maxes: ProgramReport
       </td>
       <td className={`num py-1.5 pr-3 ${strong ? 'font-semibold' : ''}`}>
         {c.plannedKg > 0 || c.doneKg > 0 ? (
-          <>{kg(c.doneKg)} <span className="text-muted-foreground">/ {c.estimated ? '≈' : ''}{kg(c.plannedKg)}</span></>
+          // A planned 0 means no planned load was known, not that none was planned.
+          <>{kg(c.doneKg)} <span className="text-muted-foreground">/ {c.plannedKg > 0 ? `${c.estimated ? '≈' : ''}${kg(c.plannedKg)}` : '—'}</span></>
         ) : <span className="text-muted-foreground">—</span>}
       </td>
     </>

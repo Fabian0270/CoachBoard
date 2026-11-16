@@ -23,6 +23,8 @@ const program = {
     ] },
     { id: 'w2', program_id: 'p1', name: '', scheduled_date: '2026-06-22', completed_at: null, notes: null, created_at: '', exercises: [
       ex('d', { weight: 155 }),
+      // Logged, but with no Load Cap and nothing to suggest one from.
+      ex('e', { name: 'Pull-ups', sets: '3', reps: '8', load_used: '10', rpe: '8', order_index: 1 }),
     ] },
   ],
 }
@@ -43,8 +45,9 @@ describe('Program report — volume', () => {
     expect(rows).toEqual([
       // Week 1: 3×5×150 done; the back-off is 2×5×135 (≈, 90% of the 150 above). Pause squat: 2×3×100.
       ['Wk 1', '3 / 5', '2,250 / ≈3,600', '0 / 2', '0 / 600'],
-      ['Wk 2', '0 / 3', '0 / 2,325', '0 / 0', '—'],
-      ['Block', '3 / 8', '2,250 / ≈5,925', '0 / 2', '0 / 600'],
+      // Pull-ups: done 3×8×10, but no planned load known — not "planned 0".
+      ['Wk 2', '0 / 3', '0 / 2,325', '3 / 3', '240 / —'],
+      ['Block', '3 / 8', '2,250 / ≈5,925', '3 / 5', '240 / 600'],
     ])
     expect(screen.getByText(/≈ includes suggested loads/)).toBeTruthy()
   })
