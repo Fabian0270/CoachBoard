@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useToast } from '../components/ui/toast'
 import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
 import AthleteMaxes from '../components/AthleteMaxes'
+import AthleteProgress from '../components/AthleteProgress'
 import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import PaymentsSection from '../components/PaymentsSection'
 import AthleteMediaSection from '../components/discord/AthleteMediaSection'
@@ -239,6 +240,7 @@ export default function AthleteDetail() {
         <TabsList className="flex-wrap">
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="programs">Programs ({programs.length})</TabsTrigger>
+          <TabsTrigger value="progress">Progress</TabsTrigger>
           <TabsTrigger value="maxes">Maxes &amp; RPE</TabsTrigger>
           <TabsTrigger value="barpath">Bar path</TabsTrigger>
           {discordConfigured && <TabsTrigger value="videos">Videos</TabsTrigger>}
@@ -382,6 +384,9 @@ export default function AthleteDetail() {
             )}
           </div>
           </SlideIn>
+        </TabsContent>
+        <TabsContent value="progress">
+          <SlideIn>{id && <AthleteProgress athleteId={id} />}</SlideIn>
         </TabsContent>
         <TabsContent value="maxes">
           <SlideIn>{id && <AthleteMaxes athleteId={id} />}</SlideIn>

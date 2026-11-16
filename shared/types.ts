@@ -375,6 +375,37 @@ export interface RPEDeviationRow {
   delta: number | null
 }
 
+/** An athlete's progress across every block (I1). */
+export interface AthleteProgress {
+  /** e1RM of each competition lift, the best set of each week, oldest first. */
+  e1rm: { liftKey: 'squat' | 'bench' | 'deadlift'; displayName: string; points: ProgressE1RMPoint[] }[]
+  /** Recorded maxes that beat every earlier one for their lift, newest first. */
+  prs: ProgressPR[]
+}
+
+export interface ProgressE1RMPoint {
+  /** Monday of the week (YYYY-MM-DD). */
+  week: string
+  /** The day the set was trained. */
+  date: string
+  e1rm: number
+  weight: number
+  reps: number
+  rpe: number
+  exerciseName: string
+  programId: string
+  programName: string
+}
+
+export interface ProgressPR {
+  liftName: string
+  weight: number
+  unit: string
+  date: string
+  /** The best before it, or null for the first one recorded. */
+  previous: number | null
+}
+
 /** One line of the dashboard's "needs attention" list (I2). */
 export interface AttentionItem {
   /** block-ending: ends within a week with no next program. no-results: a training day a week or more ago has nothing logged. no-program: no active program. */

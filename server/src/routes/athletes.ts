@@ -12,6 +12,7 @@ import {
   deleteAthleteMax,
 } from '../services/athleteService.js'
 import { getAthleteMvts, setAthleteMvt } from '../services/athleteMvtService.js'
+import { getAthleteProgress } from '../services/athleteProgressService.js'
 import { fail } from '../lib/httpError.js'
 
 const router = Router()
@@ -103,6 +104,17 @@ router.put('/:id/mvt', async (req: Request, res: Response): Promise<void> => {
   } catch (err) {
     // A rejected value is the coach's typo, not a server fault.
     res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid velocity' })
+  }
+})
+
+// e1RM across every block and the PR timeline (I1).
+router.get('/:id/progress', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const progress = await getAthleteProgress(String(req.params.id))
+    if (!progress) { res.status(404).json({ error: 'Athlete not found' }); return }
+    res.json(progress)
+  } catch (err) {
+    fail(res, "Failed to work out the athlete's progress", err)
   }
 })
 
