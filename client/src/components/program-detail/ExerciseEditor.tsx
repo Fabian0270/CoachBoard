@@ -170,7 +170,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
     }
     document.addEventListener('dragend', handler, { capture: true })
     return () => document.removeEventListener('dragend', handler, { capture: true })
-  }, [dragging]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dragging])
 
   // Called by onDragOver on each row — determines where the placeholder appears
   const handleDragOverRow = (ex: Exercise, group: ReturnType<typeof buildGroups>[0]) => (e: React.DragEvent) => {

@@ -274,7 +274,7 @@ export default function VideoAnalysis() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [toast])
 
   // Deep-linked from a video's player dialog: resolve that one and skip the picker.
   useEffect(() => {
@@ -916,7 +916,6 @@ export default function VideoAnalysis() {
     poseRef.current = timed.length
       ? applyCorrections(measured, correctionsAtTimes(measured, timed))
       : measured
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   /** Records a joint the coach has moved, against the moment it belongs to. */

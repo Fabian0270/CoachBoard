@@ -103,7 +103,7 @@ export function useAthleteMaxes(athleteId: string | null): { lift_name: string; 
     return () => {
       cancelled = true
     }
-  }, [athleteId])
+  }, [athleteId, toast])
 
   return maxes
 }

@@ -112,7 +112,7 @@ export default function AthleteDetail() {
       })
     void loadPrograms(id, () => !cancelled)
     return () => { cancelled = true }
-  }, [id, attempt]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, attempt])
 
   useEffect(() => {
     if (!newMenuOpen) return

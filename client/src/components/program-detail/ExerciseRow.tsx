@@ -140,7 +140,9 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
 
   // Follow the stored exercise — but only in cells the coach is not in the
   // middle of. Runs after every render on purpose: it is cheap, and a dependency
-  // list here is exactly what went stale before.
+  // list here is exactly what went stale before. It cannot loop: setDraft
+  // hands back the same object when nothing changed, and React stops there.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately every render
   useEffect(() => {
     setDraft((prev) => {
       let next = prev
@@ -202,6 +204,9 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
   useEffect(() => {
     return () => {
       if (discardRef.current) return
+      // The CURRENT contents of the ref, on purpose: what is unsaved at the
+      // moment the row goes, not what was unsaved when it appeared.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       for (const key of [...dirtyRef.current]) {
         const col = columnsRef.current.find((c) => c.key === key)
         if (col) commit(col)

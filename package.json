@@ -15,6 +15,7 @@
     "package": "npm run build && npm run build:electron && npm exec -w electron -- install-electron && cd electron && set CSC_IDENTITY_AUTO_DISCOVERY=false&& npx electron-builder --config electron-builder.yml --publish never",
     "package:mac": "npm run build && npm run build:electron && npm exec -w electron -- install-electron && cd electron && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --config electron-builder.yml --publish never",
     "typecheck": "npm exec -w client -- tsc --noEmit && npm exec -w server -- tsc --noEmit && npm exec -w electron -- tsc --noEmit",
+    "lint": "npm run lint -w client",
     "test": "npm run test -w client && npm run test -w server",
     "release": "node scripts/release.mjs"
   },

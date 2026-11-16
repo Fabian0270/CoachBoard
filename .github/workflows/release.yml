@@ -64,6 +64,8 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+      - name: Lint (React hooks)
+        run: npm run lint
 
       - name: Server tests
         run: npm run test -w server

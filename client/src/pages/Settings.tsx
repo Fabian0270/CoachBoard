@@ -98,7 +98,7 @@ export default function Settings() {
       // and saving the form would then overwrite it.
       .catch((err) => toast.error(`Could not read your saved email settings. ${errorMessage(err)}`))
       .finally(() => setLoading(false))
-  }, [])
+  }, [toast])
 
   const preset = PRESETS[provider]
   const isCustom = provider === 'custom'
