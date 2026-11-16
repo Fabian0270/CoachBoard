@@ -80,6 +80,32 @@ describe('Program calendar — keyboard', () => {
     expect(await screen.findByRole('heading', { name: /Week 1 · Tuesday/ })).toBeTruthy()
   })
 
+  it('answers the arrow keys straight away, without a day being clicked first', async () => {
+    server()
+    await open()
+    // Nothing has the focus, as when the page has just opened.
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    expect(document.activeElement).toBe(document.body)
+
+    // The first press lands on the program's first day (the test block is in
+    // the past, so "today" is not in it); the next one moves.
+    await userEvent.keyboard('{ArrowRight}')
+    expect(focusedDay()).toBe(MON1)
+    await userEvent.keyboard('{ArrowRight}')
+    expect(focusedDay()).toBe(TUE1)
+    await userEvent.keyboard('{Enter}')
+    expect(await screen.findByRole('heading', { name: /Week 1 · Tuesday/ })).toBeTruthy()
+  })
+
+  it('leaves the arrow keys alone while something else has the focus', async () => {
+    server()
+    await open()
+    const dates = screen.getByRole('button', { name: /Dates/ })
+    dates.focus()
+    await userEvent.keyboard('{ArrowRight}')
+    expect(document.activeElement).toBe(dates)
+  })
+
   it('gives Tab one stop in the calendar instead of one per day', async () => {
     server()
     await open()

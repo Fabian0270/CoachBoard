@@ -4,6 +4,7 @@ import { useProgramData } from '../hooks/useProgramData'
 import { useProgramCalendar, useWorkoutByDate } from '../hooks/useProgramCalendar'
 import { useWorkoutActions } from '../hooks/useWorkoutActions'
 import { useDayOperations, dayHasResults } from '../hooks/useDayOperations'
+import { useMenuKeys } from '../hooks/useMenuKeys'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -33,6 +34,7 @@ import {
   type Program,
 } from '../lib/programUtils'
 import { errorMessage, getJson, sendJson } from '../lib/api'
+import { localToday } from '../lib/dates'
 import LoadError from '../components/LoadError'
 
 export default function ProgramDetail() {
@@ -45,6 +47,10 @@ export default function ProgramDetail() {
   const [savingDuration, setSavingDuration] = useState(false)
   const [durationOpen, setDurationOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  /** The week whose W-label menu is open. */
+  const [weekMenu, setWeekMenu] = useState<number | null>(null)
+  // The shortcut handler is registered once; this keeps it on the latest program.
+  const handleChangeDurationRef = useRef<() => void>(() => {})
   const [detailsForm, setDetailsForm] = useState({ name: '', description: '' })
   const [savingDetails, setSavingDetails] = useState(false)
   const [openDate, setOpenDate] = useState<string | null>(null)
@@ -96,6 +102,33 @@ export default function ProgramDetail() {
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [exportMenuOpen])
+
+  const exportMenu = useMenuKeys(exportMenuOpen, () => setExportMenuOpen(false))
+  const weekMenuKeys = useMenuKeys(weekMenu !== null, () => setWeekMenu(null))
+
+  // Shortcuts for the buttons at the top of the program. Only while nothing
+  // else is open, so they never reach into a dialog or a menu. Delete has no
+  // shortcut on purpose: it is one press from losing a whole program.
+  useEffect(() => {
+    if (!program?.start_date || !id) return
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      if (document.querySelector('[role="dialog"], [role="menu"]')) return
+      const key = e.key.toLowerCase()
+      const act =
+        !e.shiftKey && key === 'e' ? () => setExportMenuOpen(true)
+        : !e.shiftKey && key === 'i' ? () => setImportOpen(true)
+        : !e.shiftKey && key === 'r' ? () => navigate(`/programs/${id}/report`)
+        : e.shiftKey && key === 'c' ? () => setColumnsOpen(true)
+        : e.shiftKey && key === 'd' ? () => handleChangeDurationRef.current()
+        : null
+      if (!act) return
+      e.preventDefault()
+      act()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [program?.start_date, id, navigate])
 
   const flashCell = (date: string, status: 'saving' | 'saved' | 'error') => {
     setCellStatus((s) => ({ ...s, [date]: status }))
@@ -203,11 +236,41 @@ export default function ProgramDetail() {
   // One day is "current": the only one Tab stops on, and where the arrow keys
   // start from. Without that, Tab would have to cross every day of the block.
   const [currentDay, setCurrentDay] = useState<string | null>(null)
-  const tabStopDay = currentDay && allDates.includes(currentDay) ? currentDay : allDates[0] ?? null
+  // Day lookups stay inside THIS calendar. A dialog closing after the page had
+  // moved on to another program found a day with the same date there and
+  // focused it (seen in the tests, where one screen follows another).
+  const calendarRef = useRef<HTMLDivElement>(null)
+  // Where the keyboard starts when no day has been visited yet: today, if the
+  // program is running, otherwise its first day.
+  const today = localToday()
+  const startDay = allDates.includes(today) ? today : allDates[0] ?? null
+  const tabStopDay = currentDay && allDates.includes(currentDay) ? currentDay : startDay
   const focusDay = (date: string) => {
     setCurrentDay(date)
-    document.querySelector<HTMLElement>(`[data-day="${date}"]`)?.focus()
+    calendarRef.current?.querySelector<HTMLElement>(`[data-day="${date}"]`)?.focus()
   }
+
+  // Arrow keys work as soon as the program is on screen. Before, nothing had
+  // the focus until a day was clicked, so the first arrow press scrolled the
+  // page instead — keyboard use started with the mouse. Now a press with
+  // nothing focused lands on the current day; the next one moves from there.
+  // Left alone while anything else has the focus (a button, a field) or while a
+  // dialog or menu is open, where the arrows mean something else.
+  const focusDayRef = useRef(focusDay)
+  focusDayRef.current = focusDay
+  useEffect(() => {
+    if (!tabStopDay) return
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.key.startsWith('Arrow') || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+      const active = document.activeElement
+      if (active && active !== document.body && active !== document.documentElement) return
+      if (document.querySelector('[role="dialog"], [role="menu"]')) return
+      e.preventDefault()
+      focusDayRef.current(tabStopDay)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [tabStopDay])
   const onDayKeyDown = (e: React.KeyboardEvent, date: string) => {
     const i = allDates.indexOf(date)
     const ctrl = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey
@@ -238,7 +301,6 @@ export default function ProgramDetail() {
   }
 
   // ── A whole week at a time ──────────────────────────────────────────────
-  const [weekMenu, setWeekMenu] = useState<number | null>(null)
   const [copyWeekFrom, setCopyWeekFrom] = useState<number | null>(null)
   const [copyWeekTo, setCopyWeekTo] = useState<Set<number>>(new Set())
   useEffect(() => {
@@ -395,6 +457,7 @@ export default function ProgramDetail() {
     setSetupForm({ start_date: program.start_date ?? '', weeks: String(current) })
     setDurationOpen(true)
   }
+  handleChangeDurationRef.current = handleChangeDuration
 
   const toggleColumn = async (col: ToggleableColumn) => {
     if (!program || !id) return
@@ -483,45 +546,53 @@ export default function ProgramDetail() {
         <div className="flex flex-wrap items-center gap-1.5">
           {program.start_date && (
             <>
-              <Button variant="ghost" size="sm" onClick={() => setColumnsOpen(true)}>
+              <Button variant="ghost" size="sm" onClick={() => setColumnsOpen(true)} title="Columns (Ctrl+Shift+C)">
                 <SlidersHorizontal className="h-4 w-4" />Columns
               </Button>
-              <Button variant="ghost" size="sm" onClick={handleChangeDuration}>
+              <Button variant="ghost" size="sm" onClick={handleChangeDuration} title="Dates (Ctrl+Shift+D)">
                 <CalendarRange className="h-4 w-4" />Dates
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)}>
+              <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)} title="Import results (Ctrl+I)">
                 <Download className="h-4 w-4" />Import
               </Button>
               <Button variant="ghost" size="sm" asChild>
-                <Link to={`/programs/${program.id}/report`}>
+                <Link to={`/programs/${program.id}/report`} title="Report (Ctrl+R)">
                   <BarChart2 className="h-4 w-4" />Report
                 </Link>
               </Button>
               <span aria-hidden className="mx-1 h-5 w-px bg-border" />
               <div className="relative" ref={exportMenuRef}>
-                <Button size="sm" onClick={(e) => { e.stopPropagation(); setExportMenuOpen((v) => !v) }}>
+                <Button
+                  size="sm" ref={exportMenu.triggerRef}
+                  aria-haspopup="menu" aria-expanded={exportMenuOpen} title="Export (Ctrl+E)"
+                  onClick={(e) => { e.stopPropagation(); setExportMenuOpen((v) => !v) }}
+                >
                   <Upload className="h-4 w-4" />Export<ChevronDown className="h-4 w-4 -mr-0.5 opacity-70" />
                 </Button>
                 {exportMenuOpen && (
-                  <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-lg border bg-popover py-1 shadow-xl shadow-black/20" onClick={(e) => e.stopPropagation()}>
+                  <div
+                    ref={exportMenu.menuRef} role="menu" aria-label="Export"
+                    className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-lg border bg-popover py-1 shadow-xl shadow-black/20"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <button
-                      type="button"
+                      type="button" role="menuitem"
                       onClick={() => { setExportMenuOpen(false); setPreviewOpen(true) }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none"
                     >
                       <Eye className="h-4 w-4" />Preview Excel
                     </button>
                     <button
-                      type="button"
+                      type="button" role="menuitem"
                       onClick={() => { setExportMenuOpen(false); handleExport() }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none"
                     >
                       <Download className="h-4 w-4" />Download as Excel
                     </button>
                     <button
-                      type="button"
+                      type="button" role="menuitem"
                       onClick={() => { setExportMenuOpen(false); setEmailOpen(true) }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none"
                     >
                       <Mail className="h-4 w-4" />Email to athlete
                     </button>
@@ -605,7 +676,7 @@ export default function ProgramDetail() {
             <span><span className="num text-foreground">{grid.weeks}</span> {grid.weeks === 1 ? 'week' : 'weeks'}</span>
             <span>Click any day to edit · drag a day to move it</span>
           </div>
-          <div className="overflow-x-auto rounded-xl border border-border bg-card">
+          <div ref={calendarRef} className="overflow-x-auto rounded-xl border border-border bg-card">
             <table className="w-full min-w-[640px] border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
               <colgroup>
                 <col style={{ width: 56 }} />
@@ -629,8 +700,8 @@ export default function ProgramDetail() {
                           used to mean opening every training day in turn. */}
                       <button
                         type="button"
+                        ref={weekMenu === row.weekIndex ? weekMenuKeys.triggerRef : undefined}
                         onClick={(e) => { e.stopPropagation(); setWeekMenu(weekMenu === row.weekIndex ? null : row.weekIndex) }}
-                        onKeyDown={(e) => { if (e.key === 'Escape') setWeekMenu(null) }}
                         aria-haspopup="menu"
                         aria-expanded={weekMenu === row.weekIndex}
                         aria-label={`Week ${row.weekIndex + 1} actions`}
@@ -642,12 +713,13 @@ export default function ProgramDetail() {
                       {weekMenu === row.weekIndex && (
                         <div
                           role="menu"
+                          ref={weekMenuKeys.menuRef}
+                          aria-label={`Week ${row.weekIndex + 1}`}
                           className="absolute left-1 top-8 z-20 min-w-[170px] rounded-lg border bg-popover py-1 text-left text-sm font-normal text-foreground shadow-xl shadow-black/20"
                           onClick={(e) => e.stopPropagation()}
-                          onKeyDown={(e) => { if (e.key === 'Escape') setWeekMenu(null) }}
                         >
                           <button
-                            type="button" role="menuitem" autoFocus
+                            type="button" role="menuitem"
                             disabled={!weekHasExercises(row.weekIndex) || grid.rows.length < 2}
                             onClick={() => { setWeekMenu(null); setCopyWeekTo(new Set()); setCopyWeekFrom(row.weekIndex) }}
                             className="flex w-full items-center gap-2 px-3 py-2 hover:bg-accent focus:bg-accent focus:outline-none disabled:opacity-50"
@@ -777,7 +849,7 @@ export default function ProgramDetail() {
           // cell that was clicked to open the dialog.
           onCloseAutoFocus={(e) => {
             const date = lastOpenDate.current
-            const cell = date ? document.querySelector<HTMLElement>(`[data-day="${date}"]`) : null
+            const cell = date ? calendarRef.current?.querySelector<HTMLElement>(`[data-day="${date}"]`) ?? null : null
             if (cell) { e.preventDefault(); cell.focus() }
           }}
           // With the exercise suggestions open, the first Esc closes that list
