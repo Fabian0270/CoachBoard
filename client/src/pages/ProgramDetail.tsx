@@ -23,6 +23,7 @@ import ImportDialog from '../components/ImportDialog'
 import SendProgramDialog from '../components/SendProgramDialog'
 import PreviewProgramDialog from '../components/PreviewProgramDialog'
 import ExerciseEditor, { type CopyWeek } from '../components/program-detail/ExerciseEditor'
+import DayPreview from '../components/program-detail/DayPreview'
 import type { SuggestionGoal } from 'coachboard-shared'
 import {
   type ToggleableColumn,
@@ -229,6 +230,10 @@ function ProgramPage() {
     if (!openDate || !canGoToDay(step)) return
     setOpenDate(allDates[allDates.indexOf(openDate) + step])
   }
+  /** "16 Nov" */
+  const shortDate = (date: string): string =>
+    new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+
   /** "Mon W2" — how a day is named in messages. */
   const shortDayLabel = (date: string): string => {
     const i = allDates.indexOf(date)
@@ -268,6 +273,20 @@ function ProgramPage() {
   // nothing focused lands on the current day; the next one moves from there.
   // Left alone while anything else has the focus (a button, a field) or while a
   // dialog or menu is open, where the arrows mean something else.
+  // The whole-day preview shown when the pointer rests on a cell.
+  const [preview, setPreview] = useState<{ date: string; rect: DOMRect } | null>(null)
+  const previewTimer = useRef<number | null>(null)
+  const showPreviewSoon = (date: string, el: HTMLElement) => {
+    if (previewTimer.current) window.clearTimeout(previewTimer.current)
+    previewTimer.current = window.setTimeout(() => setPreview({ date, rect: el.getBoundingClientRect() }), 450)
+  }
+  const hidePreview = () => {
+    if (previewTimer.current) window.clearTimeout(previewTimer.current)
+    previewTimer.current = null
+    setPreview(null)
+  }
+  useEffect(() => () => { if (previewTimer.current) window.clearTimeout(previewTimer.current) }, [])
+
   const focusDayRef = useRef(focusDay)
   focusDayRef.current = focusDay
   useEffect(() => {
@@ -717,10 +736,14 @@ function ProgramPage() {
                         aria-haspopup="menu"
                         aria-expanded={weekMenu === row.weekIndex}
                         aria-label={`Week ${row.weekIndex + 1} actions`}
-                        title={`Week ${row.weekIndex + 1}: copy or clear`}
+                        title={`Week ${row.weekIndex + 1}, from ${shortDate(row.days[0].date)}: copy or clear`}
                         className="h-full w-full px-2 py-2 text-left transition-colors hover:bg-foreground/[0.05] hover:text-foreground focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary"
                       >
                         W{row.weekIndex + 1}
+                        {/* Where in the calendar this week is, without counting. */}
+                        <span className="mt-0.5 block text-[9.5px] font-normal leading-tight text-muted-foreground/80">
+                          {shortDate(row.days[0].date)}
+                        </span>
                       </button>
                       {weekMenu === row.weekIndex && (
                         <div
@@ -756,6 +779,12 @@ function ProgramPage() {
                       const isDragSource = dayDragSource === cell.date
                       const isDragOver = dayDragOver === cell.date
                       const onClipboard = days.clipboard?.date === cell.date ? days.clipboard.mode : null
+                      const isToday = cell.date === today
+                      // Logged: the athlete has filled in Load Used or RPE. A past
+                      // training day without either is flagged, so a missed
+                      // import (or a missed session) shows in the grid.
+                      const logged = dayHasResults(workout)
+                      const notLogged = !logged && exercises.length > 0 && cell.date < today
                       return (
                         <td
                           key={cell.date}
@@ -790,15 +819,34 @@ function ProgramPage() {
                             tabIndex={cell.date === tabStopDay ? 0 : -1}
                             onFocus={() => setCurrentDay(cell.date)}
                             onKeyDown={(e) => onDayKeyDown(e, cell.date)}
-                            onClick={() => setOpenDate(cell.date)}
-                            aria-label={`${dayTitle(cell.date)}, ${exercises.length === 0 ? 'empty' : `${exercises.length} exercise${exercises.length === 1 ? '' : 's'}`}${onClipboard ? `, ${onClipboard === 'cut' ? 'cut' : 'copied'}` : ''}`}
+                            onClick={() => { hidePreview(); setOpenDate(cell.date) }}
+                            onMouseEnter={exercises.length > 0 ? (e) => showPreviewSoon(cell.date, e.currentTarget) : undefined}
+                            onMouseLeave={hidePreview}
+                            onDragStart={hidePreview}
+                            aria-label={`${dayTitle(cell.date)}${isToday ? ', today' : ''}, ${exercises.length === 0 ? 'empty' : `${exercises.length} exercise${exercises.length === 1 ? '' : 's'}`}${logged ? ', logged' : notLogged ? ', not logged yet' : ''}${onClipboard ? `, ${onClipboard === 'cut' ? 'cut' : 'copied'}` : ''}`}
                             className={`group/cell block h-full min-h-[92px] w-full px-2.5 py-2 text-left transition-colors duration-150 ease-smooth hover:bg-primary/[0.06] focus:bg-primary/[0.06] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary ${
                               exercises.length > 0 ? 'shadow-[inset_2px_0_0_hsl(var(--primary)/0.55)]' : ''
-                            } ${onClipboard ? 'outline-dashed outline-2 -outline-offset-2 outline-primary/70' : ''}`}
+                            } ${isToday ? 'bg-primary/[0.04]' : ''} ${onClipboard ? 'outline-dashed outline-2 -outline-offset-2 outline-primary/70' : ''}`}
                           >
                             <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                              <span className="num">{cell.label}</span>
+                              {isToday ? (
+                                <span className="num rounded-full bg-primary px-1.5 font-semibold text-primary-foreground" title="Today">{cell.label}</span>
+                              ) : (
+                                <span className="num">{cell.label}</span>
+                              )}
                               <span className="flex items-center gap-0.5">
+                                {logged && (
+                                  <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-success" title="The athlete has logged results on this day">
+                                    <Check className="h-2.5 w-2.5" />Logged
+                                  </span>
+                                )}
+                                {notLogged && (
+                                  <span
+                                    aria-hidden
+                                    className="h-1.5 w-1.5 rounded-full border border-warning"
+                                    title="Past training day with nothing logged yet"
+                                  />
+                                )}
                                 {workout && (mediaByWorkoutId.get(workout.id)?.length ?? 0) > 0 && (
                                   <span
                                     className="inline-flex items-center gap-0.5 rounded bg-primary/10 px-1 text-[9px] font-semibold text-primary"
@@ -829,6 +877,10 @@ function ProgramPage() {
                                     {ex.weight != null && (
                                       <span className="num text-muted-foreground"> @{ex.weight}kg</span>
                                     )}
+                                    {/* The target, so an RPE- or %-based program reads in the grid. */}
+                                    {ex.intensity && (
+                                      <span className="text-muted-foreground"> · {ex.intensity}</span>
+                                    )}
                                   </li>
                                 ))}
                                 {exercises.length > 3 && (
@@ -846,6 +898,10 @@ function ProgramPage() {
             </table>
           </div>
         </div>
+      )}
+
+      {preview && !dayDragSource && !openDate && workoutByDate.get(preview.date) && (
+        <DayPreview workout={workoutByDate.get(preview.date)!} title={dayTitle(preview.date)} anchor={preview.rect} />
       )}
 
       <Dialog open={openDate !== null} onOpenChange={(o) => { if (!o) setOpenDate(null) }}>
