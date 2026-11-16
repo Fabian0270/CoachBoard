@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { useToast } from '../components/ui/toast'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Trash2, Copy, CopyPlus, Pencil, StickyNote, Replace, TrendingUp, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
+import { Trash2, Copy, CopyPlus, Pencil, StickyNote, Replace, TrendingUp, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film, CalendarDays, Rows3 } from 'lucide-react'
 import { BackLink } from '../components/PageHeader'
 import DayAttachments from '../components/discord/DayAttachments'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
@@ -26,6 +26,8 @@ import ExerciseEditor, { type CopyWeek } from '../components/program-detail/Exer
 import DayPreview from '../components/program-detail/DayPreview'
 import DuplicateProgramDialog from '../components/DuplicateProgramDialog'
 import ProgressionDialog from '../components/program-detail/ProgressionDialog'
+import BlockView from '../components/program-detail/BlockView'
+import { anchorFor, weekdayCounts, type BlockRow } from '../lib/blockLayout'
 import type { SuggestionGoal } from 'coachboard-shared'
 import {
   type ToggleableColumn,
@@ -40,6 +42,7 @@ import {
   parseIsoDate,
   buildColumns,
   type ColKey,
+  type Exercise,
   type Program,
 } from '../lib/programUtils'
 import { errorMessage, getJson, getList, sendJson } from '../lib/api'
@@ -276,6 +279,15 @@ function ProgramPage() {
     labelFor: shortDayLabel,
   })
 
+  // ── Calendar or block view ──────────────────────────────────────────────
+  // The block view (1E) is a second way to look at the same days: one weekday,
+  // exercises down the side, weeks across. It replaces nothing (D40).
+  const [view, setView] = useState<'calendar' | 'block'>('calendar')
+  const [blockWeekday, setBlockWeekday] = useState<number | null>(null)
+  /** Until the coach picks one: the first weekday with training. */
+  const shownWeekday = blockWeekday ?? Math.max(0, weekdayCounts(workoutByDate, allDates).findIndex((n) => n > 0))
+  const blockFocus = useRef<(() => void) | null>(null)
+
   // ── The calendar from the keyboard ──────────────────────────────────────
   // One day is "current": the only one Tab stops on, and where the arrow keys
   // start from. Without that, Tab would have to cross every day of the block.
@@ -324,11 +336,13 @@ function ProgramPage() {
       if (active && active !== document.body && active !== document.documentElement) return
       if (document.querySelector('[role="dialog"], [role="menu"]')) return
       e.preventDefault()
-      focusDayRef.current(tabStopDay)
+      // In the block view the press lands in its grid, where the cursor last was.
+      if (view === 'block') blockFocus.current?.()
+      else focusDayRef.current(tabStopDay)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [tabStopDay])
+  }, [tabStopDay, view])
   const onDayKeyDown = (e: React.KeyboardEvent, date: string) => {
     const i = allDates.indexOf(date)
     const ctrl = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey
@@ -562,6 +576,124 @@ function ProgramPage() {
         ignored ? `${ignored} cell${ignored === 1 ? '' : 's'} past the last column ${ignored === 1 ? 'was' : 'were'} left out.` : '',
       ].filter(Boolean).join(' '))
     }
+  }
+
+  // The program as it is now, for saves that finish after the page has moved on.
+  const workoutByDateRef = useRef(workoutByDate)
+  workoutByDateRef.current = workoutByDate
+
+  /**
+   * Save one cell and make it a step of the history. Shared by the day editor
+   * and the block view, so Ctrl+Z treats an edit the same wherever it was made.
+   */
+  const saveCell = async (date: string, workoutId: string, exerciseId: string, patch: Partial<Exercise>): Promise<boolean> => {
+    // What the edited fields held before. The rest of the day is read when the
+    // step is undone (see recordLazy), so two cells saved in quick succession
+    // each undo only themselves.
+    const row = workoutByDateRef.current.get(date)?.exercises.find((ex) => ex.id === exerciseId)
+    const old = Object.fromEntries(Object.keys(patch).map((k) => [k, row?.[k as keyof typeof row] ?? null]))
+    const ok = await saveExerciseField(date, workoutId, exerciseId, patch)
+    if (ok) {
+      days.recordLazy(`Changed ${nameOf(exerciseId)}`, [date], () =>
+        days.snapshotDays([date]).map((d) => d.workout
+          ? { ...d, workout: { ...d.workout, exercises: d.workout.exercises.map((ex) => (ex.id === exerciseId ? { ...ex, ...old } : ex)) } }
+          : d))
+    }
+    return ok
+  }
+
+  // ── Block view saves ────────────────────────────────────────────────────
+  // A cell typed into a week that does not have the exercise creates it there
+  // (D41). Enter moves straight on to the next cell of that same week, which
+  // has no exercise yet either; its save waits for the first one's exercise
+  // rather than creating a second.
+  const creating = useRef(new Map<string, Promise<{ workoutId: string; exerciseId: string } | null>>())
+
+  const createInWeek = async (row: BlockRow, rows: BlockRow[], week: number, patch: Partial<Exercise>) => {
+    if (!id) return null
+    const date = allDates[week * 7 + shownWeekday]
+    const before = days.snapshotDays([date])
+    try {
+      const workout = workoutByDateRef.current.get(date) ?? (await ensureWorkout(date))
+      if (!workout) throw new Error('The training day could not be created.')
+      const anchor = anchorFor(rows, row, week)
+      let exerciseId: string
+      if (row.isSet && anchor && anchor.name.trim().toLowerCase() === row.name.toLowerCase()) {
+        // A further set: added to its exercise, as Add set in the day editor does.
+        const known = new Set(workoutByDateRef.current.get(date)?.exercises.map((e) => e.id) ?? [])
+        const res = await sendJson<{ exercises: Exercise[] }>('POST', `/api/programs/${id}/workouts/${workout.id}/exercises/${anchor.id}/add-set`)
+        const made = res.exercises.find((e) => !known.has(e.id))
+        if (!made) throw new Error('The set could not be added.')
+        exerciseId = made.id
+        await sendJson('PUT', `/api/programs/${id}/workouts/${workout.id}/exercises/${exerciseId}`, patch)
+      } else {
+        // In its place: under the row above it that this week has, or first.
+        const res = await sendJson<{ exercises: Exercise[]; newIds: string[] }>(
+          'POST', `/api/programs/${id}/workouts/${workout.id}/exercises/paste`,
+          { anchorId: anchor?.id ?? null, anchorPatch: null, rows: [{ name: row.name, ...patch }] },
+        )
+        exerciseId = res.newIds[0]
+        if (!anchor && res.exercises.length > 1) {
+          await sendJson('PUT', `/api/programs/${id}/workouts/${workout.id}/exercises/reorder`, {
+            exerciseIds: [exerciseId, ...res.exercises.filter((e) => e.id !== exerciseId).map((e) => e.id)],
+          })
+        }
+      }
+      await reloadProgram()
+      days.record(`Added ${row.name} to week ${week + 1}`, before)
+      return { workoutId: workout.id, exerciseId }
+    } catch (err) {
+      await reloadProgram()
+      toast.error(`Could not add ${row.name} to week ${week + 1}. ${errorMessage(err)}`)
+      return null
+    }
+  }
+
+  const saveBlockCell = async (row: BlockRow, rows: BlockRow[], week: number, patch: Partial<Exercise>): Promise<boolean> => {
+    const date = allDates[week * 7 + shownWeekday]
+    const ex = row.cells[week]
+    const key = `${shownWeekday}|${row.key}|${week}`
+    if (ex) {
+      creating.current.delete(key)
+      return saveCell(date, ex.workout_id, ex.id, patch)
+    }
+    const inFlight = creating.current.get(key)
+    if (inFlight) {
+      const made = await inFlight
+      // Still there? An undo may have taken it away since.
+      const stillThere = made && workoutByDateRef.current.get(date)?.exercises.some((e) => e.id === made.exerciseId)
+      if (stillThere) return saveCell(date, made.workoutId, made.exerciseId, patch)
+      creating.current.delete(key)
+      if (made) return saveBlockCell(row, rows, week, patch)
+    }
+    const run = createInWeek(row, rows, week, patch)
+    creating.current.set(key, run)
+    return !!(await run)
+  }
+
+  /** A new exercise on the shown weekday in every week; days are created where missing (D42). */
+  const addBlockRow = async (name: string): Promise<boolean> => {
+    if (!id) return false
+    const dates = Array.from({ length: Math.floor(allDates.length / 7) }, (_, w) => allDates[w * 7 + shownWeekday])
+    const weekday = new Date(`${dates[0]}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' })
+    const label = `Added ${name} to every ${weekday}`
+    const before = days.snapshotDays(dates)
+    try {
+      for (const date of dates) {
+        const workout = workoutByDateRef.current.get(date) ?? (await ensureWorkout(date))
+        if (!workout) throw new Error('A training day could not be created.')
+        await sendJson('POST', `/api/programs/${id}/workouts/${workout.id}/exercises/paste`, { anchorId: null, anchorPatch: null, rows: [{ name }] })
+      }
+    } catch (err) {
+      // Some weeks may have it already: show what is stored, and Undo takes it all back.
+      await reloadProgram()
+      days.record(label, before)
+      toast.error(`${name} could not be added to every week. ${errorMessage(err)} Ctrl+Z takes back what was added.`)
+      return false
+    }
+    await reloadProgram()
+    days.record(label, before, true)
+    return true
   }
 
   // Replace an exercise across the block: one rename instead of one edit per day.
@@ -847,8 +979,47 @@ function ProgramPage() {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span className="num text-foreground">{program.start_date} → {program.end_date}</span>
             <span><span className="num text-foreground">{grid.weeks}</span> {grid.weeks === 1 ? 'week' : 'weeks'}</span>
-            <span>Click any day to edit · drag a day to move it</span>
+            <span>
+              {view === 'calendar'
+                ? 'Click any day to edit · drag a day to move it'
+                : 'One training day across every week · click a week to open that day'}
+            </span>
+            <div role="group" aria-label="View" className="ml-auto inline-flex rounded-lg border bg-card p-0.5">
+              {([
+                { key: 'calendar', label: 'Calendar', icon: CalendarDays, title: 'Weeks × days, one day at a time' },
+                { key: 'block', label: 'Block', icon: Rows3, title: 'One training day across every week, every value editable' },
+              ] as const).map((v) => (
+                <button
+                  key={v.key}
+                  type="button"
+                  aria-pressed={view === v.key}
+                  onClick={() => { hidePreview(); setView(v.key) }}
+                  title={v.title}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring/40 ${
+                    view === v.key ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <v.icon className="h-3.5 w-3.5" />{v.label}
+                </button>
+              ))}
+            </div>
           </div>
+          {view === 'block' ? (
+            <BlockView
+              workoutByDate={workoutByDate}
+              dates={allDates}
+              weekday={shownWeekday}
+              onWeekday={setBlockWeekday}
+              columns={buildColumns(enabledColumns).filter((c) => c.key !== 'name')}
+              today={today}
+              unsavedKeys={new Set(Object.keys(failedEdits))}
+              suggestions={ownExerciseNames}
+              onSaveCell={saveBlockCell}
+              onAddRow={addBlockRow}
+              onOpenDay={setOpenDate}
+              focusApi={blockFocus}
+            />
+          ) : (
           <div ref={calendarRef} className="overflow-x-auto rounded-xl border border-border bg-card">
             <table className="w-full min-w-[640px] border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
               <colgroup>
@@ -1042,6 +1213,7 @@ function ProgramPage() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
 
@@ -1149,23 +1321,8 @@ function ProgramPage() {
               }}
               maxes={athleteMaxes}
               onPasteRows={(anchorId, start, text) => void pasteRows(openDate, anchorId, start, text)}
-              onSaveField={async (exerciseId, patch) => {
-                if (!openWorkout) return false
-                // What the edited fields held before. The rest of the day is
-                // read when the step is undone (see recordLazy), so two cells
-                // saved in quick succession each undo only themselves.
-                const row = openWorkout.exercises.find((ex) => ex.id === exerciseId)
-                const old = Object.fromEntries(Object.keys(patch).map((k) => [k, row?.[k as keyof typeof row] ?? null]))
-                const date = openDate
-                const ok = await saveExerciseField(date, openWorkout.id, exerciseId, patch)
-                if (ok) {
-                  days.recordLazy(`Changed ${nameOf(exerciseId)}`, [date], () =>
-                    days.snapshotDays([date]).map((d) => d.workout
-                      ? { ...d, workout: { ...d.workout, exercises: d.workout.exercises.map((ex) => (ex.id === exerciseId ? { ...ex, ...old } : ex)) } }
-                      : d))
-                }
-                return ok
-              }}
+              onSaveField={(exerciseId, patch) =>
+                openWorkout ? saveCell(openDate, openWorkout.id, exerciseId, patch) : Promise.resolve(false)}
               onDeleteExercise={async (exerciseId) => {
                 if (!openWorkout) return false
                 const label = `${nameOf(exerciseId)} deleted`

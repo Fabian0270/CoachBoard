@@ -35,6 +35,17 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
+    title: 'Block view',
+    where: 'On a program switched to Block: one training day across every week.',
+    shortcuts: [
+      { keys: [['Enter']], does: 'Save and go to the next field, on across the weeks, then down to the next exercise' },
+      { keys: [['Tab'], ['Shift', 'Tab']], does: 'Next / previous field' },
+      { keys: [['↑'], ['↓']], does: 'Same field on the exercise above / below' },
+      { keys: [['Esc']], does: 'Leave the field, keeping what you typed' },
+      { keys: [['Ctrl', 'Z']], does: 'Undo, as on the calendar' },
+    ],
+  },
+  {
     title: 'Program buttons',
     where: 'On a program, with nothing else open.',
     shortcuts: [
