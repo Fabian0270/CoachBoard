@@ -75,6 +75,18 @@ describe('pasteExercises', () => {
     expect(res!.newIds).toHaveLength(2)
   })
 
+  it('keeps the cue of every pasted row, not only the one pasted into', async () => {
+    const { p, w } = await day('Paste cues')
+    const a = await createExercise({ workout_id: w.id, name: 'Squat', order_index: 0 })
+    const res = await pasteExercises(w.id, p.id, a.id, { notes: 'pause 2 s' }, [
+      { name: 'Bench', notes: 'touch and go' },
+      { name: 'Rows', notes: null },
+    ])
+    expect(res!.exercises.map((e) => [e.name, e.notes])).toEqual([
+      ['Squat', 'pause 2 s'], ['Bench', 'touch and go'], ['Rows', null],
+    ])
+  })
+
   it('appends to the end of the day with no anchor', async () => {
     const { p, w } = await day('Paste end')
     await createExercise({ workout_id: w.id, name: 'Squat', order_index: 0 })

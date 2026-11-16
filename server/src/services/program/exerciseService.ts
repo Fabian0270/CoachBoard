@@ -302,7 +302,7 @@ export async function pasteExercises(
         weight: r.weight ?? null,
         duration: null,
         distance: null,
-        notes: null,
+        notes: r.notes ?? null,
         order_index: after,
         rest_time: r.rest_time ?? null,
         intensity: r.intensity ?? null,
