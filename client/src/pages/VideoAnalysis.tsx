@@ -4,14 +4,8 @@ import {
   ArrowLeft,
   Check,
   Columns2,
-  Crosshair,
   Loader2,
-  Palette,
-  PersonStanding,
-  RotateCcw,
-  Ruler,
   Save,
-  Target,
   UserRound,
 } from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
@@ -24,12 +18,11 @@ import AnalysisStage, {
   type StageMode,
 } from '../components/analysis/AnalysisStage'
 import VideoPicker, { type AnalysisSource } from '../components/analysis/VideoPicker'
-import DrawControls from '../components/analysis/DrawControls'
 import type { Stroke } from '../components/analysis/annotations'
 import { useTracker, type TrackStream } from '../components/analysis/useTracker'
 import { captureInto } from '../components/analysis/captureFrames'
 import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
-import { TRACKER_COLORS, useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
+import { useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
 import { usePose, type PoseStream } from '../components/analysis/usePose'
 import { savePose, putCorrection } from '../components/analysis/poseApi'
 import {
@@ -52,6 +45,7 @@ import {
   measuredMvt,
 } from 'coachboard-shared/vbt'
 import RepTable from '../components/analysis/RepTable'
+import TrackingControls from '../components/analysis/TrackingControls'
 import LoadError from '../components/LoadError'
 import VelocityPanel, {
   rememberedLift,
@@ -110,8 +104,6 @@ const POSE_PREVIEW_WIDTH = 512
  * seeking are not throttled at all: that is where the coach reads a position.
  */
 const PREVIEW_MIN_INTERVAL_MS = 160
-
-const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 
 export default function VideoAnalysis() {
   const { mediaId } = useParams()
@@ -1195,203 +1187,46 @@ export default function VideoAnalysis() {
 
         {cvStatus === 'ready' && (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="flex items-center gap-2 text-sm">
-                <Crosshair className="h-4 w-4 text-muted-foreground" />
-                {mode === 'calibrate'
-                  ? 'Click both edges of a plate to set the scale'
-                  : samples
-                    ? 'Tracked — play the clip to watch the dot follow the bar'
-                    : seed
-                      ? 'Point set — the circle is the search area, then track'
-                      : 'Click the middle of a plate to place the tracking point'}
-              </span>
-              {seed && (
-                <>
-                  <Button size="sm" variant="outline" onClick={() => resizeSeed(-8)} disabled={busy}>
-                    −
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => resizeSeed(8)} disabled={busy}>
-                    +
-                  </Button>
-                </>
-              )}
-
-              {/* Locked only WHILE a run is under way — the fan-out that feeds
-                  pose is set up at the start of that pass, so switching it
-                  mid-track would silently do nothing. Otherwise it takes effect
-                  at once: the preview runs on whatever frame is on screen. */}
-              <label
-                className={`flex items-center gap-1.5 text-sm ${busy ? 'opacity-50' : ''}`}
-                title={
-                  busy
-                    ? 'Pose cannot be switched during a tracking run'
-                    : 'Draw the lifter’s skeleton — drag a joint to correct it'
-                }
-              >
-                <input
-                  type="checkbox"
-                  checked={showPose}
-                  disabled={busy}
-                  onChange={(e) => setShowPose(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-cyan-400"
-                />
-                <PersonStanding className="h-4 w-4 text-muted-foreground" />
-                Skeleton
-              </label>
-              {pose.status === 'loading' && (
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading the pose model…
-                </span>
-              )}
-              {pose.status === 'error' && (
-                <span className="text-xs text-destructive">Skeleton unavailable: {pose.error}</span>
-              )}
-              {poseCorrections.length > 0 && (
-                <span className="text-xs text-muted-foreground">
-                  {poseCorrections.length} joint{poseCorrections.length === 1 ? '' : 's'} corrected
-                </span>
-              )}
-
-              <span className="ml-auto flex items-center gap-1.5">
-                <Palette className="h-4 w-4 text-muted-foreground" />
-                {TRACKER_COLORS.map((c) => (
-                  <button
-                    key={c.value}
-                    type="button"
-                    title={c.name}
-                    aria-label={`${c.name} overlay`}
-                    aria-pressed={color === c.value}
-                    onClick={() => setColor(c.value)}
-                    className={`h-5 w-5 rounded-full border transition-transform ${
-                      color === c.value
-                        ? 'scale-110 border-foreground ring-2 ring-foreground/30'
-                        : 'border-border hover:scale-110'
-                    }`}
-                    style={{ backgroundColor: c.value }}
-                  />
-                ))}
-              </span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Track from</span>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => setRange((r) => ({ from: currentTime, to: Math.max(currentTime + 0.2, r?.to ?? duration) }))}
-              >
-                Set start ({fmt(range?.from ?? 0)})
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => setRange((r) => ({ from: Math.min(r?.from ?? 0, currentTime - 0.2), to: currentTime }))}
-              >
-                Set end ({fmt(range?.to ?? duration)})
-              </Button>
-
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <Ruler className="h-4 w-4 text-muted-foreground" />
-              <span className="text-muted-foreground">Scale</span>
-              <select
-                value={plateMm}
-                onChange={(e) => setPlateMm(Number(e.target.value))}
-                disabled={busy}
-                className="rounded-md border bg-background px-2 py-1 text-sm"
-              >
-                {PLATE_DIAMETERS_MM.map((p) => (
-                  <option key={p.value} value={p.value}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-              <Button
-                size="sm"
-                variant={mode === 'calibrate' ? 'default' : 'outline'}
-                disabled={busy}
-                onClick={() => {
-                  setMode((m) => (m === 'calibrate' ? 'seed' : 'calibrate'))
-                  setAwaitingSecondPoint(false)
-                }}
-              >
-                {mode === 'calibrate'
-                  ? awaitingSecondPoint
-                    ? 'Now click the far edge'
-                    : 'Click one edge of the plate'
-                  : pixelsPerMetre
-                    ? 'Redo scale'
-                    : 'Set scale'}
-              </Button>
-              {pixelsPerMetre ? (
-                <span className="text-muted-foreground">
-                  {Math.round(calibrationPx)} px across a {plateMm} mm plate — velocity in m/s
-                </span>
-              ) : (
-                <span className="text-muted-foreground">
-                  Not set — velocity will be in pixels/second
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {busy ? (
-                <Button variant="outline" onClick={cancelTracking}>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {`Tracking… ${Math.round(progress * 100)}% — stop and keep`}
-                </Button>
-              ) : (
-                <Button onClick={retrack} disabled={!canTrack}>
-                  <Target className="h-4 w-4" />
-                  {samples ? 'Track again' : 'Track bar path'}
-                </Button>
-              )}
-              {(seed || samples) && (
-                <Button variant="ghost" onClick={reset} disabled={busy}>
-                  <RotateCcw className="h-4 w-4" /> Clear
-                </Button>
-              )}
-
-              {/* Drawing on the lift. Fullscreen is NOT here — it belongs in the
-                  video's own control bar, where a fullscreen button always is,
-                  and the stage puts it there itself. */}
-              <div className="ml-auto">
-                <DrawControls
-                  mode={mode}
-                  onModeChange={(next) => {
-                    setMode(next)
-                    setAwaitingSecondPoint(false)
-                  }}
-                  strokes={strokes}
-                  onStrokesChange={setStrokes}
-                />
-              </div>
-            </div>
-
-            {busy && (
-              <p className="text-xs text-muted-foreground">
-                Frames are read while the clip plays, so this takes about as long as the range
-                itself. The path draws as it goes.
-              </p>
-            )}
-
-            {quality && (
-              <div className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-                <Stat label="Points followed" value={`${quality.seededPoints}`} />
-                <Stat label="Kept per frame" value={`${Math.round(quality.medianSurvivalRate * 100)}%`} />
-                <Stat label="Re-locks" value={`${quality.reseeds}`} />
-                <Stat
-                  label="Held for"
-                  value={quality.lostAtFrame === null ? 'the whole range' : `${quality.lostAtFrame} frames`}
-                />
-                <Stat label="Effective frame rate" value={`${quality.effectiveFps.toFixed(1)} fps`} />
-                {samples && <Stat label="Path points" value={`${samples.length}`} />}
-              </div>
-            )}
+            <TrackingControls
+              mode={mode}
+              onModeChange={(next) => {
+                setMode(next)
+                setAwaitingSecondPoint(false)
+              }}
+              onToggleCalibrate={() => {
+                setMode((m) => (m === 'calibrate' ? 'seed' : 'calibrate'))
+                setAwaitingSecondPoint(false)
+              }}
+              awaitingSecondPoint={awaitingSecondPoint}
+              hasSeed={!!seed}
+              hasSamples={!!samples}
+              onResizeSeed={resizeSeed}
+              busy={busy}
+              showPose={showPose}
+              onShowPose={setShowPose}
+              poseStatus={pose.status}
+              poseError={pose.error}
+              correctionsCount={poseCorrections.length}
+              color={color}
+              onColor={setColor}
+              range={range}
+              duration={duration}
+              onSetStart={() => setRange((r) => ({ from: currentTime, to: Math.max(currentTime + 0.2, r?.to ?? duration) }))}
+              onSetEnd={() => setRange((r) => ({ from: Math.min(r?.from ?? 0, currentTime - 0.2), to: currentTime }))}
+              plateMm={plateMm}
+              onPlateMm={setPlateMm}
+              pixelsPerMetre={pixelsPerMetre}
+              calibrationPx={calibrationPx}
+              progress={progress}
+              canTrack={canTrack}
+              onTrack={retrack}
+              onCancel={cancelTracking}
+              onClear={reset}
+              strokes={strokes}
+              onStrokesChange={setStrokes}
+              quality={quality}
+              pathPoints={samples ? samples.length : null}
+            />
 
             {/* Asked, never assumed: an analysis is only stored if the coach
                 says so, so a throwaway look at a clip leaves nothing behind. */}
@@ -1532,15 +1367,6 @@ export default function VideoAnalysis() {
           </div>
         )}
       </div>
-    </div>
-  )
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between gap-4 border-b py-1 last:border-0">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
     </div>
   )
 }
