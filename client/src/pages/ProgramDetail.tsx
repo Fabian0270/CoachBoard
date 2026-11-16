@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { useToast } from '../components/ui/toast'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Trash2, Copy, Pencil, StickyNote, Replace, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
+import { Trash2, Copy, CopyPlus, Pencil, StickyNote, Replace, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
 import { BackLink } from '../components/PageHeader'
 import DayAttachments from '../components/discord/DayAttachments'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
@@ -24,6 +24,7 @@ import SendProgramDialog from '../components/SendProgramDialog'
 import PreviewProgramDialog from '../components/PreviewProgramDialog'
 import ExerciseEditor, { type CopyWeek } from '../components/program-detail/ExerciseEditor'
 import DayPreview from '../components/program-detail/DayPreview'
+import DuplicateProgramDialog from '../components/DuplicateProgramDialog'
 import type { SuggestionGoal } from 'coachboard-shared'
 import {
   type ToggleableColumn,
@@ -65,6 +66,7 @@ function ProgramPage() {
   const [durationOpen, setDurationOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [replaceOpen, setReplaceOpen] = useState(false)
+  const [duplicateOpen, setDuplicateOpen] = useState(false)
   const [replaceForm, setReplaceForm] = useState({ from: '', to: '', fromWeek: '0' })
   /** The week whose W-label menu is open. */
   const [weekMenu, setWeekMenu] = useState<number | null>(null)
@@ -617,6 +619,13 @@ function ProgramPage() {
           >
             <Pencil className="h-3.5 w-3.5" />
           </Button>
+          <Button
+            variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground"
+            onClick={() => setDuplicateOpen(true)}
+            aria-label="Duplicate program" title="Duplicate — for another athlete, another start, or as a template"
+          >
+            <CopyPlus className="h-3.5 w-3.5" />
+          </Button>
           <Badge variant={program.status === 'active' ? 'default' : 'secondary'} className="capitalize">{program.status}</Badge>
           <select
             value={program.focus ?? ''}
@@ -1163,6 +1172,8 @@ function ProgramPage() {
           </DialogContent>
         )}
       </Dialog>
+
+      <DuplicateProgramDialog program={program} open={duplicateOpen} onOpenChange={setDuplicateOpen} />
 
       <Dialog open={replaceOpen} onOpenChange={setReplaceOpen}>
         <DialogContent className="max-w-md">

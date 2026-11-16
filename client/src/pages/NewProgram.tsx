@@ -16,6 +16,8 @@ import type { CoachStyleProfile } from 'coachboard-shared'
 interface Athlete { id: string; name: string }
 interface ExportStyle { id: string; name: string }
 
+// "No athlete": a template, to be copied to athletes with Duplicate.
+const TEMPLATE = '__template__'
 // Sentinel for the "no saved style" Select option (Radix Select disallows "").
 const NO_STYLE = '__none__'
 
@@ -65,7 +67,7 @@ export default function NewProgram() {
 
   const [focus, setFocus] = useState('')
   // A name to use when the coach does not type one: who, what, when.
-  const athleteName = athletes.find((a) => a.id === form.athlete_id)?.name
+  const athleteName = form.athlete_id === TEMPLATE ? 'Template' : athletes.find((a) => a.id === form.athlete_id)?.name
   const focusLabel = { hypertrophy: 'Hypertrophy', strength: 'Strength', peaking: 'Peaking' }[focus] ?? 'Block'
   const startMonth = form.start_date
     ? new Date(`${form.start_date}T00:00:00Z`).toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' })
@@ -81,7 +83,7 @@ export default function NewProgram() {
     setSaving(true)
     try {
       const program = await sendJson<{ id: string }>('POST', '/api/programs', {
-        athlete_id: form.athlete_id,
+        athlete_id: form.athlete_id === TEMPLATE ? null : form.athlete_id,
         name: form.name.trim() || suggestedName,
         focus: focus || null,
         description: form.description,
@@ -109,11 +111,12 @@ export default function NewProgram() {
           <CardContent>
             <div className="space-y-4">
               <div className="space-y-1">
-                <Label>Athlete *</Label>
+                <Label>For *</Label>
                 <Select value={form.athlete_id} onValueChange={(v) => setForm({ ...form, athlete_id: v })}>
                   <SelectTrigger><SelectValue placeholder="Select athlete" /></SelectTrigger>
                   <SelectContent>
                     {athletes.map((athlete) => <SelectItem key={athlete.id} value={athlete.id}>{athlete.name}</SelectItem>)}
+                    <SelectItem value={TEMPLATE}>No athlete — a template to copy from</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

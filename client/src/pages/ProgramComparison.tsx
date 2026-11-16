@@ -7,13 +7,14 @@ import PageHeader from '../components/PageHeader'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus, Star, Search } from 'lucide-react'
+import { Plus, CopyPlus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus, Star, Search } from 'lucide-react'
 import { Input } from '../components/ui/input'
 import { matchesSearch } from '../lib/search'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
 import BookmarkStar from '../components/BookmarkStar'
+import DuplicateProgramDialog from '../components/DuplicateProgramDialog'
 import { cn } from '../lib/utils'
 
 interface Athlete { id: string; name: string }
@@ -56,6 +57,7 @@ export default function ProgramComparison() {
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [duplicating, setDuplicating] = useState<Program | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [savingRename, setSavingRename] = useState(false)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
@@ -460,6 +462,14 @@ export default function ProgramComparison() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => { setMenuOpen(null); setDuplicating(program) }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
+                  >
+                    <CopyPlus className="h-3 w-3" />
+                    Duplicate…
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => handleDelete(program)}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10"
                   >
@@ -477,6 +487,11 @@ export default function ProgramComparison() {
         open={suggestOpen}
         onOpenChange={setSuggestOpen}
         onCreated={(draftId) => navigate(`/programs/${draftId}`)}
+      />
+      <DuplicateProgramDialog
+        program={duplicating}
+        open={duplicating !== null}
+        onOpenChange={(o) => { if (!o) setDuplicating(null) }}
       />
       <ImportProgramsDialog
         open={importOpen}

@@ -36,6 +36,8 @@ import { getProgramReport } from '../services/analysisService.js'
 import { generateDraftProgram } from '../services/suggestionService.js'
 import type { ExternalParseOverrides } from 'coachboard-shared'
 import { fail } from '../lib/httpError.js'
+import { getDb } from '../db.js'
+import { duplicateProgram } from '../services/program/duplicateProgram.js'
 import { SheetTooLargeError } from '../lib/sheetBounds.js'
 
 const router = Router()
@@ -318,6 +320,28 @@ router.post('/:programId/workouts/:workoutId/exercises/restore', async (req: Req
     res.json({ exercises })
   } catch (err) {
     fail(res, 'Failed to undo', err)
+  }
+})
+
+router.post('/:programId/duplicate', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.duplicateProgram, req.body, res)
+  if (!body) return
+  try {
+    if (body.athlete_id) {
+      const athlete = await getDb().selectFrom('athletes').select(['id']).where('id', '=', body.athlete_id).executeTakeFirst()
+      if (!athlete) { res.status(400).json({ error: 'That athlete no longer exists' }); return }
+    }
+    const result = await duplicateProgram(String(req.params.programId), {
+      athleteId: body.athlete_id,
+      name: body.name,
+      startDate: body.start_date,
+      keepResults: body.keep_results === true,
+      scaleLoads: body.scale_loads === true,
+    })
+    if (!result) { res.status(404).json({ error: 'Program not found' }); return }
+    res.status(201).json(result)
+  } catch (err) {
+    fail(res, 'Failed to duplicate the program', err)
   }
 })
 

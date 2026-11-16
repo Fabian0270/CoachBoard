@@ -86,7 +86,8 @@ export const schemas = {
 
   program: {
     create: z.object({
-      athlete_id: z.uuid(),
+      // null: a template with no athlete (Feature G8).
+      athlete_id: z.uuid().nullable(),
       name: z.string().min(1).max(200),
       description: optionalString(2000),
       start_date: optionalIsoDate,
@@ -200,6 +201,15 @@ export const schemas = {
         exercises: z.array(restoredExercise).max(300),
       }).nullable(),
     })).min(1).max(120),
+  }),
+
+  duplicateProgram: z.object({
+    // null keeps the copy as a template with no athlete.
+    athlete_id: z.uuid().nullable(),
+    name: z.string().trim().min(1).max(200),
+    start_date: isoDate,
+    keep_results: z.boolean().optional(),
+    scale_loads: z.boolean().optional(),
   }),
 
   renameExercise: z.object({

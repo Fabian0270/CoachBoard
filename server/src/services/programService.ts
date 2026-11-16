@@ -132,7 +132,8 @@ export async function findProgramForExport(id: string) {
 }
 
 export async function createProgram(data: {
-  athlete_id: string
+  /** null = no athlete: a template. */
+  athlete_id: string | null
   name: string
   description?: string | null
   start_date?: string | null
