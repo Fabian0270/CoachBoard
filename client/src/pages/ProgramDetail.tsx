@@ -37,7 +37,19 @@ import { errorMessage, getJson, sendJson } from '../lib/api'
 import { localToday } from '../lib/dates'
 import LoadError from '../components/LoadError'
 
+/**
+ * One page per program. Going straight from one program to another kept this
+ * page mounted: until the new program loaded it showed the previous one's
+ * calendar under the new address, so a quick click opened a day of the old
+ * program and its edits were sent to the new one. Keyed by id, the page starts
+ * over for each program — open day, clipboard and undo included.
+ */
 export default function ProgramDetail() {
+  const { id } = useParams<{ id: string }>()
+  return <ProgramPage key={id} />
+}
+
+function ProgramPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const toast = useToast()

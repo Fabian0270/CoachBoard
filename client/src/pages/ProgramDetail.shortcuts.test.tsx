@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Route, Routes } from 'react-router-dom'
+import { Link, Route, Routes } from 'react-router-dom'
 import ProgramDetail from './ProgramDetail'
 import { renderScreen, serve } from '../test/render'
 
@@ -35,6 +35,32 @@ const open = async () => {
   )
   await screen.findByRole('heading', { name: 'Spring Block' })
 }
+
+describe('Program page — going from one program to another', () => {
+  it("never shows the previous program's days under the next one's address", async () => {
+    let answerNext: (r: { body: unknown }) => void = () => {}
+    serve({
+      '/api/programs/p1': { body: program },
+      '/api/programs/p2': () => new Promise((resolve) => { answerNext = resolve }),
+    })
+    renderScreen(
+      <Routes>
+        <Route path="/programs/:id" element={<><Link to="/programs/p2">Next block</Link><ProgramDetail /></>} />
+      </Routes>,
+      { path: '/programs/p1' },
+    )
+    await screen.findByRole('heading', { name: 'Spring Block' })
+    expect(screen.getByText('Squat')).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('link', { name: 'Next block' }))
+    // While the next program loads, the old one's calendar must be gone.
+    await waitFor(() => expect(screen.queryByText('Squat')).toBeNull())
+    expect(screen.queryByRole('heading', { name: 'Spring Block' })).toBeNull()
+
+    answerNext({ body: { ...program, id: 'p2', name: 'Summer Block', workouts: [] } })
+    expect(await screen.findByRole('heading', { name: 'Summer Block' })).toBeTruthy()
+  })
+})
 
 describe('Program page — shortcuts', () => {
   it('Ctrl+Shift+C opens Columns and Ctrl+Shift+D opens Dates', async () => {
