@@ -7,6 +7,7 @@ import { failedEditKeyForColumn } from '../../lib/failedEdits'
 import { useToast } from '../ui/toast'
 import { matchSuggestions } from '../../lib/exerciseSuggestions'
 import type { LoadHint } from '../../lib/loadHint'
+import { isCellBlock } from '../../lib/pasteGrid'
 
 interface ExerciseRowProps {
   exercise: Exercise
@@ -21,6 +22,8 @@ interface ExerciseRowProps {
    * these, because where "next" is depends on the rows around this one.
    */
   onKey: (action: RowKeyAction, colKey: string) => void
+  /** A block of cells pasted from a spreadsheet into this row, at this column. */
+  onPasteBlock?: (colKey: string, text: string) => void
   /** The coach's own exercise names, most used first. Offered before the built-in list. */
   suggestions?: readonly string[]
   /** What this row was a week earlier, e.g. "Last week: 5×5 · RPE 8 → did 140 @8". */
@@ -50,7 +53,7 @@ export type RowKeyAction =
 
 const NO_NAMES: readonly string[] = []
 
-export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, onKey, suggestions = NO_NAMES, lastWeek, loadHint, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
+export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, onKey, onPasteBlock, suggestions = NO_NAMES, lastWeek, loadHint, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
   const toast = useToast()
   /**
    * Whether this cell holds a value the server has not accepted.
@@ -248,6 +251,20 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
   }
 
   /**
+   * A block of cells from a spreadsheet goes to the editor, which spreads it
+   * over this row and new ones. Ordinary text pastes into the cell as usual.
+   */
+  const onCellPaste = (e: React.ClipboardEvent, col: ColDef) => {
+    const text = e.clipboardData.getData('text/plain')
+    if (!onPasteBlock || !isCellBlock(text)) return
+    e.preventDefault()
+    // What was typed in this row before the paste is not saved over it: the
+    // paste is what the coach meant.
+    dirtyRef.current.clear()
+    onPasteBlock(col.key, text)
+  }
+
+  /**
    * Keys inside a cell. Everything the mouse can do in the table has a key
    * here; the list of them is in Settings → Help.
    */
@@ -362,6 +379,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                       data-cell={`${exercise.id}:${c.key}`}
                       onChange={(e) => { edit(c.key, e.target.value); setListClosed(false); setHighlight(-1) }}
                       onKeyDown={(e) => onCellKey(e, c)}
+                      onPaste={(e) => onCellPaste(e, c)}
                       onFocus={() => setNameFocused(true)}
                       onBlur={() => { commit(c); setNameFocused(false); setListClosed(true); setHighlight(-1) }}
                       placeholder={c.placeholder}
@@ -426,6 +444,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
             data-cell={`${exercise.id}:${c.key}`}
             onChange={(e) => edit(c.key, e.target.value)}
             onKeyDown={(e) => onCellKey(e, c)}
+                      onPaste={(e) => onCellPaste(e, c)}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
             title={unsavedTitle}
@@ -438,6 +457,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
             data-cell={`${exercise.id}:${c.key}`}
             onChange={(e) => edit(c.key, e.target.value)}
             onKeyDown={(e) => onCellKey(e, c)}
+                      onPaste={(e) => onCellPaste(e, c)}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
             title={unsavedTitle}
@@ -457,6 +477,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                   data-cell={`${exercise.id}:${c.key}`}
                   onChange={(e) => edit(c.key, e.target.value)}
                   onKeyDown={(e) => onCellKey(e, c)}
+                      onPaste={(e) => onCellPaste(e, c)}
                   onBlur={() => commit(c)}
                   placeholder={`≈ ${loadHint.kg}`}
                   title={`Suggested from ${loadHint.basis}. Ctrl+L or "Use" fills it in.`}

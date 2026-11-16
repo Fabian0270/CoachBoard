@@ -7,6 +7,7 @@ import {
   createExercise,
   addSetToExercise,
   duplicateExercise,
+  pasteExercises,
 } from '../programService.js'
 
 let athleteId: string
@@ -51,6 +52,39 @@ describe('addSetToExercise', () => {
     // …and a third set then starts from that one.
     const second = await addSetToExercise(ex.id, w.id, p.id)
     expect(second!.exercises[2]).toMatchObject({ sets: '3', reps: '6' })
+  })
+})
+
+describe('pasteExercises', () => {
+  it('fills the anchor row and puts the new rows directly under its exercise, after its sets', async () => {
+    const { p, w } = await day('Paste')
+    const a = await createExercise({ workout_id: w.id, name: 'Squat', order_index: 0 })
+    await addSetToExercise(a.id, w.id, p.id)
+    await createExercise({ workout_id: w.id, name: 'Rows', order_index: 2 })
+
+    const res = await pasteExercises(w.id, p.id, a.id, { sets: '5', reps: '5' }, [
+      { name: 'Bench', sets: '4', reps: '6', weight: 100 },
+      { name: 'Dips', intensity: 'RPE 8' },
+    ])
+    // name|sets|reps|weight|intensity. The second Squat row is its set row.
+    expect(res!.exercises.map((e) => `${e.name}|${e.sets ?? ''}|${e.reps ?? ''}|${e.weight ?? ''}|${e.intensity ?? ''}`)).toEqual([
+      'Squat|5|5||', 'Squat||||', 'Bench|4|6|100|', 'Dips||||RPE 8', 'Rows||||',
+    ])
+    expect(res!.exercises.map((e) => e.order_index)).toEqual([0, 1, 2, 3, 4])
+    expect(res!.newIds).toHaveLength(2)
+  })
+
+  it('appends to the end of the day with no anchor', async () => {
+    const { p, w } = await day('Paste end')
+    await createExercise({ workout_id: w.id, name: 'Squat', order_index: 0 })
+    const res = await pasteExercises(w.id, p.id, null, null, [{ name: 'Rows' }])
+    expect(res!.exercises.map((e) => e.name)).toEqual(['Squat', 'Rows'])
+  })
+
+  it('refuses a day of another program', async () => {
+    const { w } = await day('Mine')
+    const other = await createProgram({ athlete_id: athleteId, name: 'Other' })
+    expect(await pasteExercises(w.id, other.id, null, null, [{ name: 'x' }])).toBeNull()
   })
 })
 

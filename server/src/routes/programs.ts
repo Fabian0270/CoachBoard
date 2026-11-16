@@ -18,6 +18,7 @@ import {
   addSetToExercise,
   duplicateExercise,
   findExerciseNames,
+  pasteExercises,
   copyWorkoutDay,
   moveWorkoutDay,
   restoreDays,
@@ -265,6 +266,22 @@ router.post('/:programId/workouts/:workoutId/exercises/:exerciseId/add-set', asy
     res.status(201).json(result)
   } catch (err) {
     fail(res, 'Failed to add set', err)
+  }
+})
+
+// Before the :exerciseId routes, or "paste" would be read as an exercise id.
+router.post('/:programId/workouts/:workoutId/exercises/paste', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.pasteExercises, req.body, res)
+  if (!body) return
+  try {
+    const result = await pasteExercises(
+      String(req.params.workoutId), String(req.params.programId),
+      body.anchorId ?? null, body.anchorPatch ?? null, body.rows,
+    )
+    if (!result) { res.status(404).json({ error: 'That training day or exercise no longer exists' }); return }
+    res.status(201).json(result)
+  } catch (err) {
+    fail(res, 'Failed to paste the rows', err)
   }
 })
 

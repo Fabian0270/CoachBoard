@@ -243,6 +243,81 @@ async function addSetInTransaction(
 // and RPE belong to the lift that was done, not to the copy.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Paste — rows copied from a spreadsheet. The first row fills the exercise the
+// cursor was in (from the column it was in); the rest become new exercises
+// directly under it, or at the end of the day when there is no such row.
+// ---------------------------------------------------------------------------
+
+export interface PastedFields {
+  name?: string
+  sets?: string | null
+  reps?: string | null
+  weight?: number | null
+  rest_time?: string | null
+  intensity?: string | null
+  load_used?: string | null
+  rpe?: string | null
+}
+
+export async function pasteExercises(
+  workoutId: string,
+  programId: string,
+  anchorId: string | null,
+  anchorPatch: PastedFields | null,
+  rows: PastedFields[],
+) {
+  return getDb().transaction().execute(async (db) => {
+    const workout = await db.selectFrom('workouts').select(['id'])
+      .where('id', '=', workoutId).where('program_id', '=', programId).executeTakeFirst()
+    if (!workout) return null
+
+    const all = await db.selectFrom('exercises').selectAll()
+      .where('workout_id', '=', workoutId).orderBy('order_index').execute()
+    const anchor = anchorId ? all.find((e) => e.id === anchorId) ?? null : null
+    if (anchorId && !anchor) return null
+
+    if (anchor && anchorPatch && Object.keys(anchorPatch).length > 0) {
+      await db.updateTable('exercises').set(anchorPatch).where('id', '=', anchor.id).execute()
+    }
+
+    // New rows go under the anchor's whole exercise (after its set rows).
+    let after = anchor
+      ? Math.max(...all.filter((e) => e.id === anchor.id || (anchor.group_id && e.group_id === anchor.group_id)).map((e) => e.order_index))
+      : (all.length ? Math.max(...all.map((e) => e.order_index)) : -1)
+    for (const e of all.filter((x) => x.order_index > after)) {
+      await db.updateTable('exercises').set({ order_index: e.order_index + rows.length }).where('id', '=', e.id).execute()
+    }
+    const newIds: string[] = []
+    for (const r of rows) {
+      const id = uuidv4()
+      newIds.push(id)
+      after++
+      await db.insertInto('exercises').values({
+        id,
+        workout_id: workoutId,
+        name: r.name ?? '',
+        sets: r.sets ?? null,
+        reps: r.reps ?? null,
+        weight: r.weight ?? null,
+        duration: null,
+        distance: null,
+        notes: null,
+        order_index: after,
+        rest_time: r.rest_time ?? null,
+        intensity: r.intensity ?? null,
+        load_used: r.load_used ?? null,
+        rpe: r.rpe ?? null,
+        group_id: null,
+      }).execute()
+    }
+
+    const exercises = await db.selectFrom('exercises').selectAll()
+      .where('workout_id', '=', workoutId).orderBy('order_index').execute()
+    return { exercises, newIds }
+  })
+}
+
 export async function duplicateExercise(exerciseId: string, workoutId: string, programId: string) {
   return getDb().transaction().execute(async (db) => {
     const workout = await db

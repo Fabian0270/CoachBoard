@@ -16,6 +16,18 @@ const optionalIsoDate = z.preprocess(emptyToNull, isoDate.nullable().optional())
 const optionalFocus = z.preprocess(emptyToNull, focusEnum.nullable().optional())
 const optionalEmail = z.preprocess(emptyToNull, z.email().max(200).nullable().optional())
 
+/** The cells a paste from a spreadsheet can fill. */
+const pastedFields = z.object({
+  name: z.string().max(200).optional(),
+  sets: optionalString(50),
+  reps: optionalString(50),
+  weight: z.number().min(0).nullable().optional(),
+  rest_time: optionalString(50),
+  intensity: optionalString(100),
+  load_used: optionalString(100),
+  rpe: optionalString(50),
+})
+
 /** One exercise row exactly as it was stored, id included — what an undo puts back. */
 const restoredExercise = z.object({
   id: z.uuid(),
@@ -220,6 +232,12 @@ export const schemas = {
 
   restoreExercises: z.object({
     exercises: z.array(restoredExercise).min(1).max(300),
+  }),
+
+  pasteExercises: z.object({
+    anchorId: z.uuid().nullable().optional(),
+    anchorPatch: pastedFields.nullable().optional(),
+    rows: z.array(pastedFields).max(200),
   }),
 
   reorderExercises: z.object({

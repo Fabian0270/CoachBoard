@@ -249,6 +249,7 @@ export function useWorkoutActions(
   }
 
   return {
+    ensureWorkout,
     addExercise,
     saveExerciseField,
     deleteExercise,

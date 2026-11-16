@@ -55,6 +55,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: [['Ctrl', 'Enter']], does: 'Add a set' },
       { keys: [['Ctrl', 'D']], does: 'Duplicate the exercise' },
       { keys: [['Ctrl', 'L']], does: "Use the suggested load from the athlete's max" },
+      { keys: [['Ctrl', 'V']], does: 'Paste rows copied from Excel: they fill in from the cell you are in, and down into new rows' },
       { keys: [['Ctrl', 'Delete']], does: 'Delete the exercise' },
       { keys: [['Alt', '↑'], ['Alt', '↓']], does: 'Move the exercise up / down' },
       { keys: [['Page Down'], ['Page Up']], does: 'Next / previous day' },

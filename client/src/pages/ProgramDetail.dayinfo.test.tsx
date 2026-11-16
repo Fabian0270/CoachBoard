@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ProgramDetail from './ProgramDetail'
 import { renderScreen, serve } from '../test/render'
@@ -149,6 +149,54 @@ describe('Program — replace an exercise across the block', () => {
     expect(screen.getByText(/Changes 1 training day\./)).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: 'Replace' }))
     await waitFor(() => expect(bodies('/rename-exercise')).toEqual([{ from: 'Squat', to: 'Box Squat', from_date: '2026-06-22' }]))
+  })
+})
+
+describe('Day editor — pasting rows from a spreadsheet', () => {
+  const posts = (suffix: string) =>
+    (globalThis.fetch as unknown as { mock: { calls: [unknown, RequestInit?][] } }).mock.calls
+      .filter(([url, init]) => init?.method === 'POST' && String(url).endsWith(suffix))
+      .map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>)
+  const paste = (el: Element, text: string) =>
+    fireEvent.paste(el, { clipboardData: { getData: (type: string) => (type === 'text/plain' ? text : '') } })
+
+  it('fills the row from the cell pasted into, and adds the rest as new rows', async () => {
+    serve({
+      '/api/programs/p1': { body: program },
+      'POST /api/programs/p1/workouts/w2/exercises/paste': { status: 201, body: { exercises: [], newIds: [] } },
+    })
+    await openDay('2026-06-22')
+    // Columns here: Exercise, Sets, Reps. Pasted into Squat's name.
+    paste(screen.getByDisplayValue('Squat'), 'Back Squat\t4\t4\r\nLunge\t3\t10\r\n')
+    await waitFor(() => expect(posts('/exercises/paste')).toHaveLength(1))
+    expect(posts('/exercises/paste')[0]).toEqual({
+      anchorId: 'b1',
+      anchorPatch: { name: 'Back Squat', sets: '4', reps: '4' },
+      rows: [{ name: 'Lunge', sets: '3', reps: '10' }],
+    })
+    expect(await screen.findByText('Pasted 2 rows')).toBeTruthy()
+  })
+
+  it('leaves ordinary text to the cell', async () => {
+    serve({ '/api/programs/p1': { body: program } })
+    await openDay('2026-06-22')
+    paste(screen.getByDisplayValue('Squat'), 'Pause Squat')
+    expect(posts('/exercises/paste')).toHaveLength(0)
+  })
+
+  it('creates the day when pasted into an empty one', async () => {
+    serve({
+      '/api/programs/p1': { body: program },
+      'POST /api/programs/p1/workouts': { status: 201, body: day('w9', '2026-06-17', []) },
+      'POST /api/programs/p1/workouts/w9/exercises/paste': { status: 201, body: { exercises: [], newIds: [] } },
+    })
+    await openDay('2026-06-17')
+    paste(screen.getByRole('button', { name: /Add exercise/ }), 'Squat\t5\t5\r\nBench\t5\t5\r\n')
+    await waitFor(() => expect(posts('/w9/exercises/paste')).toHaveLength(1))
+    expect(posts('/w9/exercises/paste')[0]).toEqual({
+      anchorId: null, anchorPatch: null,
+      rows: [{ name: 'Squat', sets: '5', reps: '5' }, { name: 'Bench', sets: '5', reps: '5' }],
+    })
   })
 })
 

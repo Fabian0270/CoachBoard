@@ -12,6 +12,7 @@ import {
 } from '../../lib/programUtils'
 import ExerciseRow, { type RowKeyAction } from './ExerciseRow'
 import { loadHint, type StoredMax } from '../../lib/loadHint'
+import { isCellBlock } from '../../lib/pasteGrid'
 
 interface ExerciseEditorProps {
   workout: Workout | null
@@ -30,6 +31,12 @@ interface ExerciseEditorProps {
   maxes?: StoredMax[]
   /** Save the coach's note for the day. Resolves false when it did not save. */
   onSaveNote: (notes: string) => Promise<boolean>
+  /**
+   * Cells pasted from a spreadsheet: into the row `anchorId` from column
+   * `start` and down into new rows, or at the end of the day when no row had
+   * the cursor.
+   */
+  onPasteRows?: (anchorId: string | null, start: ColKey, text: string) => void
   /** The coach's own exercise names, most used first. Offered before the built-in list. */
   suggestions?: readonly string[]
   onSaveField: (exerciseId: string, patch: Partial<Exercise>) => Promise<boolean>
@@ -93,7 +100,7 @@ export interface CopyDay {
 }
 export interface CopyWeek { weekIndex: number; days: CopyDay[] }
 
-export default function ExerciseEditor({ workout, enabledColumns, programId, copyGrid, unsavedKeys, onAdd, onDuplicate, previous, maxes = NO_MAXES, onSaveNote, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
+export default function ExerciseEditor({ workout, enabledColumns, programId, copyGrid, unsavedKeys, onAdd, onDuplicate, previous, maxes = NO_MAXES, onSaveNote, onPasteRows, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
   const exercises = workout?.exercises ?? []
   const columns = buildColumns(enabledColumns)
   const [widths, setWidth] = useColumnWidths(programId, columns)
@@ -477,7 +484,19 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
   )
 
   return (
-    <div className="flex min-h-0 flex-col gap-3">
+    <div
+      className="flex min-h-0 flex-col gap-3"
+      // A block pasted with no cell focused (an empty day, or the cursor on
+      // "Add exercise") goes to the end of the day, starting at Exercise.
+      onPaste={(e) => {
+        const target = e.target as HTMLElement
+        if (!onPasteRows || target.closest('[data-cell], #day-note, input, textarea')) return
+        const text = e.clipboardData.getData('text/plain')
+        if (!isCellBlock(text)) return
+        e.preventDefault()
+        onPasteRows(null, 'name', text)
+      }}
+    >
       {/* The table is the part that scrolls; the buttons under it stay put. */}
       <div
         ref={tableWrapperRef}
@@ -548,6 +567,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
                           onDelete={() => onDeleteExercise(ex.id)}
                           onAddSet={i === group.exercises.length - 1 ? () => addSetAndFocus(ex.id) : undefined}
                           onKey={(action, col) => handleRowKey(ex, action, col)}
+                          onPasteBlock={onPasteRows ? (col, text) => onPasteRows(ex.id, col as ColKey, text) : undefined}
                           lastWeek={lastWeekFor.get(ex.id)}
                           // A set row has no name of its own; it is the exercise above it.
                           loadHint={maxes.length ? loadHint({ ...ex, name: group.exercises[0].name }, maxes) : null}

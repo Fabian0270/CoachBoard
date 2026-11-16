@@ -36,10 +36,13 @@ import {
   toIsoDate,
   addDays,
   parseIsoDate,
+  buildColumns,
+  type ColKey,
   type Program,
 } from '../lib/programUtils'
 import { errorMessage, getJson, getList, sendJson } from '../lib/api'
 import type { StoredMax } from '../lib/loadHint'
+import { parseCellBlock, rowToFields } from '../lib/pasteGrid'
 import { localToday } from '../lib/dates'
 import LoadError from '../components/LoadError'
 
@@ -162,7 +165,7 @@ function ProgramPage() {
   }
 
   const {
-    addExercise, saveExerciseField, deleteExercise, addSet, duplicateExercise, saveDayNote, reorderExercises,
+    ensureWorkout, addExercise, saveExerciseField, deleteExercise, addSet, duplicateExercise, saveDayNote, reorderExercises,
     failedEdits, retryFailedEdits,
   } = useWorkoutActions(
     id, workoutByDate, setProgram, flashCell,
@@ -496,6 +499,37 @@ function ProgramPage() {
       toast.error(`Could not save the name and description. ${errorMessage(err)}`)
     } finally {
       setSavingDetails(false)
+    }
+  }
+
+  // Rows pasted from a spreadsheet into a day, with Undo of the whole paste.
+  const pasteRows = async (date: string, anchorId: string | null, start: ColKey, text: string) => {
+    if (!id || !program) return
+    const cols = buildColumns(program.enabled_columns ?? TOGGLEABLE_COLUMNS).map((c) => c.key)
+    const grid = parseCellBlock(text)
+    if (grid.length === 0) return
+    let notNumbers = 0
+    let ignored = 0
+    const read = (cells: string[], from: ColKey) => {
+      const r = rowToFields(cells, cols, from)
+      notNumbers += r.notNumbers
+      ignored += r.ignored
+      return r.fields
+    }
+    const anchorPatch = anchorId ? read(grid[0], start) : null
+    // New rows start at the same column as the first, the way a spreadsheet
+    // pastes a block.
+    const rows = (anchorId ? grid.slice(1) : grid).map((cells) => read(cells, start))
+    const ok = await days.withUndo([date], async () => {
+      const workout = workoutByDate.get(date) ?? (await ensureWorkout(date))
+      if (!workout) throw new Error('The day could not be created.')
+      await sendJson('POST', `/api/programs/${id}/workouts/${workout.id}/exercises/paste`, { anchorId, anchorPatch, rows })
+    }, `Pasted ${grid.length} row${grid.length === 1 ? '' : 's'}`)
+    if (ok && (notNumbers || ignored)) {
+      toast.info([
+        notNumbers ? `${notNumbers} Load Cap value${notNumbers === 1 ? ' was' : 's were'} not a number and left out.` : '',
+        ignored ? `${ignored} cell${ignored === 1 ? '' : 's'} past the last column ${ignored === 1 ? 'was' : 'were'} left out.` : '',
+      ].filter(Boolean).join(' '))
     }
   }
 
@@ -1074,6 +1108,7 @@ function ProgramPage() {
               previous={workoutByDate.get(toIsoDate(addDays(parseIsoDate(openDate), -7))) ?? null}
               onSaveNote={(notes) => saveDayNote(openDate, notes)}
               maxes={athleteMaxes}
+              onPasteRows={(anchorId, start, text) => void pasteRows(openDate, anchorId, start, text)}
               onSaveField={(exerciseId, patch) =>
                 openWorkout
                   ? saveExerciseField(openDate, openWorkout.id, exerciseId, patch)
