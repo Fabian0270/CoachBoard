@@ -8,10 +8,14 @@ import {
 } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
-import { Mail, Send, ExternalLink, AlertTriangle, Lock, MessageSquare, Database } from 'lucide-react'
+import { Mail, Send, ExternalLink, AlertTriangle, Lock, MessageSquare, Database, Keyboard } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import DiscordSettingsCard from '../components/discord/DiscordSettingsCard'
 import DataSettingsCard from '../components/DataSettingsCard'
+import HelpSettingsCard from '../components/HelpSettingsCard'
+import { useSearchParams } from 'react-router-dom'
+
+const TABS = ['email', 'discord', 'data', 'help']
 import { errorMessage, getJson } from '../lib/api'
 
 type Provider = 'gmail' | 'outlook' | 'custom'
@@ -60,6 +64,7 @@ interface PublicEmailSettings {
 
 export default function Settings() {
   const toast = useToast()
+  const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -167,11 +172,13 @@ export default function Settings() {
     <div className="mx-auto max-w-3xl space-y-6">
       <PageHeader title="Settings" />
 
-      <Tabs defaultValue="email">
+      {/* ?tab=help and the like open a tab directly. */}
+      <Tabs defaultValue={TABS.includes(searchParams.get('tab') ?? '') ? searchParams.get('tab')! : 'email'}>
         <TabsList>
           <TabsTrigger value="email"><Mail className="h-4 w-4 mr-2" />Email delivery</TabsTrigger>
           <TabsTrigger value="discord"><MessageSquare className="h-4 w-4 mr-2" />Discord</TabsTrigger>
           <TabsTrigger value="data"><Database className="h-4 w-4 mr-2" />Your data</TabsTrigger>
+          <TabsTrigger value="help"><Keyboard className="h-4 w-4 mr-2" />Help</TabsTrigger>
         </TabsList>
         <TabsContent value="email">
       <Card>
@@ -306,6 +313,9 @@ export default function Settings() {
         </TabsContent>
         <TabsContent value="data">
           <DataSettingsCard />
+        </TabsContent>
+        <TabsContent value="help">
+          <HelpSettingsCard />
         </TabsContent>
       </Tabs>
     </div>
