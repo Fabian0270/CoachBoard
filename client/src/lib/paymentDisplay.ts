@@ -25,7 +25,8 @@ export function formatAmount(amount: number, currency: string): string {
   }
 }
 
-export const todayIso = (): string => new Date().toISOString().slice(0, 10)
+// Local, not UTC: see lib/dates.ts.
+export { localToday as todayIso } from './dates'
 
 // Add `days` to a YYYY-MM-DD date, returning YYYY-MM-DD. Used to turn
 // "paid N weeks forward" into a concrete paid-through date.

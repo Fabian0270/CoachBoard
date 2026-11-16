@@ -8,10 +8,12 @@ import { Label } from './ui/label'
 import { useToast } from './ui/toast'
 import { useConfirm } from './ui/confirm-dialog'
 import { Plus, Trash2 } from 'lucide-react'
+import { localToday } from '../lib/dates'
 
 const SUGGESTED_LIFTS = ['Squat', 'Bench Press', 'Deadlift']
 
-const today = () => new Date().toISOString().slice(0, 10)
+// Local, not UTC: a PR logged just after midnight belongs to the new day.
+const today = localToday
 
 function formatWeight(w: number): string {
   return Number.isInteger(w) ? String(w) : w.toFixed(1)

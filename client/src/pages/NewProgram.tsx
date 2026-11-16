@@ -9,7 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { useToast } from '../components/ui/toast'
 import PageHeader, { BackLink } from '../components/PageHeader'
 import TemplatePicker from '../components/TemplatePicker'
-import { errorMessage, getList } from '../lib/api'
+import { errorMessage, getJson, getList, sendJson } from '../lib/api'
+import { blockDates, nextMonday } from '../lib/dates'
+import type { CoachStyleProfile } from 'coachboard-shared'
 
 interface Athlete { id: string; name: string }
 interface ExportStyle { id: string; name: string }
@@ -25,14 +27,21 @@ export default function NewProgram() {
   const [styles, setStyles] = useState<ExportStyle[]>([])
   const [styleSourceId, setStyleSourceId] = useState<string>(NO_STYLE)
   const [builtinTemplate, setBuiltinTemplate] = useState<string>('coachboard')
+  // Start date and length in one step. They used to be two optional dates, and a
+  // program created without them landed on a second "Set program duration" form
+  // before the coach could write a single exercise.
   const [form, setForm] = useState({
     athlete_id: searchParams.get('athlete_id') ?? '',
     name: '',
     description: '',
-    start_date: '',
-    end_date: '',
+    start_date: nextMonday(),
+    weeks: '4',
     status: 'active',
   })
+  // The coach's usual block length replaces the 4 — unless they have already
+  // typed a length themselves.
+  const [weeksTouched, setWeeksTouched] = useState(false)
+  const [usualWeeks, setUsualWeeks] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -44,32 +53,38 @@ export default function NewProgram() {
     getList<ExportStyle>('/api/export-styles')
       .then(setStyles)
       .catch((err) => toast.error(`Could not load your saved Excel styles. ${errorMessage(err)}`))
+    // A default only; on failure the form simply keeps 4.
+    getJson<CoachStyleProfile>('/api/style-profile')
+      .then((p) => { if (p?.usable && p.preferredBlockWeeks) setUsualWeeks(p.preferredBlockWeeks) })
+      .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (usualWeeks && !weeksTouched) setForm((f) => ({ ...f, weeks: String(usualWeeks) }))
+  }, [usualWeeks, weeksTouched])
+
+  const weeks = Number(form.weeks)
+  const dates = form.start_date && weeks >= 1 && weeks <= 52 ? blockDates(form.start_date, weeks) : null
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!dates) return
     setSaving(true)
     try {
-      const res = await fetch('/api/programs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          export_style_id: styleSourceId === NO_STYLE ? undefined : styleSourceId,
-          // The built-in look only applies when no saved coach style is chosen.
-          builtin_template: styleSourceId === NO_STYLE ? builtinTemplate : undefined,
-        }),
+      const program = await sendJson<{ id: string }>('POST', '/api/programs', {
+        athlete_id: form.athlete_id,
+        name: form.name,
+        description: form.description,
+        status: form.status,
+        start_date: dates.start,
+        end_date: dates.end,
+        export_style_id: styleSourceId === NO_STYLE ? undefined : styleSourceId,
+        // The built-in look only applies when no saved coach style is chosen.
+        builtin_template: styleSourceId === NO_STYLE ? builtinTemplate : undefined,
       })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        toast.error(`Failed to create program: ${err.error ?? JSON.stringify(err)}`)
-        setSaving(false)
-        return
-      }
-      const program = await res.json()
       navigate(`/programs/${program.id}`)
     } catch (err) {
-      toast.error(`Network error: ${String(err)}`)
+      toast.error(`Could not create the program. ${errorMessage(err)}`)
       setSaving(false)
     }
   }
@@ -117,15 +132,26 @@ export default function NewProgram() {
               )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label htmlFor="start">Start Date</Label>
-                  <Input id="start" type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} />
+                  <Label htmlFor="start">Start date *</Label>
+                  <Input id="start" type="date" required value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="end">End Date</Label>
-                  <Input id="end" type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} />
+                  <Label htmlFor="weeks">Weeks *</Label>
+                  <Input
+                    id="weeks" type="number" min="1" max="52" required
+                    value={form.weeks}
+                    onChange={(e) => { setWeeksTouched(true); setForm({ ...form, weeks: e.target.value }) }}
+                  />
                 </div>
               </div>
-              <Button type="submit" disabled={saving || !form.athlete_id}>{saving ? 'Saving...' : 'Create Program'}</Button>
+              {dates && (
+                <p className="text-xs text-muted-foreground">
+                  <span className="num text-foreground">{dates.start} → {dates.end}</span>
+                  {usualWeeks && !weeksTouched && weeks === usualWeeks ? ' · your usual block length' : ''}
+                  {dates.start !== form.start_date ? ' · programs start on the Monday of that week' : ''}
+                </p>
+              )}
+              <Button type="submit" disabled={saving || !form.athlete_id || !dates}>{saving ? 'Saving…' : 'Create program'}</Button>
             </div>
           </CardContent>
         </Card>

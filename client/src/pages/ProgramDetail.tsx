@@ -9,11 +9,12 @@ import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
+import { Textarea } from '../components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { useToast } from '../components/ui/toast'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Trash2, Copy, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
+import { Trash2, Copy, Pencil, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
 import { BackLink } from '../components/PageHeader'
 import DayAttachments from '../components/discord/DayAttachments'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
@@ -43,6 +44,9 @@ export default function ProgramDetail() {
   const [setupForm, setSetupForm] = useState({ start_date: '', weeks: '4' })
   const [savingDuration, setSavingDuration] = useState(false)
   const [durationOpen, setDurationOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [detailsForm, setDetailsForm] = useState({ name: '', description: '' })
+  const [savingDetails, setSavingDetails] = useState(false)
   const [openDate, setOpenDate] = useState<string | null>(null)
   const [cellStatus, setCellStatus] = useState<Record<string, 'saving' | 'saved' | 'error'>>({})
   const [columnsOpen, setColumnsOpen] = useState(false)
@@ -358,6 +362,29 @@ export default function ProgramDetail() {
     }
   }
 
+  const openDetails = () => {
+    if (!program) return
+    setDetailsForm({ name: program.name, description: program.description ?? '' })
+    setDetailsOpen(true)
+  }
+  const saveDetails = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id || !detailsForm.name.trim()) return
+    setSavingDetails(true)
+    try {
+      const updated = await sendJson<Partial<Program>>('PUT', `/api/programs/${id}`, {
+        name: detailsForm.name.trim(),
+        description: detailsForm.description.trim(),
+      })
+      setProgram((p) => (p ? { ...p, name: updated.name ?? p.name, description: updated.description ?? null } : p))
+      setDetailsOpen(false)
+    } catch (err) {
+      toast.error(`Could not save the name and description. ${errorMessage(err)}`)
+    } finally {
+      setSavingDetails(false)
+    }
+  }
+
   // Opens over the calendar. It used to blank the program's dates locally to
   // swap the whole calendar for the setup form.
   const handleChangeDuration = () => {
@@ -426,6 +453,14 @@ export default function ProgramDetail() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <h1 className="text-[28px] font-semibold leading-tight tracking-tight">{program.name}</h1>
+          {/* Name and description used to be fixed once created: renaming was
+              only in the Programs list, and the description not at all. */}
+          <Button
+            variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground"
+            onClick={openDetails} aria-label="Edit name and description" title="Edit name and description"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
           <Badge variant={program.status === 'active' ? 'default' : 'secondary'} className="capitalize">{program.status}</Badge>
           <select
             value={program.focus ?? ''}
@@ -916,6 +951,42 @@ export default function ProgramDetail() {
             </div>
           </DialogContent>
         )}
+      </Dialog>
+
+      <Dialog open={detailsOpen} onOpenChange={(o) => { if (!savingDetails) setDetailsOpen(o) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Name and description</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={saveDetails} className="space-y-4">
+            <div className="space-y-1">
+              <Label htmlFor="program_name">Name</Label>
+              <Input
+                id="program_name" required autoFocus maxLength={200}
+                value={detailsForm.name}
+                onChange={(e) => setDetailsForm({ ...detailsForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="program_description">Description</Label>
+              <Textarea
+                id="program_description" maxLength={2000}
+                value={detailsForm.description}
+                onChange={(e) => setDetailsForm({ ...detailsForm, description: e.target.value })}
+                onKeyDown={(e) => {
+                  // Ctrl+Enter saves from inside the text; Enter is a new line.
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.currentTarget.form?.requestSubmit() }
+                }}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={savingDetails || !detailsForm.name.trim()}>
+                {savingDetails ? 'Saving…' : 'Save'}
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setDetailsOpen(false)} disabled={savingDetails}>Cancel</Button>
+            </div>
+          </form>
+        </DialogContent>
       </Dialog>
 
       <Dialog open={durationOpen} onOpenChange={(o) => { if (!savingDuration) setDurationOpen(o) }}>

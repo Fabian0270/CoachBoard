@@ -5,6 +5,7 @@ import { useToast } from './ui/toast'
 import { useConfirm } from './ui/confirm-dialog'
 import { humanBytes } from '../lib/formatBytes'
 import { getJson } from '../lib/api'
+import { localToday } from '../lib/dates'
 import { AlertTriangle, Download, FolderOpen, RotateCcw, Save, Undo2 } from 'lucide-react'
 
 interface BackupInfo {
@@ -130,7 +131,7 @@ export default function DataSettingsCard() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `coachboard-backup-${new Date().toISOString().slice(0, 10)}.zip`
+      a.download = `coachboard-backup-${localToday()}.zip`
       document.body.appendChild(a)
       a.click()
       a.remove()

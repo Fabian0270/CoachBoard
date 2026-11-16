@@ -27,6 +27,7 @@ const UNASSIGNED = '__unassigned__'
 const ROW_GRID = 'sm:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_120px_110px]'
 
 const STATUS_DOT: Record<string, string> = {
+  draft: 'bg-warning',
   active: 'bg-primary',
   completed: 'bg-info',
   archived: 'bg-muted-foreground/50',
@@ -289,6 +290,7 @@ export default function ProgramComparison() {
           <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="draft">Draft</SelectItem>
             <SelectItem value="active">Active</SelectItem>
             <SelectItem value="completed">Completed</SelectItem>
             <SelectItem value="archived">Archived</SelectItem>

@@ -15,11 +15,7 @@ export function colLetter(n: number): string {
 }
 
 /** Local YYYY-MM-DD for an <input type="date"> default. */
-export function todayIso(): string {
-  const d = new Date()
-  const off = d.getTimezoneOffset()
-  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10)
-}
+export { localToday as todayIso } from '../../lib/dates'
 
 // A file is importable if it parsed, has no fatal errors, and has exercises.
 export function isImportable(e: Entry): boolean {

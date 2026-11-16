@@ -20,6 +20,7 @@ import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgr
 import { useToast } from '../components/ui/toast'
 import LoadError from '../components/LoadError'
 import { ApiError, errorMessage, getJson } from '../lib/api'
+import { localToday } from '../lib/dates'
 
 const LIFT_COLORS: Record<string, string> = {
   squat: 'hsl(var(--chart-1))',
@@ -111,7 +112,7 @@ export default function ProgramReport() {
           lift_name: displayName,
           weight: e1rm,
           unit: 'kg',
-          recorded_at: new Date().toISOString().slice(0, 10),
+          recorded_at: localToday(),
           notes: 'Estimated 1RM from program analysis',
         }),
       })
