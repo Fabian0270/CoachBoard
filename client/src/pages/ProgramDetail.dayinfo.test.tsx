@@ -70,7 +70,7 @@ describe('Day editor — suggested load', () => {
     serve({
       '/api/programs/p1': { body: withLoadCap },
       '/api/athletes/a1/maxes': { body: maxes },
-      'PUT /api/programs/p1/workouts/w2/exercises/b1': (_u, init) => ({ body: { ...withLoadCap.workouts[1].exercises[0], ...(JSON.parse(String(init?.body)) as object) } }),
+      'PUT /api/programs/p1/workouts/w2/exercises/b1': (_u, init) => ({ body: { ...(withLoadCap.workouts[1].exercises[0] as object), ...(JSON.parse(String(init?.body)) as object) } }),
     })
     await openDay('2026-06-22')
     // Squat 5×5 at RPE 8.5 from a 180 kg max.
@@ -88,7 +88,7 @@ describe('Day editor — suggested load', () => {
     serve({
       '/api/programs/p1': { body: withLoadCap },
       '/api/athletes/a1/maxes': { body: maxes },
-      'PUT /api/programs/p1/workouts/w2/exercises/b1': (_u, init) => ({ body: { ...withLoadCap.workouts[1].exercises[0], ...(JSON.parse(String(init?.body)) as object) } }),
+      'PUT /api/programs/p1/workouts/w2/exercises/b1': (_u, init) => ({ body: { ...(withLoadCap.workouts[1].exercises[0] as object), ...(JSON.parse(String(init?.body)) as object) } }),
     })
     await openDay('2026-06-22')
     await screen.findByPlaceholderText(/^≈ /)
@@ -104,6 +104,51 @@ describe('Day editor — suggested load', () => {
     await screen.findByPlaceholderText(/^≈ /)
     // Squat has a hint; Bench (no target, no max) does not.
     expect(screen.getAllByPlaceholderText(/^≈ /)).toHaveLength(1)
+  })
+})
+
+describe('Program — replace an exercise across the block', () => {
+  const bodies = (suffix: string) =>
+    (globalThis.fetch as unknown as { mock: { calls: [unknown, RequestInit?][] } }).mock.calls
+      .filter(([url, init]) => init?.method && init.method !== 'GET' && String(url).endsWith(suffix))
+      .map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>)
+
+  it('renames it on every day it is on, and offers Undo of those days', async () => {
+    serve({
+      '/api/programs/p1': { body: program },
+      'POST /api/programs/p1/rename-exercise': { body: { renamed: 2, dates: ['2026-06-15', '2026-06-22'] } },
+      'PUT /api/programs/p1/days/restore': { body: program },
+    })
+    renderScreen(<ProgramDetail />, { path: '/programs/p1', route: '/programs/:id' })
+    await screen.findByRole('heading', { name: 'Spring Block' })
+    await userEvent.click(screen.getByRole('button', { name: /Replace/ }))
+    const dialog = await screen.findByRole('dialog', { name: 'Replace an exercise' })
+
+    await userEvent.selectOptions(screen.getByLabelText('Replace'), 'Squat')
+    await userEvent.type(screen.getByLabelText('With'), 'Pause Squat')
+    expect(dialog.textContent).toMatch(/Changes 2 training days/)
+    await userEvent.click(screen.getByRole('button', { name: 'Replace' }))
+
+    await waitFor(() => expect(bodies('/rename-exercise')).toEqual([{ from: 'Squat', to: 'Pause Squat', from_date: null }]))
+    expect(await screen.findByText('Squat → Pause Squat on 2 days')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    await waitFor(() => expect(bodies('/days/restore')).toHaveLength(1))
+    const restored = bodies('/days/restore')[0] as { days: { date: string }[] }
+    expect(restored.days.map((d) => d.date)).toEqual(['2026-06-15', '2026-06-22'])
+  })
+
+  it('from a later week on, only changes the days from there', async () => {
+    serve({ '/api/programs/p1': { body: program }, 'POST /api/programs/p1/rename-exercise': { body: { renamed: 1, dates: ['2026-06-22'] } } })
+    renderScreen(<ProgramDetail />, { path: '/programs/p1', route: '/programs/:id' })
+    await screen.findByRole('heading', { name: 'Spring Block' })
+    await userEvent.click(screen.getByRole('button', { name: /Replace/ }))
+    await screen.findByRole('dialog', { name: 'Replace an exercise' })
+    await userEvent.selectOptions(screen.getByLabelText('Replace'), 'Squat')
+    await userEvent.selectOptions(screen.getByLabelText('From'), '1')
+    await userEvent.type(screen.getByLabelText('With'), 'Box Squat')
+    expect(screen.getByText(/Changes 1 training day\./)).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Replace' }))
+    await waitFor(() => expect(bodies('/rename-exercise')).toEqual([{ from: 'Squat', to: 'Box Squat', from_date: '2026-06-22' }]))
   })
 })
 

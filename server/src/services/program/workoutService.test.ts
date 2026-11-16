@@ -12,6 +12,7 @@ import {
   findProgramById,
   restoreDays,
   restoreExercises,
+  renameExerciseInProgram,
 } from '../programService.js'
 import type { RestoredDay } from './workoutService.js'
 
@@ -155,6 +156,32 @@ describe('restoreExercises — undo of a deleted exercise', () => {
     const snap = await snapshot(p.id, MON)
     await deleteWorkout(snap.workout!.id, p.id)
     expect(await restoreExercises(p.id, snap.workout!.id, [snap.workout!.exercises[0]])).toBeNull()
+  })
+})
+
+describe('renameExerciseInProgram — replace an exercise across the block', () => {
+  it('renames it on every day, ignoring case and spaces, and keeps everything else', async () => {
+    const p = await seed('Rename')
+    const wed = (await findProgramById(p.id))!.workouts.find((w) => w.scheduled_date === WED)!
+    await createExercise({ workout_id: wed.id, name: ' squat ', sets: '3', reps: '3', order_index: 1 })
+
+    const res = await renameExerciseInProgram(p.id, 'Squat', 'Pause Squat')
+    expect(res).toEqual({ renamed: 2, dates: [MON, WED] })
+    const program = await findProgramById(p.id)
+    const names = program!.workouts.flatMap((w) => w.exercises.map((e) => `${e.name}|${e.load_used}`)).sort()
+    // Monday's logged result stays with the renamed row.
+    expect(names).toEqual(['Bench|null', 'Pause Squat|140', 'Pause Squat|null', 'Rows|null'])
+  })
+
+  it('only from the given date on', async () => {
+    const p = await seed('Rename from')
+    const wed = (await findProgramById(p.id))!.workouts.find((w) => w.scheduled_date === WED)!
+    await createExercise({ workout_id: wed.id, name: 'Squat', order_index: 1 })
+    expect(await renameExerciseInProgram(p.id, 'Squat', 'Box Squat', WED)).toEqual({ renamed: 1, dates: [WED] })
+  })
+
+  it('answers null for a program that is gone', async () => {
+    expect(await renameExerciseInProgram('00000000-0000-4000-8000-000000000000', 'a', 'b')).toBeNull()
   })
 })
 

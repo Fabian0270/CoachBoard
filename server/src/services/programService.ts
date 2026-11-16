@@ -14,6 +14,7 @@ export {
   moveWorkoutDay,
   restoreDays,
   restoreExercises,
+  renameExerciseInProgram,
 } from './program/workoutService.js'
 export {
   createExercise,

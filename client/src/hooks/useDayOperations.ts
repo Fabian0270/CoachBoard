@@ -231,6 +231,25 @@ export function useDayOperations({ programId, workoutByDate, setProgram, mediaId
     return true
   }
 
+  /**
+   * Run a change that touches the given days, then offer Undo, which puts those
+   * days back as they were. For changes made on the server in one call (such
+   * as replacing an exercise across the block).
+   */
+  const withUndo = async (dates: string[], run: () => Promise<void>, done: string): Promise<boolean> => {
+    if (!programId || dates.length === 0) return false
+    const before = dates.map(snapshot)
+    try {
+      await run()
+    } catch (err) {
+      toast.error(`That did not work. ${errorMessage(err)} Nothing was changed.`)
+      return false
+    }
+    await refresh()
+    offerUndo(done, () => restore(before))
+    return true
+  }
+
   const copyToClipboard = (date: string) => {
     if (workoutByDate.get(date)?.exercises.length) setClipboard({ date, mode: 'copy' })
   }
@@ -281,6 +300,7 @@ export function useDayOperations({ programId, workoutByDate, setProgram, mediaId
     copyDays,
     confirmLosingResults,
     offerExerciseUndo,
+    withUndo,
     undoLast,
   }
 }

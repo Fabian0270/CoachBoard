@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { useToast } from '../components/ui/toast'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Trash2, Copy, Pencil, StickyNote, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
+import { Trash2, Copy, Pencil, StickyNote, Replace, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
 import { BackLink } from '../components/PageHeader'
 import DayAttachments from '../components/discord/DayAttachments'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
@@ -64,6 +64,8 @@ function ProgramPage() {
   const [savingDuration, setSavingDuration] = useState(false)
   const [durationOpen, setDurationOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [replaceOpen, setReplaceOpen] = useState(false)
+  const [replaceForm, setReplaceForm] = useState({ from: '', to: '', fromWeek: '0' })
   /** The week whose W-label menu is open. */
   const [weekMenu, setWeekMenu] = useState<number | null>(null)
   // The shortcut handler is registered once; this keeps it on the latest program.
@@ -495,6 +497,49 @@ function ProgramPage() {
     }
   }
 
+  // Replace an exercise across the block: one rename instead of one edit per day.
+  const exerciseNamesInProgram = useMemo(() => {
+    const counts = new Map<string, { name: string; count: number }>()
+    for (const w of program?.workouts ?? []) {
+      for (const e of w.exercises) {
+        const key = e.name.trim().toLowerCase()
+        if (!key) continue
+        const c = counts.get(key) ?? { name: e.name.trim(), count: 0 }
+        c.count++
+        counts.set(key, c)
+      }
+    }
+    return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name))
+  }, [program?.workouts])
+  const openReplace = () => {
+    const runningWeek = allDates.indexOf(today)
+    setReplaceForm({ from: exerciseNamesInProgram[0]?.name ?? '', to: '', fromWeek: String(runningWeek > 0 ? Math.floor(runningWeek / 7) : 0) })
+    setReplaceOpen(true)
+  }
+  const replaceDates = (() => {
+    if (!program || !replaceForm.from) return []
+    const want = replaceForm.from.trim().toLowerCase()
+    const fromDate = allDates[Number(replaceForm.fromWeek) * 7] ?? ''
+    return program.workouts
+      .filter((w) => w.scheduled_date && w.scheduled_date >= fromDate && w.exercises.some((e) => e.name.trim().toLowerCase() === want))
+      .map((w) => w.scheduled_date!)
+  })()
+  const runReplace = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id || !replaceForm.from || !replaceForm.to.trim()) return
+    const fromDate = allDates[Number(replaceForm.fromWeek) * 7] ?? null
+    const ok = await days.withUndo(
+      replaceDates,
+      async () => {
+        await sendJson('POST', `/api/programs/${id}/rename-exercise`, {
+          from: replaceForm.from, to: replaceForm.to.trim(), from_date: Number(replaceForm.fromWeek) > 0 ? fromDate : null,
+        })
+      },
+      `${replaceForm.from} → ${replaceForm.to.trim()} on ${replaceDates.length} day${replaceDates.length === 1 ? '' : 's'}`,
+    )
+    if (ok) setReplaceOpen(false)
+  }
+
   // Opens over the calendar. It used to blank the program's dates locally to
   // swap the whole calendar for the setup form.
   const handleChangeDuration = () => {
@@ -596,6 +641,9 @@ function ProgramPage() {
             <>
               <Button variant="ghost" size="sm" onClick={() => setColumnsOpen(true)} title="Columns (Ctrl+Shift+C)">
                 <SlidersHorizontal className="h-4 w-4" />Columns
+              </Button>
+              <Button variant="ghost" size="sm" onClick={openReplace} disabled={exerciseNamesInProgram.length === 0} title="Replace an exercise across the block">
+                <Replace className="h-4 w-4" />Replace
               </Button>
               <Button variant="ghost" size="sm" onClick={handleChangeDuration} title="Dates (Ctrl+Shift+D)">
                 <CalendarRange className="h-4 w-4" />Dates
@@ -1114,6 +1162,67 @@ function ProgramPage() {
             </div>
           </DialogContent>
         )}
+      </Dialog>
+
+      <Dialog open={replaceOpen} onOpenChange={setReplaceOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Replace an exercise</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Renames it on every training day it is on. Sets, reps, loads and what the athlete logged stay as they are.
+          </p>
+          <form onSubmit={runReplace} className="space-y-4">
+            <div className="space-y-1">
+              <Label htmlFor="replace_from">Replace</Label>
+              <select
+                id="replace_from"
+                value={replaceForm.from}
+                onChange={(e) => setReplaceForm({ ...replaceForm, from: e.target.value })}
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                {exerciseNamesInProgram.map((n) => (
+                  <option key={n.name} value={n.name}>{n.name} ({n.count})</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="replace_to">With</Label>
+              <Input
+                id="replace_to" required maxLength={200} list="replace_to_names" placeholder="e.g. Pause Squat"
+                value={replaceForm.to}
+                onChange={(e) => setReplaceForm({ ...replaceForm, to: e.target.value })}
+              />
+              <datalist id="replace_to_names">
+                {ownExerciseNames.slice(0, 200).map((n) => <option key={n} value={n} />)}
+              </datalist>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="replace_week">From</Label>
+              <select
+                id="replace_week"
+                value={replaceForm.fromWeek}
+                onChange={(e) => setReplaceForm({ ...replaceForm, fromWeek: e.target.value })}
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                {(grid?.rows ?? []).map((r) => (
+                  <option key={r.weekIndex} value={String(r.weekIndex)}>
+                    {r.weekIndex === 0 ? 'The whole block' : `Week ${r.weekIndex + 1} on`}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className="text-xs text-muted-foreground" aria-live="polite">
+              {replaceDates.length === 0
+                ? 'It is not on any day in that range.'
+                : `Changes ${replaceDates.length} training day${replaceDates.length === 1 ? '' : 's'}. You can undo it straight afterwards.`}
+            </p>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={!replaceForm.to.trim() || replaceDates.length === 0}>Replace</Button>
+              <Button type="button" variant="ghost" onClick={() => setReplaceOpen(false)}>Cancel</Button>
+            </div>
+          </form>
+        </DialogContent>
       </Dialog>
 
       <Dialog open={detailsOpen} onOpenChange={(o) => { if (!savingDetails) setDetailsOpen(o) }}>

@@ -22,6 +22,7 @@ import {
   moveWorkoutDay,
   restoreDays,
   restoreExercises,
+  renameExerciseInProgram,
   reorderExercises,
   withoutTemplateBlob,
 } from '../services/programService.js'
@@ -317,6 +318,18 @@ router.post('/:programId/workouts/:workoutId/exercises/restore', async (req: Req
     res.json({ exercises })
   } catch (err) {
     fail(res, 'Failed to undo', err)
+  }
+})
+
+router.post('/:programId/rename-exercise', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.renameExercise, req.body, res)
+  if (!body) return
+  try {
+    const result = await renameExerciseInProgram(String(req.params.programId), body.from, body.to, body.from_date ?? null)
+    if (!result) { res.status(404).json({ error: 'Program not found' }); return }
+    res.json(result)
+  } catch (err) {
+    fail(res, 'Failed to replace the exercise', err)
   }
 })
 

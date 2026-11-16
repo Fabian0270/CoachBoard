@@ -202,6 +202,12 @@ export const schemas = {
     })).min(1).max(120),
   }),
 
+  renameExercise: z.object({
+    from: z.string().trim().min(1).max(200),
+    to: z.string().trim().min(1).max(200),
+    from_date: optionalIsoDate,
+  }),
+
   restoreExercises: z.object({
     exercises: z.array(restoredExercise).min(1).max(300),
   }),

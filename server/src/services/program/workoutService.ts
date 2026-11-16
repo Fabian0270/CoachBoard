@@ -204,6 +204,38 @@ export async function moveWorkoutDay(
 }
 
 // ---------------------------------------------------------------------------
+// Replace an exercise across the block ("Pin Squat → Pause Squat in every
+// week"). Matches the name without regard to case or surrounding spaces, so
+// "pin squat" and "Pin Squat " are the same lift. Only the name changes: sets,
+// reps, loads and what the athlete logged stay as they are.
+// ---------------------------------------------------------------------------
+
+export async function renameExerciseInProgram(
+  programId: string,
+  from: string,
+  to: string,
+  fromDate?: string | null,
+): Promise<{ renamed: number; dates: string[] } | null> {
+  const db = getDb()
+  const program = await db.selectFrom('programs').select(['id']).where('id', '=', programId).executeTakeFirst()
+  if (!program) return null
+  const want = from.trim().toLowerCase()
+  const rows = await db
+    .selectFrom('exercises')
+    .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+    .select(['exercises.id as id', 'exercises.name as name', 'workouts.scheduled_date as date'])
+    .where('workouts.program_id', '=', programId)
+    .execute()
+  const hit = rows.filter((r) => r.name.trim().toLowerCase() === want && (!fromDate || (r.date ?? '') >= fromDate))
+  if (hit.length > 0) {
+    await db.transaction().execute(async (trx) => {
+      for (const r of hit) await trx.updateTable('exercises').set({ name: to.trim() }).where('id', '=', r.id).execute()
+    })
+  }
+  return { renamed: hit.length, dates: [...new Set(hit.map((r) => r.date).filter((d): d is string => !!d))].sort() }
+}
+
+// ---------------------------------------------------------------------------
 // Undo.
 //
 // Every destructive action in the program editor (clearing a day, copying or
