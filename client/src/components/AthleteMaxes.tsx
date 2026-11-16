@@ -9,6 +9,8 @@ import { useToast } from './ui/toast'
 import { useConfirm } from './ui/confirm-dialog'
 import { Plus, Trash2 } from 'lucide-react'
 import { localToday } from '../lib/dates'
+import { ApiError, errorMessage, getList, sendJson } from '../lib/api'
+import LoadError from './LoadError'
 
 const SUGGESTED_LIFTS = ['Squat', 'Bench Press', 'Deadlift']
 
@@ -28,14 +30,20 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
   const [saving, setSaving] = useState(false)
   const [selectedLift, setSelectedLift] = useState<string | null>(null)
 
+  // A failed load used to show "No PRs yet" — telling a coach the athlete's
+  // maxes were gone.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/athletes/${athleteId}/maxes`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data) => { if (!cancelled) { setMaxes(Array.isArray(data) ? data : []); setLoading(false) } })
-      .catch(() => { if (!cancelled) setLoading(false) })
+    setLoading(true)
+    setLoadError(null)
+    getList<AthleteMax>(`/api/athletes/${encodeURIComponent(athleteId)}/maxes`)
+      .then((data) => { if (!cancelled) setMaxes(data) })
+      .catch((err) => { if (!cancelled) setLoadError(errorMessage(err)) })
+      .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [athleteId])
+  }, [athleteId, attempt])
 
   // Latest PR per lift — the API returns lift_name asc, recorded_at desc,
   // so the first row seen per lift is the current max.
@@ -91,13 +99,20 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
       confirmLabel: 'Delete',
       destructive: true,
     }))) return
-    const res = await fetch(`/api/athletes/${athleteId}/maxes/${max.id}`, { method: 'DELETE' })
-    if (res.ok || res.status === 404) {
-      setMaxes((list) => list.filter((m) => m.id !== max.id))
+    // A refused delete used to leave the row in place without a word.
+    try {
+      await sendJson('DELETE', `/api/athletes/${athleteId}/maxes/${max.id}`)
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 404)) {
+        toast.error(`Could not delete that PR. ${errorMessage(err)}`)
+        return
+      }
     }
+    setMaxes((list) => list.filter((m) => m.id !== max.id))
   }
 
   if (loading) return <div className="text-muted-foreground">Loading...</div>
+  if (loadError) return <LoadError what="this athlete's maxes" message={loadError} onRetry={() => setAttempt((n) => n + 1)} />
 
   const reps = Array.from({ length: MAX_REPS - MIN_REPS + 1 }, (_, i) => MIN_REPS + i)
 

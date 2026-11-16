@@ -19,6 +19,7 @@ import {
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
+import { errorMessage, getList } from '../lib/api'
 import AnalysisStage, {
   type CalibrationLine,
   type SeedPoint,
@@ -255,17 +256,21 @@ export default function VideoAnalysis() {
   // The roster, for attaching a local clip to whoever is in it.
   useEffect(() => {
     let cancelled = false
-    fetch('/api/athletes')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: { id: string; name: string; height_cm: number | null; archived?: number }[]) => {
+    getList<{ id: string; name: string; height_cm: number | null; archived?: number }>('/api/athletes')
+      .then((data) => {
         if (cancelled) return
         setRoster(
-          (Array.isArray(data) ? data : [])
+          data
             .filter((a) => !a.archived)
             .map((a) => ({ id: a.id, name: a.name, height_cm: a.height_cm ?? null })),
         )
       })
-      .catch(() => !cancelled && setRoster([]))
+      // An empty athlete picker with no reason looked like having no athletes.
+      .catch((err) => {
+        if (cancelled) return
+        setRoster([])
+        toast.error(`Could not load your athletes, so a clip cannot be attached to one. ${errorMessage(err)}`)
+      })
     return () => {
       cancelled = true
     }

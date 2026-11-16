@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useToast } from '../ui/toast'
+import { errorMessage, getList } from '../../lib/api'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
 import {
   bestRepVelocity,
@@ -77,6 +79,7 @@ export function useVbtHistory(
  * job rather than this hook's.
  */
 export function useAthleteMaxes(athleteId: string | null): { lift_name: string; weight: number }[] {
+  const toast = useToast()
   const [maxes, setMaxes] = useState<{ lift_name: string; weight: number }[]>([])
 
   useEffect(() => {
@@ -85,14 +88,18 @@ export function useAthleteMaxes(athleteId: string | null): { lift_name: string; 
       return
     }
     let cancelled = false
-    fetch(`/api/athletes/${encodeURIComponent(athleteId)}/maxes`)
-      .then((r) => (r.ok ? r.json() : []))
+    getList<{ lift_name: string; weight: number }>(`/api/athletes/${encodeURIComponent(athleteId)}/maxes`)
       .then((data) => {
-        if (!cancelled) setMaxes(Array.isArray(data) ? data : [])
+        if (!cancelled) setMaxes(data)
       })
       // No maxes on file simply means no calibration — the estimate falls back
-      // to a population slope and says so.
-      .catch(() => !cancelled && setMaxes([]))
+      // to a population slope and says so. A failed read must not pass for
+      // that silently: the estimate would quietly ignore a max that exists.
+      .catch((err) => {
+        if (cancelled) return
+        setMaxes([])
+        toast.error(`Could not read this athlete's maxes, so the estimate ignores them. ${errorMessage(err)}`)
+      })
     return () => {
       cancelled = true
     }

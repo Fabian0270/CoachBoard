@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { getList, errorMessage } from '../lib/api'
+import { ApiError, getList, errorMessage, sendJson } from '../lib/api'
 import LoadError from '../components/LoadError'
 import { Button } from '../components/ui/button'
 import PageHeader from '../components/PageHeader'
@@ -152,16 +152,14 @@ export default function ProgramComparison() {
     }
   }
 
+  // Both of these used to do nothing at all when the server refused.
   const handleStatusChange = async (programId: string, status: string) => {
     setMenuOpen(null)
-    const res = await fetch(`/api/programs/${programId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
-    })
-    if (res.ok) {
-      const updated = await res.json()
+    try {
+      const updated = await sendJson<{ status: string }>('PUT', `/api/programs/${programId}`, { status })
       setPrograms((prev) => prev.map((p) => p.id === programId ? { ...p, status: updated.status } : p))
+    } catch (err) {
+      toast.error(`Could not change the status. ${errorMessage(err)}`)
     }
   }
 
@@ -173,10 +171,15 @@ export default function ProgramComparison() {
       confirmLabel: 'Delete',
       destructive: true,
     }))) return
-    const res = await fetch(`/api/programs/${program.id}`, { method: 'DELETE' })
-    if (res.ok || res.status === 404) {
-      setPrograms((prev) => prev.filter((p) => p.id !== program.id))
+    try {
+      await sendJson('DELETE', `/api/programs/${program.id}`)
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 404)) {
+        toast.error(`Could not delete "${program.name}". ${errorMessage(err)}`)
+        return
+      }
     }
+    setPrograms((prev) => prev.filter((p) => p.id !== program.id))
   }
 
   const startRename = (program: Program) => {

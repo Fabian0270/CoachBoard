@@ -427,23 +427,26 @@ function WorkoutPickerDialog({
   onPicked: (workoutId: string) => void
 }) {
   const [candidates, setCandidates] = useState<WorkoutCandidate[] | null>(null)
+  // A failed load used to read as "No training days scheduled within a week".
+  const [candidatesError, setCandidatesError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     if (!item) return
     setCandidates(null)
+    setCandidatesError(null)
     let cancelled = false
-    fetch(`/api/discord/media/${item.id}/workout-candidates`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((rows: WorkoutCandidate[]) => {
+    getList<WorkoutCandidate>(`/api/discord/media/${item.id}/workout-candidates`)
+      .then((rows) => {
         if (!cancelled) setCandidates(rows)
       })
-      .catch(() => {
-        if (!cancelled) setCandidates([])
+      .catch((err) => {
+        if (!cancelled) setCandidatesError(errorMessage(err))
       })
     return () => {
       cancelled = true
     }
-  }, [item])
+  }, [item, attempt])
 
   const postedDate = item?.postedAt.slice(0, 10) ?? ''
 
@@ -468,7 +471,9 @@ function WorkoutPickerDialog({
             training days within a week.
           </p>
         )}
-        {candidates === null ? (
+        {candidatesError ? (
+          <LoadError what="the training days" message={candidatesError} onRetry={() => setAttempt((n) => n + 1)} />
+        ) : candidates === null ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : candidates.length === 0 ? (
           <p className="text-sm text-muted-foreground">
