@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   LineChart,
@@ -21,6 +21,7 @@ import { useToast } from '../components/ui/toast'
 import LoadError from '../components/LoadError'
 import { ApiError, errorMessage, getJson } from '../lib/api'
 import { localToday } from '../lib/dates'
+import { computeVolume, VOLUME_LABELS, VOLUME_LIFTS, type VolumeLift } from '../lib/volume'
 
 const LIFT_COLORS: Record<string, string> = {
   squat: 'hsl(var(--chart-1))',
@@ -57,6 +58,82 @@ function deviationLabel(delta: number): string {
   if (delta > 0.4) return 'text-destructive'
   if (delta < -0.4) return 'text-info'
   return 'text-success'
+}
+
+const n1 = (v: number) => (Math.round(v * 10) / 10).toLocaleString('en-GB')
+const kg = (v: number) => Math.round(v).toLocaleString('en-GB')
+
+/**
+ * Weekly sets and tonnage per lift, done against planned (I3). Shown before
+ * any results come in too: the planned side is useful on its own.
+ */
+function VolumeCard({ program, maxes }: { program: Program; maxes: ProgramReport['storedMaxes'] }) {
+  const weeks = useMemo(() => computeVolume(program.workouts, program.start_date, maxes), [program, maxes])
+  const lifts = VOLUME_LIFTS.filter((l) => weeks.some((w) => w.byLift[l].plannedSets > 0))
+  if (lifts.length === 0) return null
+  const total = (l: VolumeLift) => weeks.reduce((t, w) => {
+    const c = w.byLift[l]
+    return { plannedSets: t.plannedSets + c.plannedSets, doneSets: t.doneSets + c.doneSets, plannedKg: t.plannedKg + c.plannedKg, doneKg: t.doneKg + c.doneKg, estimated: t.estimated || c.estimated }
+  }, { plannedSets: 0, doneSets: 0, plannedKg: 0, doneKg: 0, estimated: false })
+  const anyEstimated = weeks.some((w) => lifts.some((l) => w.byLift[l].estimated))
+  const cells = (c: ReturnType<typeof total>, strong = false) => (
+    <>
+      <td className={`num border-l py-1.5 pl-3 pr-2 ${strong ? 'font-semibold' : ''}`}>
+        {n1(c.doneSets)} <span className="text-muted-foreground">/ {n1(c.plannedSets)}</span>
+      </td>
+      <td className={`num py-1.5 pr-3 ${strong ? 'font-semibold' : ''}`}>
+        {c.plannedKg > 0 || c.doneKg > 0 ? (
+          <>{kg(c.doneKg)} <span className="text-muted-foreground">/ {c.estimated ? '≈' : ''}{kg(c.plannedKg)}</span></>
+        ) : <span className="text-muted-foreground">—</span>}
+      </td>
+    </>
+  )
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Volume</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Sets and tonnage (kg) per week, done / planned. Squat, Bench and Deadlift are the competition lifts; every variation is under Other.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" aria-label="Volume per week">
+            <thead>
+              <tr className="text-left text-muted-foreground">
+                <th rowSpan={2} className="pb-2 pr-6 align-bottom font-medium">Week</th>
+                {lifts.map((l) => <th key={l} colSpan={2} className="border-l pb-1 pl-3 font-semibold text-foreground">{VOLUME_LABELS[l]}</th>)}
+              </tr>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                {lifts.map((l) => (
+                  <Fragment key={l}>
+                    <th className="border-l pb-2 pl-3 pr-2 font-medium">Sets</th>
+                    <th className="pb-2 pr-3 font-medium">Tonnage</th>
+                  </Fragment>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {weeks.map((w) => (
+                <tr key={w.weekIndex} className="border-b">
+                  <td className="py-1.5 pr-6">Wk {w.weekIndex + 1}</td>
+                  {lifts.map((l) => <Fragment key={l}>{cells(w.byLift[l])}</Fragment>)}
+                </tr>
+              ))}
+              <tr>
+                <td className="py-1.5 pr-6 font-semibold">Block</td>
+                {lifts.map((l) => <Fragment key={l}>{cells(total(l), true)}</Fragment>)}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Done counts each logged row at its prescribed sets and reps with the load the athlete logged.
+          {anyEstimated && ' ≈ includes suggested loads for rows with no Load Cap (from the max, or the set above for a back-off).'}
+        </p>
+      </CardContent>
+    </Card>
+  )
 }
 
 export default function ProgramReport() {
@@ -212,6 +289,8 @@ export default function ProgramReport() {
           </CardContent>
         </Card>
       </div>
+
+      <VolumeCard program={program} maxes={report.storedMaxes} />
 
       {!hasData ? (
         <Card>

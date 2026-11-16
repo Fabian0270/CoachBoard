@@ -111,6 +111,39 @@ export function loadHint(
       basis: `${pct}% ${target.change < 0 ? 'lighter' : 'heavier'} than the set above (${above} kg)`,
     }
   }
+  return fromMax(ex, target, maxes)
+}
+
+/**
+ * The suggestion for every row of one day, top to bottom. A back-off ("-10%")
+ * is worked out from the set directly above when it is the same movement: its
+ * Load Cap, or its own suggestion when it has none, so a chain of back-offs
+ * follows the top set. Rows are in the day's order; a set row (no name of its
+ * own, or sharing its exercise's group) is the exercise above it.
+ */
+export function dayLoadHints(
+  rows: { id: string; name: string; reps: string | null; intensity: string | null; weight: number | null; group_id: string | null }[],
+  maxes: StoredMax[],
+): Map<string, LoadHint | null> {
+  const out = new Map<string, LoadHint | null>()
+  let prev: { id: string; weight: number | null; group_id: string | null; name: string } | null = null
+  for (const ex of rows) {
+    const p = prev
+    const inGroup: boolean = !!p && !!ex.group_id && p.group_id === ex.group_id
+    const name: string = inGroup && p ? p.name : ex.name
+    const same: boolean = !!p && (inGroup || (!!name.trim() && p.name.trim().toLowerCase() === name.trim().toLowerCase()))
+    const above: number | null = same && p ? p.weight ?? out.get(p.id)?.kg ?? null : null
+    out.set(ex.id, loadHint({ ...ex, name }, maxes, above))
+    prev = { id: ex.id, weight: ex.weight, group_id: ex.group_id, name }
+  }
+  return out
+}
+
+function fromMax(
+  ex: { name: string; reps: string | null },
+  target: { rpe: number } | { pct: number },
+  maxes: StoredMax[],
+): LoadHint | null {
   const max = maxFor(ex.name, maxes)
   if (!max) return null
   if ('pct' in target) {
