@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import type { PaymentAlert } from 'coachboard-shared'
+import type { AttentionItem, PaymentAlert } from 'coachboard-shared'
+import { localToday } from '../lib/dates'
+import { useDiscordInboxCounts } from '../hooks/useDiscordInboxCounts'
 import { getJson, getList, errorMessage } from '../lib/api'
 import LoadError from '../components/LoadError'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import PageHeader from '../components/PageHeader'
-import { Plus, AlertTriangle, ArrowUpRight } from 'lucide-react'
+import { Plus, AlertTriangle, ArrowUpRight, CalendarClock, FileInput, UserX, Film } from 'lucide-react'
 import MyStyleCard from '../components/MyStyleCard'
 import Onboarding, { isOnboardingComplete } from '../components/Onboarding'
 import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
@@ -26,6 +28,102 @@ function StatFigure({ to, label, value, note }: { to: string; label: string; val
   )
 }
 
+/** "Sun 22 Nov" */
+const shortDay = (iso: string) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
+
+const SHOWN = 8
+
+/**
+ * What the coach should act on (I2): blocks ending with nothing after them,
+ * imports that have not come in, athletes without a program, and videos
+ * waiting in the inbox. Payments keep their own card below.
+ */
+function AttentionCard({ unreviewedVideos }: { unreviewedVideos: number }) {
+  const [items, setItems] = useState<AttentionItem[] | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+  const [showAll, setShowAll] = useState(false)
+  const load = useCallback(async () => {
+    setFailed(null)
+    try {
+      setItems(await getList<AttentionItem>(`/api/dashboard/attention?today=${localToday()}`))
+    } catch (err) {
+      // Never "all caught up" on a failed check: that would say nothing is wrong.
+      setItems(null)
+      setFailed(errorMessage(err))
+    }
+  }, [])
+  useEffect(() => { void load() }, [load])
+
+  if (failed) {
+    return (
+      <section className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-5 py-3 text-sm">
+        <AlertTriangle className="h-4 w-4 text-warning" />
+        <span>Could not check what needs your attention. {failed}</span>
+        <Button size="sm" variant="outline" onClick={() => void load()}>Try again</Button>
+      </section>
+    )
+  }
+  if (!items) return null
+
+  const today = localToday()
+  const lines = [
+    ...(unreviewedVideos > 0 ? [{
+      key: 'videos',
+      icon: <Film className="h-4 w-4 text-primary" />,
+      body: <Link to="/discord-inbox" className="font-medium hover:text-primary">{unreviewedVideos} video{unreviewedVideos === 1 ? '' : 's'} to review</Link>,
+    }] : []),
+    ...items.map((item) => {
+      const athlete = <Link to={`/athletes/${item.athleteId}`} className="font-medium hover:text-primary">{item.athleteName}</Link>
+      const program = item.programId && <Link to={`/programs/${item.programId}`} className="hover:text-primary">{item.programName}</Link>
+      if (item.kind === 'block-ending') {
+        return {
+          key: `end:${item.programId}`,
+          icon: <CalendarClock className="h-4 w-4 text-warning" />,
+          body: <>{athlete} · {program} {item.date! < today ? 'ended' : 'ends'} <span className="num">{shortDay(item.date!)}</span> <span className="text-muted-foreground">— no next block yet</span></>,
+        }
+      }
+      if (item.kind === 'no-results') {
+        return {
+          key: `res:${item.programId}`,
+          icon: <FileInput className="h-4 w-4 text-warning" />,
+          body: <>{athlete} · {program}: <span className="num">{item.count}</span> training day{item.count === 1 ? '' : 's'} with nothing logged <span className="text-muted-foreground">(latest <span className="num">{shortDay(item.date!)}</span>)</span></>,
+        }
+      }
+      return {
+        key: `none:${item.athleteId}`,
+        icon: <UserX className="h-4 w-4 text-muted-foreground" />,
+        body: <>{athlete} <span className="text-muted-foreground">has no active program</span></>,
+      }
+    }),
+  ]
+
+  return (
+    <section className="rounded-lg border bg-card" aria-labelledby="attention-title">
+      <div className="flex items-center gap-2 px-5 pb-2 pt-4">
+        <h2 id="attention-title" className="text-sm font-semibold">Needs attention</h2>
+        {lines.length > 0 && <span className="num rounded-full bg-warning/15 px-1.5 text-[11px] text-warning">{lines.length}</span>}
+      </div>
+      {lines.length === 0 ? (
+        <p className="px-5 pb-4 text-sm text-muted-foreground">Nothing needs you right now.</p>
+      ) : (
+        <ul className="divide-y px-5 pb-2">
+          {(showAll ? lines : lines.slice(0, SHOWN)).map((l) => (
+            <li key={l.key} className="flex items-center gap-2.5 py-2 text-sm">{l.icon}<span>{l.body}</span></li>
+          ))}
+          {lines.length > SHOWN && (
+            <li className="py-2">
+              <button type="button" onClick={() => setShowAll((v) => !v)} className="text-xs font-medium text-muted-foreground hover:text-foreground">
+                {showAll ? 'Show fewer' : `Show all ${lines.length}`}
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 interface Stats {
   athletes: number
   programs: number
@@ -36,6 +134,7 @@ export default function Dashboard() {
   const [paymentAlerts, setPaymentAlerts] = useState<PaymentAlert[]>([])
   const [onboardingDone, setOnboardingDone] = useState(isOnboardingComplete())
   const { configured: discordConfigured } = useDiscordConfigured()
+  const inbox = useDiscordInboxCounts()
   const [storage, setStorage] = useState<{ bytes: number; files: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -88,6 +187,8 @@ export default function Dashboard() {
           </Link>
         }
       />
+
+      {!error && <AttentionCard unreviewedVideos={discordConfigured ? inbox.unreviewed : 0} />}
 
       {paymentAlerts.length > 0 && (
         <section className="relative overflow-hidden rounded-lg border border-destructive/30 bg-card">

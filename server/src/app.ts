@@ -5,6 +5,7 @@ import { originGuard, securityHeaders } from './lib/originGuard.js'
 import athletesRouter from './routes/athletes.js'
 import programsRouter from './routes/programs.js'
 import progressRouter from './routes/progress.js'
+import dashboardRouter from './routes/dashboard.js'
 import styleRouter from './routes/style.js'
 import paymentsRouter from './routes/payments.js'
 import exportStylesRouter from './routes/exportStyles.js'
@@ -56,6 +57,7 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api/athletes', athletesRouter)
   app.use('/api/programs', programsRouter)
   app.use('/api/progress', progressRouter)
+  app.use('/api/dashboard', dashboardRouter)
   app.use('/api/style-profile', styleRouter)
   app.use('/api/payments', paymentsRouter)
   app.use('/api/export-styles', exportStylesRouter)

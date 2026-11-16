@@ -375,6 +375,20 @@ export interface RPEDeviationRow {
   delta: number | null
 }
 
+/** One line of the dashboard's "needs attention" list (I2). */
+export interface AttentionItem {
+  /** block-ending: ends within a week with no next program. no-results: a training day a week or more ago has nothing logged. no-program: no active program. */
+  kind: 'block-ending' | 'no-results' | 'no-program'
+  athleteId: string
+  athleteName: string
+  programId: string | null
+  programName: string | null
+  /** block-ending: the end date. no-results: the latest training day with nothing logged. */
+  date: string | null
+  /** no-results: how many training days have nothing logged. */
+  count: number | null
+}
+
 export interface ProgramReport {
   programId: string
   athleteId: string | null  // null = unassigned program (owning athlete deleted)
