@@ -318,6 +318,38 @@ export async function pasteExercises(
   })
 }
 
+/**
+ * Several exercises of one program changed at once, all or nothing (a
+ * progression fill). Returns null — and changes nothing — if any id is not an
+ * exercise of this program.
+ */
+export async function updateExercisesInProgram(
+  programId: string,
+  updates: { id: string; patch: { weight?: number | null; intensity?: string | null; reps?: string | null } }[],
+): Promise<number | null> {
+  return getDb().transaction().execute(async (db) => {
+    const ids = updates.map((u) => u.id)
+    if (ids.length === 0) return 0
+    const owned = await db
+      .selectFrom('exercises')
+      .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+      .select('exercises.id as id')
+      .where('workouts.program_id', '=', programId)
+      .where('exercises.id', 'in', ids)
+      .execute()
+    if (owned.length !== new Set(ids).size) return null
+    for (const u of updates) {
+      const set = {
+        ...(u.patch.weight !== undefined ? { weight: u.patch.weight } : {}),
+        ...(u.patch.intensity !== undefined ? { intensity: u.patch.intensity } : {}),
+        ...(u.patch.reps !== undefined ? { reps: u.patch.reps } : {}),
+      }
+      if (Object.keys(set).length) await db.updateTable('exercises').set(set).where('id', '=', u.id).execute()
+    }
+    return updates.length
+  })
+}
+
 export async function duplicateExercise(exerciseId: string, workoutId: string, programId: string) {
   return getDb().transaction().execute(async (db) => {
     const workout = await db

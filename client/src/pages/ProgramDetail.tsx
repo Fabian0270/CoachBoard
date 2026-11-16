@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { useToast } from '../components/ui/toast'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Trash2, Copy, CopyPlus, Pencil, StickyNote, Replace, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
+import { Trash2, Copy, CopyPlus, Pencil, StickyNote, Replace, TrendingUp, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film } from 'lucide-react'
 import { BackLink } from '../components/PageHeader'
 import DayAttachments from '../components/discord/DayAttachments'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
@@ -25,6 +25,7 @@ import PreviewProgramDialog from '../components/PreviewProgramDialog'
 import ExerciseEditor, { type CopyWeek } from '../components/program-detail/ExerciseEditor'
 import DayPreview from '../components/program-detail/DayPreview'
 import DuplicateProgramDialog from '../components/DuplicateProgramDialog'
+import ProgressionDialog from '../components/program-detail/ProgressionDialog'
 import type { SuggestionGoal } from 'coachboard-shared'
 import {
   type ToggleableColumn,
@@ -70,6 +71,7 @@ function ProgramPage() {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [replaceOpen, setReplaceOpen] = useState(false)
   const [duplicateOpen, setDuplicateOpen] = useState(false)
+  const [progressOpen, setProgressOpen] = useState(false)
   const [replaceForm, setReplaceForm] = useState({ from: '', to: '', fromWeek: '0' })
   /** The week whose W-label menu is open. */
   const [weekMenu, setWeekMenu] = useState<number | null>(null)
@@ -685,6 +687,9 @@ function ProgramPage() {
               <Button variant="ghost" size="sm" onClick={() => setColumnsOpen(true)} title="Columns (Ctrl+Shift+C)">
                 <SlidersHorizontal className="h-4 w-4" />Columns
               </Button>
+              <Button variant="ghost" size="sm" onClick={() => setProgressOpen(true)} disabled={exerciseNamesInProgram.length === 0 || (grid?.rows.length ?? 0) < 2} title="Step an exercise week by week through the block">
+                <TrendingUp className="h-4 w-4" />Progress
+              </Button>
               <Button variant="ghost" size="sm" onClick={openReplace} disabled={exerciseNamesInProgram.length === 0} title="Replace an exercise across the block">
                 <Replace className="h-4 w-4" />Replace
               </Button>
@@ -1209,6 +1214,22 @@ function ProgramPage() {
       </Dialog>
 
       <DuplicateProgramDialog program={program} open={duplicateOpen} onOpenChange={setDuplicateOpen} />
+
+      <ProgressionDialog
+        open={progressOpen}
+        onOpenChange={setProgressOpen}
+        workouts={program.workouts}
+        dates={allDates}
+        exerciseNames={exerciseNamesInProgram.map((n) => n.name)}
+        initialWeek={Math.max(0, Math.floor(allDates.indexOf(today) / 7))}
+        onApply={(changes, exercise) =>
+          days.withUndo(
+            [...new Set(changes.map((c) => c.date))],
+            async () => { await sendJson('PUT', `/api/programs/${program.id}/exercises`, { updates: changes.map((c) => ({ id: c.exerciseId, patch: c.patch })) }) },
+            `${exercise} progressed on ${changes.length} row${changes.length === 1 ? '' : 's'}`,
+          )
+        }
+      />
 
       <Dialog open={replaceOpen} onOpenChange={setReplaceOpen}>
         <DialogContent className="max-w-md">

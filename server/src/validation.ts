@@ -234,6 +234,17 @@ export const schemas = {
     exercises: z.array(restoredExercise).min(1).max(300),
   }),
 
+  updateExercises: z.object({
+    updates: z.array(z.object({
+      id: z.uuid(),
+      patch: z.object({
+        weight: z.number().min(0).nullable().optional(),
+        intensity: optionalString(100),
+        reps: optionalString(50),
+      }),
+    })).min(1).max(2000),
+  }),
+
   pasteExercises: z.object({
     anchorId: z.uuid().nullable().optional(),
     anchorPatch: pastedFields.nullable().optional(),

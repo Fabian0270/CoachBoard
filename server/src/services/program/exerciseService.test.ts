@@ -8,6 +8,7 @@ import {
   addSetToExercise,
   duplicateExercise,
   pasteExercises,
+  updateExercisesInProgram,
 } from '../programService.js'
 
 let athleteId: string
@@ -85,6 +86,31 @@ describe('pasteExercises', () => {
     const { w } = await day('Mine')
     const other = await createProgram({ athlete_id: athleteId, name: 'Other' })
     expect(await pasteExercises(w.id, other.id, null, null, [{ name: 'x' }])).toBeNull()
+  })
+})
+
+describe('updateExercisesInProgram', () => {
+  it('applies every change in one go', async () => {
+    const { p, w } = await day('Batch')
+    const a = await createExercise({ workout_id: w.id, name: 'Squat', weight: 100, intensity: 'RPE 7', order_index: 0 })
+    const b = await createExercise({ workout_id: w.id, name: 'Squat', reps: '5', order_index: 1 })
+    expect(await updateExercisesInProgram(p.id, [
+      { id: a.id, patch: { weight: 102.5, intensity: 'RPE 7.5' } },
+      { id: b.id, patch: { reps: '4' } },
+    ])).toBe(2)
+    const { getDb } = await import('../../db.js')
+    const rows = await getDb().selectFrom('exercises').selectAll().where('workout_id', '=', w.id).orderBy('order_index').execute()
+    expect(rows.map((r) => `${r.weight}|${r.intensity}|${r.reps}`)).toEqual(['102.5|RPE 7.5|null', 'null|null|4'])
+  })
+
+  it('changes nothing if any exercise is not in the program', async () => {
+    const { p, w } = await day('Batch mine')
+    const other = await day('Batch other')
+    const a = await createExercise({ workout_id: w.id, name: 'Squat', weight: 100, order_index: 0 })
+    const x = await createExercise({ workout_id: other.w.id, name: 'Squat', weight: 50, order_index: 0 })
+    expect(await updateExercisesInProgram(p.id, [{ id: a.id, patch: { weight: 1 } }, { id: x.id, patch: { weight: 1 } }])).toBeNull()
+    const { getDb } = await import('../../db.js')
+    expect((await getDb().selectFrom('exercises').select('weight').where('id', '=', a.id).executeTakeFirst())?.weight).toBe(100)
   })
 })
 

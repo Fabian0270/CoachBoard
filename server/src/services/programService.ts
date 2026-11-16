@@ -25,6 +25,7 @@ export {
   duplicateExercise,
   findExerciseNames,
   pasteExercises,
+  updateExercisesInProgram,
 } from './program/exerciseService.js'
 
 const toIso = (d: Date) => d.toISOString().slice(0, 10)

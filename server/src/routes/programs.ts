@@ -19,6 +19,7 @@ import {
   duplicateExercise,
   findExerciseNames,
   pasteExercises,
+  updateExercisesInProgram,
   copyWorkoutDay,
   moveWorkoutDay,
   restoreDays,
@@ -359,6 +360,19 @@ router.post('/:programId/duplicate', async (req: Request, res: Response): Promis
     res.status(201).json(result)
   } catch (err) {
     fail(res, 'Failed to duplicate the program', err)
+  }
+})
+
+// A batch of changes across the program (progression fill), all or nothing.
+router.put('/:programId/exercises', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.updateExercises, req.body, res)
+  if (!body) return
+  try {
+    const n = await updateExercisesInProgram(String(req.params.programId), body.updates)
+    if (n === null) { res.status(400).json({ error: 'Some of those exercises are not in this program. Nothing was changed.' }); return }
+    res.json({ updated: n })
+  } catch (err) {
+    fail(res, 'Failed to update the exercises', err)
   }
 })
 
