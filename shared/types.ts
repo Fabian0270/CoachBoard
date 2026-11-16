@@ -65,8 +65,16 @@ export interface Workout {
   exercises: Exercise[]
 }
 
-export type ToggleableColumn = 'rest_time' | 'intensity' | 'load_cap' | 'load_used' | 'rpe'
-export const TOGGLEABLE_COLUMNS: ToggleableColumn[] = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe']
+export type ToggleableColumn = 'rest_time' | 'intensity' | 'load_cap' | 'load_used' | 'rpe' | 'notes'
+/** Every column a coach can switch on or off, in the order they appear. */
+export const TOGGLEABLE_COLUMNS: ToggleableColumn[] = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'notes']
+/**
+ * The columns a program has when it has never been given a choice
+ * (enabled_columns is null). Everything except Notes: the cue column is opt-in,
+ * so programs made before it existed — and new ones — look exactly as before
+ * until the coach switches it on.
+ */
+export const DEFAULT_ENABLED_COLUMNS: ToggleableColumn[] = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe']
 
 export interface Program {
   id: string

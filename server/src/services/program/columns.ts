@@ -4,7 +4,7 @@ import { parseExportLayout } from 'coachboard-shared/exportLayout'
 // Column helpers — live here because they touch DB representation
 // ---------------------------------------------------------------------------
 
-const TOGGLEABLE_COLUMNS = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe'] as const
+const TOGGLEABLE_COLUMNS = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'notes'] as const
 type ToggleableColumn = typeof TOGGLEABLE_COLUMNS[number]
 
 export function serializeEnabledColumns(input: unknown): string | null {

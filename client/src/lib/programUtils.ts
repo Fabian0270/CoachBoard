@@ -5,7 +5,7 @@ import type {
   ToggleableColumn,
 } from 'coachboard-shared'
 
-export { TOGGLEABLE_COLUMNS } from 'coachboard-shared'
+export { TOGGLEABLE_COLUMNS, DEFAULT_ENABLED_COLUMNS } from 'coachboard-shared'
 export type { Exercise, Workout, ToggleableColumn }
 
 // The program detail API always includes workouts, so narrow the shared type.
@@ -19,6 +19,7 @@ export const COLUMN_LABELS: Record<ToggleableColumn, string> = {
   load_cap: 'Load Cap',
   load_used: 'Load Used',
   rpe: 'Last Set RPE',
+  notes: 'Notes (your cues)',
 }
 
 export type ColKey = 'name' | 'sets' | 'reps' | ToggleableColumn
@@ -85,6 +86,7 @@ export function exerciseValue(ex: Exercise, key: ColKey): string {
     case 'intensity': return ex.intensity ?? ''
     case 'load_used': return ex.load_used ?? ''
     case 'rpe': return ex.rpe ?? ''
+    case 'notes': return ex.notes ?? ''
     default: {
       const _exhaustive: never = key
       void _exhaustive
@@ -102,6 +104,7 @@ export const DEFAULT_COL_WIDTH: Record<ColKey, number> = {
   load_cap: 90,
   load_used: 90,
   rpe: 90,
+  notes: 200,
 }
 
 export function buildColumns(enabled: ToggleableColumn[]): ColDef[] {
@@ -113,6 +116,8 @@ export function buildColumns(enabled: ToggleableColumn[]): ColDef[] {
   if (enabled.includes('load_cap')) cols.push({ key: 'load_cap', label: 'Load Cap', width: 90, numeric: true })
   if (enabled.includes('load_used')) cols.push({ key: 'load_used', label: 'Load Used', width: 90 })
   if (enabled.includes('rpe')) cols.push({ key: 'rpe', label: 'Last Set RPE', width: 90, placeholder: 'e.g. 8' })
+  // Last, as in the exported sheet.
+  if (enabled.includes('notes')) cols.push({ key: 'notes', label: 'Notes', width: 200, placeholder: 'e.g. pause 2 s' })
   return cols
 }
 

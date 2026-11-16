@@ -3,6 +3,7 @@ import { parseExternalFile } from './externalImportService.js'
 import { WEEK_BANNER, isWeekdayLabel, weekdayOffset } from './external-import/valueNormalizers.js'
 import { MAX_SHEET_COLS, sheetBounds, valueAt } from '../lib/sheetBounds.js'
 import type { ExternalExerciseRow } from 'coachboard-shared'
+import { nameWithCue } from 'coachboard-shared/exportLayout'
 
 // ---------------------------------------------------------------------------
 // Scaffold export (Feature: export style templates v2) — LAYOUT-AGNOSTIC.
@@ -31,12 +32,24 @@ type ExerciseRow = {
   load_used: string | null
   rest_time: string | null
   rpe: string | null
+  /** The coach's cue; written after the name when the program's cue column is on. */
+  notes?: string | null
   group_id: string | null
   order_index: number
   workout_id: string
 }
 type WorkoutRow = { id: string; scheduled_date: string | null }
-type ProgramRow = { start_date: string | null }
+type ProgramRow = { start_date: string | null; enabled_columns?: string | null }
+
+/** Whether the program's cue column is switched on. */
+function cuesOn(program: ProgramRow): boolean {
+  try {
+    const parsed = JSON.parse(program.enabled_columns ?? 'null')
+    return Array.isArray(parsed) && parsed.includes('notes')
+  } catch {
+    return false
+  }
+}
 
 // WEEK_BANNER and isWeekdayLabel are shared with the importer, so both read the
 // same banners and day labels.
@@ -577,9 +590,13 @@ export async function renderScaffold(
   templateBase64: string,
   program: ProgramRow,
   workouts: WorkoutRow[],
-  exercises: ExerciseRow[],
+  rows: ExerciseRow[],
 ): Promise<Buffer | null> {
   if (!program.start_date) return null
+  // A coach's own sheet has no Notes column CoachBoard knows of, so with cues on
+  // each cue is written after its exercise name ("Squat - pause 2 s"). Off, the
+  // sheet is exactly what it was.
+  const exercises = cuesOn(program) ? rows.map((ex) => ({ ...ex, name: nameWithCue(ex.name, ex.notes) })) : rows
   const buffer = Buffer.from(templateBase64, 'base64')
 
   const preview = await parseExternalFile(buffer)

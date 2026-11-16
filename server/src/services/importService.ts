@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
-import { TOGGLEABLE_COLUMNS } from 'coachboard-shared'
+import { DEFAULT_ENABLED_COLUMNS } from 'coachboard-shared'
+import { sheetNameIs } from 'coachboard-shared/exportLayout'
 import type { ImportMatch, ImportWarning, ImportPreview, E1RMEstimate } from 'coachboard-shared'
 import { estimate1RM } from 'coachboard-shared/rpe'
 import { mainLiftKey } from 'coachboard-shared/vbt'
@@ -50,7 +51,7 @@ function parseCellValue(value: ExcelJS.CellValue): string | null {
 
 /** One exercise's three cells, however they were located in the sheet. */
 interface CellRead {
-  exercise: { id: string; name: string }
+  exercise: { id: string; name: string; notes?: string | null }
   weekIndex: number
   dayOfWeek: number
   rowIndex: number
@@ -75,7 +76,7 @@ const numberOrNull = (ws: ExcelJS.Worksheet, r: number, c: number): string | nul
 function readStructurally(
   ws: ExcelJS.Worksheet,
   blocks: ResultsBlock[],
-  dayPlans: Array<Array<Array<{ id: string; name: string }>>>,
+  dayPlans: Array<Array<Array<{ id: string; name: string; notes?: string | null }>>>,
 ): CellRead[] {
   const reads: CellRead[] = []
   for (const block of blocks) {
@@ -109,7 +110,7 @@ function readStructurally(
 function readByGeometry(
   ws: ExcelJS.Worksheet,
   layout: Array<{
-    exercise: { id: string; name: string }
+    exercise: { id: string; name: string; notes?: string | null }
     weekIndex: number
     dayOfWeek: number
     rowIndex: number
@@ -134,12 +135,12 @@ function readByGeometry(
 }
 
 function buildEnabledSet(rawEnabledColumns: string | null): Set<string> {
-  if (!rawEnabledColumns) return new Set(TOGGLEABLE_COLUMNS)
+  if (!rawEnabledColumns) return new Set(DEFAULT_ENABLED_COLUMNS)
   try {
     const parsed = JSON.parse(rawEnabledColumns)
     if (Array.isArray(parsed)) return new Set(parsed.filter((c: unknown) => typeof c === 'string'))
   } catch { /* fall through */ }
-  return new Set(TOGGLEABLE_COLUMNS)
+  return new Set(DEFAULT_ENABLED_COLUMNS)
 }
 
 /**
@@ -322,8 +323,9 @@ export async function parseImportFile(buffer: Buffer, programId: string): Promis
       : readByGeometry(ws, layout, { nameOffset, loadUsedOffset, rpeOffset })
 
   for (const { exercise, weekIndex, dayOfWeek, rowIndex, sheetName, load_used, rpe } of reads) {
+    // A sheet exported with cues after the names reads "Squat - pause 2 s".
     const nameMismatch =
-      sheetName !== null && sheetName.toLowerCase() !== exercise.name.toLowerCase()
+      sheetName !== null && !sheetNameIs(sheetName, exercise.name, exercise.notes)
 
     if (sheetName !== null) namedRowCount++
     if (nameMismatch) mismatchCount++

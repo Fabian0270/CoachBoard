@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { Response } from 'express'
 
 const isoDate = z.iso.date('Expected YYYY-MM-DD')
-const enabledColumnEnum = z.enum(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe'])
+const enabledColumnEnum = z.enum(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'notes'])
 const statusEnum = z.enum(['active', 'completed', 'archived', 'draft'])
 const focusEnum = z.enum(['hypertrophy', 'strength', 'peaking'])
 
@@ -19,6 +19,7 @@ const optionalEmail = z.preprocess(emptyToNull, z.email().max(200).nullable().op
 /** The cells a paste from a spreadsheet can fill. */
 const pastedFields = z.object({
   name: z.string().max(200).optional(),
+  notes: optionalString(2000),
   sets: optionalString(50),
   reps: optionalString(50),
   weight: z.number().min(0).nullable().optional(),

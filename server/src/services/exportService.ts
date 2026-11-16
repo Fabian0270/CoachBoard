@@ -7,7 +7,8 @@ import {
   type ExportColumnKey,
   type ExportLayoutTemplate,
 } from 'coachboard-shared/exportLayout'
-import { TOGGLEABLE_COLUMNS } from 'coachboard-shared'
+import { DEFAULT_ENABLED_COLUMNS } from 'coachboard-shared'
+import { nameWithCue } from 'coachboard-shared/exportLayout'
 import { e1rmForExerciseName } from './exportE1RM.js'
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,8 @@ type ExerciseRow = {
   intensity: string | null
   load_used: string | null
   rpe: string | null
+  /** The coach's cue for the athlete. Exported only when the program's cue column is on. */
+  notes?: string | null
   group_id: string | null
   order_index: number
   workout_id: string
@@ -55,7 +58,7 @@ const BORDER_COLOR = 'FFCCCCCC'
 
 const TRACKING_KEYS = new Set<ExportColumnKey>(['load_cap', 'load_used', 'rpe'])
 const COLUMN_WIDTH: Record<ExportColumnKey, number> = {
-  name: 22, rest_time: 12, sets: 6, reps: 6, intensity: 16, load_cap: 10, load_used: 10, rpe: 13,
+  name: 22, rest_time: 12, sets: 6, reps: 6, intensity: 16, load_cap: 10, load_used: 10, rpe: 13, notes: 30,
 }
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -76,9 +79,10 @@ function formatRpe(value: string | null, notation: 'plain' | 'at'): string {
   return value
 }
 
-function getValue(ex: ExerciseRow, key: ExportColumnKey, rpeNotation: 'plain' | 'at'): string | number {
+function getValue(ex: ExerciseRow, key: ExportColumnKey, rpeNotation: 'plain' | 'at', cueAfterName = false): string | number {
   switch (key) {
-    case 'name': return ex.name ?? ''
+    case 'name': return cueAfterName ? nameWithCue(ex.name ?? '', ex.notes) : ex.name ?? ''
+    case 'notes': return ex.notes ?? ''
     case 'rest_time': return ex.rest_time ?? ''
     case 'sets': return ex.sets ?? ''
     case 'reps': return ex.reps ?? ''
@@ -102,6 +106,8 @@ function resolveColumns(program: ProgramRow, template: ExportLayoutTemplate | nu
   colors: { banner: string; dayHeader: string; body: string | null }
   fonts: { headerBold: boolean; headerItalic: boolean; nameBold: boolean }
   rpeNotation: 'plain' | 'at'
+  /** Cues are on but the layout has no Notes column (a coach's own style): write them after the name. */
+  cueAfterName: boolean
 } {
   const headerColor = template?.colors.columnHeader || DEFAULT_HEADER_COLOR
   const trackingColor = template?.colors.trackingHeader || DEFAULT_TRACKING_COLOR
@@ -115,7 +121,9 @@ function resolveColumns(program: ProgramRow, template: ExportLayoutTemplate | nu
   const templateColumns = template && template.columns.length > 0 ? template.columns : null
   const columns: ResolvedColumn[] = keys.map((key, i) => ({
     key,
-    label: (templateColumns ? templateColumns[i].label : null) || COLUMN_LABELS[key],
+    // A column the template does not have (Notes, added to the Minimalistic
+    // look when cues are on) takes CoachBoard's own label.
+    label: templateColumns?.[i]?.label || COLUMN_LABELS[key],
     color: colorFor(key),
     width: COLUMN_WIDTH[key],
   }))
@@ -133,16 +141,18 @@ function resolveColumns(program: ProgramRow, template: ExportLayoutTemplate | nu
       nameBold: template ? !!template.fonts.nameBold : true,
     },
     rpeNotation: template?.rpeNotation ?? 'plain',
+    cueAfterName: enabled.has('notes') && !keys.includes('notes'),
   }
 }
 
 function parseEnabledColumns(raw: string | null): Set<string> {
-  if (!raw) return new Set(TOGGLEABLE_COLUMNS as readonly string[])
+  // No choice made: the columns every program had before Notes existed.
+  if (!raw) return new Set(DEFAULT_ENABLED_COLUMNS as readonly string[])
   try {
     const parsed = JSON.parse(raw)
     if (Array.isArray(parsed)) return new Set(parsed.filter((c) => typeof c === 'string'))
   } catch { /* fall through */ }
-  return new Set(TOGGLEABLE_COLUMNS as readonly string[])
+  return new Set(DEFAULT_ENABLED_COLUMNS as readonly string[])
 }
 
 /** Per-day exercise lists grouped by week, computed from the program calendar. */
@@ -205,7 +215,7 @@ export async function renderProgramWorkbook(
   const { dayData, numWeeks } = buildDayData(program, workouts, exercises)
 
   if (opts.modern) {
-    renderModern(ws, program, dayData, numWeeks, opts.modern.e1rmRef)
+    renderModern(ws, program, dayData, numWeeks, opts.modern.e1rmRef, parseEnabledColumns(program.enabled_columns).has('notes'))
   } else {
     const resolved = resolveColumns(program, template)
     const dayLabel = (dayOfWeek: number) =>
@@ -238,7 +248,7 @@ function renderHorizontal(
   numWeeks: number,
   dayLabel: (d: number) => string,
 ): void {
-  const { columns, colors, fonts, rpeNotation } = resolved
+  const { columns, colors, fonts, rpeNotation, cueAfterName } = resolved
   const fixedColumnCount = 1
   const columnCount = columns.length
   const weekColumnStart = (weekIndex: number) => fixedColumnCount + 1 + weekIndex * (columnCount + 1)
@@ -301,7 +311,7 @@ function renderHorizontal(
         const col = weekColumnStart(weekIndex)
         columns.forEach((c, i) => {
           const cell = ws.getCell(row, col + i)
-          cell.value = isSubSet && c.key === 'name' ? '' : getValue(exercise, c.key, rpeNotation)
+          cell.value = isSubSet && c.key === 'name' ? '' : getValue(exercise, c.key, rpeNotation, cueAfterName)
           if (c.key === 'name' && !isSubSet && fonts.nameBold) cell.font = { bold: true }
         })
       }
@@ -334,7 +344,7 @@ function renderVertical(
   numWeeks: number,
   dayLabel: (d: number) => string,
 ): void {
-  const { columns, colors, fonts, rpeNotation } = resolved
+  const { columns, colors, fonts, rpeNotation, cueAfterName } = resolved
 
   columns.forEach((c, i) => { ws.getColumn(i + 1).width = c.width })
 
@@ -375,7 +385,7 @@ function renderVertical(
         const isSubSet = !!(prev && exercise.group_id && exercise.group_id === prev.group_id)
         columns.forEach((c, i) => {
           const cell = ws.getCell(row, i + 1)
-          cell.value = isSubSet && c.key === 'name' ? '' : getValue(exercise, c.key, rpeNotation)
+          cell.value = isSubSet && c.key === 'name' ? '' : getValue(exercise, c.key, rpeNotation, cueAfterName)
           if (colors.body) cell.fill = fill(colors.body)
           if (c.key === 'name' && !isSubSet && fonts.nameBold) cell.font = { bold: true }
           cell.alignment = { horizontal: i === 0 ? 'left' : 'center', vertical: 'middle' }
@@ -437,6 +447,8 @@ function renderModern(
   dayData: Array<{ perWeek: ExerciseRow[][]; maxRows: number }>,
   numWeeks: number,
   e1rmRef: Record<string, number>,
+  /** The program's cue column is on: the cue goes on the card, after the prescription. */
+  withCues = false,
 ): void {
   const border: ExcelJS.Border = { style: 'thin', color: { argb: MODERN.border } }
   ws.getColumn(1).width = 30
@@ -511,7 +523,8 @@ function renderModern(
 
         // Card detail row — prescription summary.
         const detail = ws.getCell(row, 1)
-        detail.value = prescriptionSummary(ex)
+        const cue = withCues ? (ex.notes ?? '').trim() : ''
+        detail.value = [prescriptionSummary(ex), cue].filter(Boolean).join('   ·   ')
         detail.fill = fill(MODERN.cardDetail)
         detail.font = { color: { argb: MODERN.detailText } }
         detail.alignment = { horizontal: 'left', vertical: 'middle' }

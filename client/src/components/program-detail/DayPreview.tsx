@@ -51,6 +51,7 @@ export default function DayPreview({
                   {ex.weight != null ? ` @${ex.weight}` : ''}
                 </td>
                 <td className="py-0.5 text-muted-foreground">{ex.intensity ?? ''}</td>
+                {ex.notes && <td className="py-0.5 pl-2 italic text-muted-foreground">{ex.notes}</td>}
                 {logged && <td className="num whitespace-nowrap py-0.5 pl-2 text-success">{logged}</td>}
               </tr>
             )

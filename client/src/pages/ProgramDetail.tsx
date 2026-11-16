@@ -30,6 +30,7 @@ import type { SuggestionGoal } from 'coachboard-shared'
 import {
   type ToggleableColumn,
   TOGGLEABLE_COLUMNS,
+  DEFAULT_ENABLED_COLUMNS,
   COLUMN_LABELS,
   DAY_LABELS,
   weeksBetween,
@@ -535,7 +536,7 @@ function ProgramPage() {
   // Rows pasted from a spreadsheet into a day, with Undo of the whole paste.
   const pasteRows = async (date: string, anchorId: string | null, start: ColKey, text: string) => {
     if (!id || !program) return
-    const cols = buildColumns(program.enabled_columns ?? TOGGLEABLE_COLUMNS).map((c) => c.key)
+    const cols = buildColumns(program.enabled_columns ?? DEFAULT_ENABLED_COLUMNS).map((c) => c.key)
     const grid = parseCellBlock(text)
     if (grid.length === 0) return
     let notNumbers = 0
@@ -620,7 +621,7 @@ function ProgramPage() {
 
   const toggleColumn = async (col: ToggleableColumn) => {
     if (!program || !id) return
-    const current = program.enabled_columns ?? TOGGLEABLE_COLUMNS
+    const current = program.enabled_columns ?? DEFAULT_ENABLED_COLUMNS
     const nextSet = current.includes(col) ? current.filter((c) => c !== col) : [...current, col]
     const ordered = TOGGLEABLE_COLUMNS.filter((c) => nextSet.includes(c))
     setProgram({ ...program, enabled_columns: ordered })
@@ -646,7 +647,7 @@ function ProgramPage() {
   if (!program) return <div className="text-muted-foreground">Loading...</div>
 
   const openWorkout = openDate ? workoutByDate.get(openDate) ?? null : null
-  const enabledColumns = program.enabled_columns ?? TOGGLEABLE_COLUMNS
+  const enabledColumns = program.enabled_columns ?? DEFAULT_ENABLED_COLUMNS
 
   const handleSetFocus = async (value: string) => {
     if (!program) return
@@ -1452,7 +1453,15 @@ function ProgramPage() {
                     onChange={() => toggleColumn(col)}
                     className="h-4 w-4 accent-primary"
                   />
-                  {COLUMN_LABELS[col]}
+                  {col === 'notes' ? (
+                    <span>
+                      {COLUMN_LABELS[col]}
+                      <span className="block text-xs text-muted-foreground">
+                        Short instructions for the athlete, like “pause 2 s”. They go in the exported sheet —
+                        in your own Excel style, after the exercise name. Turning this off keeps what you wrote, hidden.
+                      </span>
+                    </span>
+                  ) : COLUMN_LABELS[col]}
                 </label>
               )
             })}

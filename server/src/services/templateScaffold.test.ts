@@ -282,3 +282,32 @@ describe('renderScaffold — vertical (row-axis)', () => {
     expect(sawFront).toBe(true)
   })
 })
+
+describe('renderScaffold — the cue column', () => {
+  const workouts = [{ id: 'd1', scheduled_date: '2026-01-05' }]
+  const exercises = [
+    { name: 'Front Squat', sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rest_time: null, group_id: null, rpe: '7', order_index: 0, workout_id: 'd1', notes: 'pause 2 s' },
+    { name: 'Pull-ups', sets: '3', reps: '10', weight: null, intensity: null, load_used: null, rest_time: null, group_id: null, rpe: null, order_index: 1, workout_id: 'd1', notes: null },
+  ]
+  const names = (ws: ExcelJS.Worksheet) => {
+    const out: string[] = []
+    ws.eachRow((row) => row.eachCell((c) => { if (typeof c.value === 'string') out.push(c.value) }))
+    return out
+  }
+
+  it("writes the cue after the exercise name when the program's cue column is on", async () => {
+    const on = { ...program, enabled_columns: JSON.stringify(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'notes']) }
+    const ws = await load((await renderScaffold(await buildTemplate(), on, workouts, exercises))!)
+    expect(names(ws)).toContain('Front Squat - pause 2 s')
+    expect(names(ws)).toContain('Pull-ups')
+  })
+
+  it('leaves the names exactly as they are when it is off', async () => {
+    const off = { ...program, enabled_columns: JSON.stringify(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe']) }
+    for (const p of [program, off]) {
+      const ws = await load((await renderScaffold(await buildTemplate(), p, workouts, exercises))!)
+      expect(names(ws)).toContain('Front Squat')
+      expect(names(ws).some((n) => n.includes('pause 2 s'))).toBe(false)
+    }
+  })
+})

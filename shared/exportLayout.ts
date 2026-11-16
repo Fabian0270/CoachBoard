@@ -28,6 +28,7 @@ export const COLUMN_LABELS = {
   load_cap: 'Load Cap',
   load_used: 'Load Used',
   rpe: 'Last Set RPE',
+  notes: 'Notes',
 } as const
 
 export type ExportColumnKey = keyof typeof COLUMN_LABELS
@@ -48,6 +49,8 @@ export const FULL_COLUMN_ORDER: ExportColumnKey[] = [
   'load_cap',
   'load_used',
   'rpe',
+  // Last, so switching the cue column on moves no other column in a week block.
+  'notes',
 ]
 
 const ALWAYS_ON = new Set<ExportColumnKey>(['name', 'sets', 'reps'])
@@ -83,8 +86,33 @@ export function exportColumnKeysFor(
   template: ExportLayoutTemplate | null,
   enabledColumns: string[],
 ): ExportColumnKey[] {
-  if (template && template.columns.length > 0) return template.columns.map((c) => c.key)
+  if (template && template.columns.length > 0) {
+    const keys = template.columns.map((c) => c.key)
+    // CoachBoard's own Minimalistic look gets a Notes column when cues are on.
+    // A coach's captured style keeps its own columns; the cue goes after the
+    // exercise name instead (see cueAfterName).
+    if (template === MINIMAL_DESCRIPTOR && enabledColumns.includes('notes') && !keys.includes('notes')) {
+      return [...keys, 'notes']
+    }
+    return keys
+  }
   return buildExportColumnKeys(enabledColumns)
+}
+
+/** "Squat - pause 2 s": a cue written after the exercise name, for sheets with no Notes column. */
+export function nameWithCue(name: string, cue: string | null | undefined): string {
+  const c = (cue ?? '').trim()
+  return c ? `${name} - ${c}` : name
+}
+
+/**
+ * Whether a name read back from a sheet is this exercise, cue or not. A sheet
+ * exported with cues after the names reads "Squat - pause 2 s" for Squat.
+ */
+export function sheetNameIs(sheetName: string, name: string, cue: string | null | undefined): boolean {
+  const s = sheetName.trim().toLowerCase()
+  const n = name.trim().toLowerCase()
+  return s === n || (!!(cue ?? '').trim() && s === nameWithCue(n, (cue ?? '').trim().toLowerCase()))
 }
 
 /**
