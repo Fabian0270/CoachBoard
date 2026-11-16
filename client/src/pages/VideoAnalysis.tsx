@@ -12,9 +12,7 @@ import {
   Ruler,
   Save,
   Target,
-  Undo2,
   UserRound,
-  X,
 } from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import { Button } from '../components/ui/button'
@@ -43,7 +41,6 @@ import {
 } from 'coachboard-shared/pose'
 import {
   analysePath,
-  looksMistracked,
   pixelsPerMetreFromPlate,
   PLATE_DIAMETERS_MM,
   type RepMetrics,
@@ -53,10 +50,8 @@ import {
   lastRepVelocity,
   liftLabel,
   measuredMvt,
-  readRep,
-  rpeFromLastRepVelocity,
-  zoneFor,
 } from 'coachboard-shared/vbt'
+import RepTable from '../components/analysis/RepTable'
 import VelocityPanel, {
   rememberedLift,
   type SetContextState,
@@ -1473,120 +1468,15 @@ export default function VideoAnalysis() {
                   skews everything measured from the set. Strike it off and every number below is
                   recalculated without it.
                 </p>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[30rem] text-sm">
-                    <thead>
-                      <tr className="border-b text-left text-muted-foreground">
-                        <th className="py-1 pr-4 font-medium">Rep</th>
-                        <th className={`py-1 pr-4 font-medium ${metric === 'mean' ? 'text-foreground' : ''}`}>
-                          Mean{metric === 'mean' && ' •'}
-                        </th>
-                        <th className={`py-1 pr-4 font-medium ${metric === 'propulsive' ? 'text-foreground' : ''}`}>
-                          Propulsive{metric === 'propulsive' && ' •'}
-                        </th>
-                        <th className={`py-1 pr-4 font-medium ${metric === 'peak' ? 'text-foreground' : ''}`}>
-                          Peak{metric === 'peak' && ' •'}
-                        </th>
-                        <th className="py-1 pr-4 font-medium">Range</th>
-                        <th className="py-1 pr-4 font-medium">Duration</th>
-                        {/* Per-rep interpretation. Dropped entirely without a
-                            scale line rather than shown as a column of dashes —
-                            neither an RPE table nor a velocity zone means
-                            anything against a pixels-per-second number. */}
-                        {pixelsPerMetre !== null && (
-                          <>
-                            <th className="py-1 pr-4 font-medium">≈ RPE</th>
-                            <th className="py-1 font-medium">Quality</th>
-                          </>
-                        )}
-                        <th className="py-1 pl-4 font-medium"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {trackedReps.map((r) => {
-                        const excluded = excludedReps.has(r.index)
-                        // Whatever velocity the panel reads the tables against,
-                        // so one rep never carries two different RPEs.
-                        const suspect = looksMistracked(r)
-                        const v = readRep(r, metric)
-                        const reading =
-                          !excluded && v !== null
-                            ? rpeFromLastRepVelocity(setContext.lift, v, { anchors })
-                            : null
-                        const zone = !excluded && v !== null ? zoneFor(v) : null
-                        return (
-                          <tr
-                            key={r.index}
-                            className={`border-b last:border-0 ${
-                              excluded ? 'text-muted-foreground line-through opacity-60' : ''
-                            }`}
-                          >
-                            <td className="py-1 pr-4">
-                              {r.index + 1}
-                              {suspect && !excluded && (
-                                <span
-                                  className="ml-1.5 text-warning"
-                                  title="The peak is far out of line with the mean — the tracker probably jumped here. Strike this rep off or track it again."
-                                >
-                                  ⚠
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-1 pr-4 font-medium">
-                              {r.meanVelocity !== null
-                                ? `${r.meanVelocity.toFixed(2)} m/s`
-                                : `${Math.round(r.meanVelocityPxS)} px/s`}
-                            </td>
-                            <td className="py-1 pr-4 font-medium">
-                              {r.meanPropulsiveVelocity !== null
-                                ? `${r.meanPropulsiveVelocity.toFixed(2)} m/s`
-                                : '—'}
-                              {r.propulsiveFraction !== null && (
-                                <span className="ml-1 text-xs font-normal text-muted-foreground">
-                                  {Math.round(r.propulsiveFraction * 100)}%
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-1 pr-4">
-                              {r.peakVelocity !== null
-                                ? `${r.peakVelocity.toFixed(2)} m/s`
-                                : `${Math.round(r.peakVelocityPxS)} px/s`}
-                            </td>
-                            <td className="py-1 pr-4">
-                              {r.romM !== null
-                                ? `${(r.romM * 100).toFixed(0)} cm`
-                                : `${Math.round(r.romPx)} px`}
-                            </td>
-                            <td className="py-1 pr-4">{(r.durationMs / 1000).toFixed(2)} s</td>
-                            {pixelsPerMetre !== null && (
-                              <>
-                                <td className="py-1 pr-4">{reading ? reading.rpe : '—'}</td>
-                                <td className="py-1 text-muted-foreground">{zone ? zone.label : '—'}</td>
-                              </>
-                            )}
-                            <td className="py-1 pl-4 text-right">
-                              <button
-                                type="button"
-                                onClick={() => toggleRep(r.index)}
-                                title={excluded ? 'Count this rep again' : 'Not a rep — strike it off'}
-                                aria-label={
-                                  excluded ? `Count rep ${r.index + 1} again` : `Strike off rep ${r.index + 1}`
-                                }
-                                className="rounded p-1 text-muted-foreground no-underline hover:bg-muted hover:text-foreground"
-                              >
-                                {excluded ? (
-                                  <Undo2 className="h-3.5 w-3.5" />
-                                ) : (
-                                  <X className="h-3.5 w-3.5" />
-                                )}
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <RepTable
+                  reps={trackedReps}
+                  lift={setContext.lift}
+                  metric={metric}
+                  calibrated={pixelsPerMetre !== null}
+                  anchors={anchors}
+                  excluded={excludedReps}
+                  onToggle={toggleRep}
+                />
               </div>
             )}
 

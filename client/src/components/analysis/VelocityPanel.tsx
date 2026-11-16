@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Gauge, Ruler, TrendingDown, TriangleAlert } from 'lucide-react'
 import { RPE_VALUES } from 'coachboard-shared/rpe'
-import { looksMistracked, type RepMetrics } from 'coachboard-shared/videoAnalysis'
+import type { RepMetrics } from 'coachboard-shared/videoAnalysis'
 import {
   VBT_LIFTS,
   LRV_TOLERANCE_MS,
@@ -9,22 +9,12 @@ import {
   MIN_MVT,
   MAX_MVT,
   isPlausibleMvt,
-  bestRepVelocity,
-  buildLoadVelocityProfile,
   defaultVelocityMetric,
-  e1RMFromVelocity,
   checkScale,
   effectiveRpe,
   effortLabel,
-  recordedMaxFor,
-  resolveLvSlope,
-  resolveMvt,
   isVbtLift,
-  lastRepVelocity,
   liftLabel,
-  lrvChart,
-  rpeFromLastRepVelocity,
-  velocityLoss,
   zoneFor,
   type LrvAnchor,
   type LvPoint,
@@ -36,6 +26,7 @@ import {
 import { num } from '../../lib/num'
 import { Button } from '../ui/button'
 import LoadVelocityChart from './LoadVelocityChart'
+import { readSet } from './readSet'
 
 // ---------------------------------------------------------------------------
 // Velocity-based training readouts for one tracked set.
@@ -162,40 +153,6 @@ export default function VelocityPanel({
   const metric = value.metric ?? defaultVelocityMetric(lift)
 
   /**
-   * Reps whose peak is wildly out of line with their mean.
-   *
-   * Peak is a near-single-sample statistic, so a tracker re-lock lands in it
-   * whole: a real 165 kg bench reported 1.69 m/s, which the panel then read as
-   * "RPE 5, easy" on a set called at 8.5. The page already refuses to show a
-   * track it does not trust, and this is the same rule one level down — no
-   * reading at all beats a confident wrong one.
-   */
-  const mistracked = useMemo(() => reps.filter(looksMistracked), [reps])
-  const trusted = useMemo(
-    () => reps.filter((r) => !looksMistracked(r)),
-    [reps],
-  )
-  const readable = metric === 'peak' ? trusted : reps
-
-  const lastV = calibrated ? lastRepVelocity(readable, metric) : null
-  const bestV = calibrated ? bestRepVelocity(readable, metric) : null
-
-  const chart = useMemo(() => lrvChart(lift, allAnchors), [lift, allAnchors])
-  const reading = useMemo(
-    () =>
-      lastV == null
-        ? null
-        : rpeFromLastRepVelocity(lift, lastV, { anchors: allAnchors, calledRpe: value.calledRpe }),
-    [lift, lastV, allAnchors, value.calledRpe],
-  )
-  const loss = useMemo(() => velocityLoss(reps), [reps])
-
-  /** What to put on screen — see effectiveRpe for why it is not always the bar's own number. */
-  const shownRpe = reading ? effectiveRpe(reading, value.calledRpe) : 0
-
-  const knownMax = useMemo(() => recordedMaxFor(lift, maxes), [lift, maxes])
-
-  /**
    * The coach's own measured 1RM velocity for THIS athlete and THIS lift.
    *
    * The published band is a population figure and the personal number is the
@@ -246,62 +203,21 @@ export default function VelocityPanel({
     [onSaveMvt, storedMvt],
   )
 
-  // The published band is the last resort, not the starting point: this
-  // athlete's stored number wins, then the RPE-10 row of their own LRV chart.
-  const suggestedMvt = useMemo(
-    () => resolveMvt(lift, { stored: storedMvt, anchors: allAnchors }),
-    [lift, storedMvt, allAnchors],
-  )
-  // An implausible typed value is ignored rather than estimated from — "25"
-  // meant as 0.25 would otherwise put a nonsense 1RM on screen.
+  // Every reading — the RPE, the 1RM velocity, the slope, the estimate — comes
+  // from readSet, the same function the saved page uses (BP3), so one set never
+  // reads two ways. Only the half-typed 1RM velocity above is the panel's own.
   const typedMvt = mvtText.trim() ? num(mvtText) : null
-  const mvt = isPlausibleMvt(typedMvt) ? typedMvt : suggestedMvt
-
-  const lvPoints = useMemo(() => {
-    const points = [...savedPoints]
-    if (validLoad != null && bestV != null) {
-      points.push({ load: validLoad, velocity: bestV, label: 'this set' })
-    }
-    return points
-  }, [savedPoints, validLoad, bestV])
-
-  const profile = useMemo(
-    () => (mvt != null ? buildLoadVelocityProfile(lvPoints, mvt) : null),
-    [lvPoints, mvt],
+  const read = useMemo(
+    () => readSet({
+      reps, lift, metric, calibrated, loadKg: validLoad, calledRpe: value.calledRpe,
+      anchors: allAnchors, storedMvt: storedMvt ?? null, typedMvt, savedPoints, maxes,
+    }),
+    [reps, lift, metric, calibrated, validLoad, value.calledRpe, allAnchors, storedMvt, typedMvt, savedPoints, maxes],
   )
+  const { mistracked, trusted, lastV, bestV, chart, reading, loss, knownMax, suggestedMvt, mvt, lvPoints, profile, slope, estimate } = read
 
-  // Calibration deliberately uses the most recent SAVED set, never the current
-  // one: calibrating off the set you are estimating just hands the recorded max
-  // straight back.
-  const calibration = useMemo(
-    () =>
-      knownMax != null && mvt != null && savedPoints.length > 0
-        ? {
-            knownMax,
-            loadKg: savedPoints[0].load,
-            velocity: savedPoints[0].velocity,
-            mvt,
-          }
-        : null,
-    [knownMax, mvt, savedPoints],
-  )
-
-  const slope = useMemo(
-    () => resolveLvSlope(lift, { profile, calibration }),
-    [lift, profile, calibration],
-  )
-
-  // The FASTEST rep, not the last. The load-velocity relationship describes how
-  // fast a load moves under full intent when fresh; a fatigued last rep reads
-  // the load as far heavier than it is. On a real 180 kg five by a 250 kg
-  // squatter the last rep estimated 201 kg and the first 249.
-  const estimate = useMemo(
-    () =>
-      bestV != null && validLoad != null && mvt != null
-        ? e1RMFromVelocity({ loadKg: validLoad, velocity: bestV, mvt, slope })
-        : null,
-    [bestV, validLoad, mvt, slope],
-  )
+  /** What to put on screen — see effectiveRpe for why it is not always the bar's own number. */
+  const shownRpe = reading ? effectiveRpe(reading, value.calledRpe) : 0
 
   /**
    * Does the scale survive contact with anatomy?

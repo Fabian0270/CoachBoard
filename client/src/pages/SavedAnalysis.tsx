@@ -8,19 +8,15 @@ import { pixelsPerMetreFromPlate } from 'coachboard-shared/videoAnalysis'
 import {
   VBT_LIFTS,
   defaultVelocityMetric,
-  e1RMFromVelocity,
+  effectiveRpe,
   isVbtLift,
   isVelocityMetric,
   lastRepVelocity,
   liftLabel,
-  populationSlope,
-  readRep,
-  resolveMvt,
-  rpeFromLastRepVelocity,
-  velocityLoss,
   zoneFor,
   type VbtLift,
 } from 'coachboard-shared/vbt'
+import type { RepMetrics } from 'coachboard-shared/videoAnalysis'
 import {
   applyCorrections,
   anglesAgainstBar,
@@ -30,12 +26,18 @@ import {
 import { analysePath } from 'coachboard-shared/videoAnalysis'
 import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
-import AnalysisStage from '../components/analysis/AnalysisStage'
+import AnalysisStage, { type StageMode } from '../components/analysis/AnalysisStage'
+import DrawControls from '../components/analysis/DrawControls'
+import type { Stroke } from '../components/analysis/annotations'
+import RepTable from '../components/analysis/RepTable'
+import { readSet } from '../components/analysis/readSet'
+import LoadError from '../components/LoadError'
+import { ApiError, errorMessage, getJson, sendJson } from '../lib/api'
 import PathPlot from '../components/analysis/PathPlot'
 import JointAngleChart from '../components/analysis/JointAngleChart'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
 import { useTrackerColor } from '../components/analysis/trackerColor'
-import { useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
+import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
 
 // ---------------------------------------------------------------------------
 // A saved analysis, reopened.
@@ -69,20 +71,29 @@ export default function SavedAnalysis() {
 
   const [analysis, setAnalysis] = useState<VideoAnalysisDto | null>(null)
   const [missing, setMissing] = useState(false)
+  /** A load that failed for another reason than the analysis being gone. */
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
   /** A file the coach re-picked, held as an object URL and never uploaded. */
   const [localUrl, setLocalUrl] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
     let cancelled = false
-    fetch(`/api/analysis/${id}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('not found'))))
-      .then((data: VideoAnalysisDto) => !cancelled && setAnalysis(data))
-      .catch(() => !cancelled && setMissing(true))
+    setLoadError(null)
+    // Only a 404 is "no longer exists". Any other failure used to say the same,
+    // which told a coach their saved work was gone when the read had only failed.
+    getJson<VideoAnalysisDto>(`/api/analysis/${encodeURIComponent(id)}`)
+      .then((data) => !cancelled && setAnalysis(data))
+      .catch((err) => {
+        if (cancelled) return
+        if (err instanceof ApiError && err.status === 404) setMissing(true)
+        else setLoadError(errorMessage(err))
+      })
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [id, attempt])
 
   // Revoked on swap or unmount, or the bytes stay pinned for the life of the window.
   useEffect(() => {
@@ -103,8 +114,16 @@ export default function SavedAnalysis() {
   // athlete's own, so the same set reported two different estimated maxes
   // depending on which page you were standing on.
   const athleteId = analysis?.athleteId ?? null
-  const { anchors } = useVbtHistory(athleteId, lift, metric)
+  // The athlete's OTHER sets: this one is added below exactly as the live page
+  // adds the set it is tracking, so both pages read it against the same history.
+  const { anchors: otherAnchors, points: savedPoints } = useVbtHistory(athleteId, lift, metric, id ?? null)
   const { byLift: mvtByLift } = useAthleteMvt(athleteId)
+  const maxes = useAthleteMaxes(athleteId)
+
+  // The pen (BP7). The stage's own comments name this page as where a coach
+  // talks over a lift, and it had no pen; Compare did.
+  const [mode, setMode] = useState<StageMode>('seed')
+  const [strokes, setStrokes] = useState<Stroke[]>([])
 
   /**
    * The stored skeleton, if this analysis has one.
@@ -220,6 +239,32 @@ export default function SavedAnalysis() {
     }
   }
 
+  /**
+   * Strike a rep off the saved set (BP4): at once, with Undo (D38). It changes
+   * the stored set, and with it the athlete's profile and estimates, the same
+   * as striking it before saving would have.
+   */
+  const storeReps = async (next: RepMetrics[]): Promise<boolean> => {
+    if (!analysis) return false
+    try {
+      setAnalysis(await sendJson<VideoAnalysisDto>('PATCH', `/api/analysis/${analysis.id}`, { metrics: next }))
+      return true
+    } catch (err) {
+      toast.error(`Could not change the reps. ${errorMessage(err)} Nothing was changed.`)
+      return false
+    }
+  }
+  const strikeRep = async (index: number) => {
+    if (!analysis) return
+    const before = analysis.metrics ?? []
+    if (!(await storeReps(before.filter((r) => r.index !== index)))) return
+    toast.info(`Rep ${index + 1} struck off`, {
+      action: { label: 'Undo', onClick: () => void storeReps(before) },
+      duration: 8000,
+    })
+  }
+
+  if (loadError) return <div className="p-6"><LoadError what="this analysis" message={loadError} onRetry={() => setAttempt((n) => n + 1)} /></div>
   if (missing) {
     return (
       <div className="p-8">
@@ -237,23 +282,19 @@ export default function SavedAnalysis() {
   // hooks cannot run after a conditional return.
   const pixelsPerMetre = analysisPixelsPerMetre(analysis)
 
-  const lastV = lastRepVelocity(metrics, metric)
-  const bestV = metrics.length ? Math.max(...metrics.map((m) => readRep(m, metric) ?? 0)) : 0
-  // Judged against this athlete's own history, not the published chart — the
-  // live panel does the same, and two pages disagreeing about one rep's RPE is
-  // worse than either answer on its own.
-  const reading = lastV != null ? rpeFromLastRepVelocity(lift, lastV, { anchors }) : null
-  const mvt = resolveMvt(lift, { stored: mvtByLift[lift], anchors })
-  const estimate =
-    analysis.loadKg != null && bestV > 0 && mvt != null
-      ? e1RMFromVelocity({
-          loadKg: analysis.loadKg,
-          velocity: bestV,
-          mvt,
-          slope: populationSlope(lift),
-        })
-      : null
-  const loss = velocityLoss(metrics)
+  const calibrated = analysis.calibration !== null
+  // This set's own anchor, added to the athlete's others the way the live page
+  // adds the set it is tracking.
+  const ownLastV = calibrated ? lastRepVelocity(metrics, metric) : null
+  const anchors = analysis.calledRpe != null && ownLastV != null
+    ? [...otherAnchors, { rpe: analysis.calledRpe, velocity: ownLastV }]
+    : otherAnchors
+  // Every reading from the same function as the live panel (BP3): the same set
+  // gives the same RPE and the same estimated max on both pages.
+  const { lastV, reading, loss, estimate } = readSet({
+    reps: metrics, lift, metric, calibrated, loadKg: analysis.loadKg, calledRpe: analysis.calledRpe,
+    anchors, storedMvt: mvtByLift[lift] ?? null, savedPoints, maxes,
+  })
 
   // One route for both kinds of ownership — a stored copy of a local import, or
   // the synced Discord file it references. The page does not need to know which.
@@ -276,11 +317,17 @@ export default function SavedAnalysis() {
             {analysis.sourceLabel || 'no source name'}
           </p>
         </div>
+        {/* The same pen as the tracking page and Compare (BP7), wherever a video plays. */}
+        {videoSrc && (
+          <div className="ml-auto">
+            <DrawControls mode={mode} onModeChange={setMode} strokes={strokes} onStrokesChange={setStrokes} />
+          </div>
+        )}
         {analysis.mediaId && (
           <Button
             variant="outline"
             size="sm"
-            className="ml-auto"
+            className={videoSrc ? '' : 'ml-auto'}
             onClick={() => navigate(`/analysis/${analysis.mediaId}`)}
           >
             <LineChart className="h-4 w-4" /> Track this clip again
@@ -302,12 +349,14 @@ export default function SavedAnalysis() {
           onTimeUpdate={() => {}}
           disabled
           color={color}
-          mode="seed"
+          mode={mode}
           calibration={analysis.calibration}
           onCalibratePoint={() => {}}
           poseRef={poseRef}
           showPose={showPose}
           onCorrectLandmark={correctLandmark}
+          strokes={strokes}
+          onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
         />
       ) : (
         <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} />
@@ -379,42 +428,17 @@ export default function SavedAnalysis() {
           <h2 className="text-sm font-medium">
             Concentric velocity — {metrics.length} {metrics.length === 1 ? 'rep' : 'reps'}
           </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[26rem] text-sm">
-              <thead>
-                <tr className="border-b text-left text-muted-foreground">
-                  <th className="py-1 pr-4 font-medium">Rep</th>
-                  <th className="py-1 pr-4 font-medium">Propulsive</th>
-                  <th className="py-1 pr-4 font-medium">Mean</th>
-                  <th className="py-1 pr-4 font-medium">Range</th>
-                  <th className="py-1 font-medium">≈ RPE</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metrics.map((m) => {
-                  const v = readRep(m, metric)
-                  const rpe = v != null ? rpeFromLastRepVelocity(lift, v) : null
-                  return (
-                    <tr key={m.index} className="border-b last:border-0">
-                      <td className="py-1 pr-4">{m.index + 1}</td>
-                      <td className="py-1 pr-4 font-medium">
-                        {v != null ? `${v.toFixed(2)} m/s` : '—'}
-                      </td>
-                      <td className="py-1 pr-4">
-                        {m.meanVelocity != null ? `${m.meanVelocity.toFixed(2)} m/s` : '—'}
-                      </td>
-                      <td className="py-1 pr-4">
-                        {m.romM != null
-                          ? `${(m.romM * 100).toFixed(0)} cm`
-                          : `${Math.round(m.romPx)} px`}
-                      </td>
-                      <td className="py-1">{rpe ? rpe.rpe : '—'}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          {/* The live page's table (BP1, BP2, BP4): every speed, the one the set
+              is read from marked, the ⚠ flag, and a rep can be struck off — at
+              once, with Undo. The last rep stays: a set needs one. */}
+          <RepTable
+            reps={metrics}
+            lift={lift}
+            metric={metric}
+            calibrated={calibrated}
+            anchors={anchors}
+            onToggle={metrics.length > 1 ? (index) => void strikeRep(index) : undefined}
+          />
         </div>
 
         <div className="space-y-1 text-sm">
@@ -447,7 +471,7 @@ export default function SavedAnalysis() {
             label="Last rep"
             value={lastV != null ? `${lastV.toFixed(2)} m/s` : 'no scale was set'}
           />
-          <Row label="Reads as" value={reading ? `RPE ${reading.rpe}` : '—'} />
+          <Row label="Reads as" value={reading ? `RPE ${effectiveRpe(reading, analysis.calledRpe)}` : '—'} />
           <Row
             label="Velocity loss"
             value={loss ? `${Math.round(loss.lossPct)}%${loss.reliable ? '' : ' (few reps)'}` : '—'}
@@ -458,8 +482,9 @@ export default function SavedAnalysis() {
           />
           <Row label="Quality" value={lastV != null ? (zoneFor(lastV)?.label ?? '—') : '—'} />
           <p className="pt-2 text-xs text-muted-foreground">
-            Read off the published reference for this lift. The live panel personalises these from
-            the athlete&rsquo;s own sets; this view shows what was measured.
+            {analysis.athleteId
+              ? `Read against ${analysis.athleteName ?? 'the athlete'}'s own saved sets, stored 1RM speed and recorded max where there are any, the same way as on the tracking page. Where there are none, the published reference for this lift is used.`
+              : 'No athlete is attached, so this is read off the published reference for this lift.'}
           </p>
         </div>
       </div>

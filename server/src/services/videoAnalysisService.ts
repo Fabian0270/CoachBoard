@@ -193,6 +193,8 @@ export async function updateAnalysisContext(
     loadKg?: number | null
     calledRpe?: number | null
     metric?: string | null
+    /** The set's reps, after one was struck off (or put back). */
+    metrics?: Record<string, unknown>[]
   },
 ): Promise<VideoAnalysisDto | null> {
   const res = await getDb()
@@ -203,6 +205,7 @@ export async function updateAnalysisContext(
       ...(change.loadKg !== undefined ? { load_kg: change.loadKg } : {}),
       ...(change.calledRpe !== undefined ? { called_rpe: change.calledRpe } : {}),
       ...(change.metric !== undefined ? { metric: change.metric } : {}),
+      ...(change.metrics !== undefined ? { metrics: JSON.stringify(change.metrics) } : {}),
       updated_at: new Date().toISOString(),
     })
     .where('id', '=', id)

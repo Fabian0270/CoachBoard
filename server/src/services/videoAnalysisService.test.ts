@@ -164,6 +164,18 @@ describe('updateAnalysisContext', () => {
     expect(cleared?.loadKg).toBe(180)
   })
 
+  it("replaces the set's reps when one is struck off, and puts them back for Undo (BP4)", async () => {
+    const { updateAnalysisContext } = await import('./videoAnalysisService.js')
+    const rep = (index: number) => ({ index, meanVelocity: 0.5 - index * 0.05 })
+    const saved = await saveAnalysis(input({ metrics: [rep(0), rep(1), rep(2)] as never }))
+    const struck = await updateAnalysisContext(saved.id, { metrics: [rep(0), rep(2)] })
+    expect(struck?.metrics.map((m) => m.index)).toEqual([0, 2])
+    expect((await getAnalysis(saved.id))?.metrics.map((m) => m.index)).toEqual([0, 2])
+    const back = await updateAnalysisContext(saved.id, { metrics: [rep(0), rep(1), rep(2)] })
+    expect(back?.metrics.map((m) => m.index)).toEqual([0, 1, 2])
+    expect(back?.track).toEqual(saved.track)
+  })
+
   it('reports a miss', async () => {
     const { updateAnalysisContext } = await import('./videoAnalysisService.js')
     expect(await updateAnalysisContext('does-not-exist', { loadKg: 100 })).toBeNull()

@@ -27,6 +27,8 @@ export function useVbtHistory(
   athleteId: string | null,
   lift: VbtLift,
   metric: VelocityMetric,
+  /** A saved set to leave out: the saved page reads a set against the OTHERS. */
+  excludeId: string | null = null,
 ): { anchors: LrvAnchor[]; points: LvPoint[] } {
   const [rows, setRows] = useState<VideoAnalysisDto[]>([])
 
@@ -55,7 +57,7 @@ export function useVbtHistory(
     const points: LvPoint[] = []
 
     for (const row of rows) {
-      if (row.lift !== lift) continue
+      if (row.lift !== lift || row.id === excludeId) continue
       const metrics = row.metrics ?? []
       // The last rep is what an RPE is called on; the fastest is what a
       // load-velocity profile is built from.
@@ -67,7 +69,7 @@ export function useVbtHistory(
       }
     }
     return { anchors, points }
-  }, [rows, lift, metric])
+  }, [rows, lift, metric, excludeId])
 }
 
 /**

@@ -341,6 +341,10 @@ const contextSchema = z
       .nullable()
       .optional(),
     metric: z.enum(['mean', 'peak', 'propulsive']).nullable().optional(),
+    // The set's reps after one was struck off on the saved page (BP4), or put
+    // back by Undo. Shaped as on save; each needs its index, which the rep
+    // table, the strike and the Undo all key on.
+    metrics: z.array(z.record(z.string(), z.unknown()).refine((m) => Number.isInteger(m.index), 'Each rep needs its index')).max(200).optional(),
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), 'Nothing to change')
 
