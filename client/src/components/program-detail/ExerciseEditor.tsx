@@ -92,6 +92,17 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
   const [widths, setWidth] = useColumnWidths(programId, columns)
   const activeResizeCleanup = useRef<(() => void) | null>(null)
   const [copyOpen, setCopyOpen] = useState(false)
+  // Opening the panel hides its own button, which dropped the cursor onto the
+  // dialog itself. It goes into the panel instead, and back to the button when
+  // the panel closes.
+  const copyButtonRef = useRef<HTMLButtonElement>(null)
+  const copyPanelRef = useRef<HTMLDivElement>(null)
+  const copyWasOpen = useRef(false)
+  useEffect(() => {
+    if (copyOpen) copyPanelRef.current?.querySelector<HTMLElement>('button, input:not(:disabled)')?.focus()
+    else if (copyWasOpen.current) copyButtonRef.current?.focus()
+    copyWasOpen.current = copyOpen
+  }, [copyOpen])
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
   const [copying, setCopying] = useState(false)
 
@@ -517,7 +528,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
             <Plus className="h-4 w-4 mr-1" />Add exercise
           </Button>
           {copyGrid.some((w) => w.days.some((d) => !d.isSource)) && exercises.length > 0 && !copyOpen && (
-            <Button type="button" size="sm" variant="outline" onClick={() => setCopyOpen(true)}>
+            <Button ref={copyButtonRef} type="button" size="sm" variant="outline" onClick={() => setCopyOpen(true)}>
               <Copy className="h-4 w-4 mr-1" />Copy to…
             </Button>
           )}
@@ -531,7 +542,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
 
       {/* Inline copy panel: any day of the program, not only the same weekday. */}
       {copyOpen && (
-        <div className="shrink-0 space-y-2 rounded-md border border-border bg-muted/30 p-3">
+        <div ref={copyPanelRef} className="shrink-0 space-y-2 rounded-md border border-border bg-muted/30 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium">Copy this day to:</p>
             <Button

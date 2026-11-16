@@ -23,11 +23,40 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, onInteractOutside, ...props }, ref) => (
+>(({ className, children, onInteractOutside, onOpenAutoFocus, onCloseAutoFocus, ...props }, ref) => {
+  // Where the cursor was when the dialog opened, to put it back on close.
+  // Radix only returns focus to a DialogTrigger, and the app opens its dialogs
+  // from plain buttons, menus and shortcuts — so closing one (Esc, ×, Cancel)
+  // dropped the cursor on the page itself and Tab started again from the top.
+  // Read as the dialog opens, every time: Radix calls onOpenAutoFocus just
+  // before it moves focus in. (A mount-time read was not enough — most dialogs
+  // stay mounted with open={false} and would remember the page's first focus.)
+  const returnTo = React.useRef<HTMLElement | null>(null)
+  return (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
+      onOpenAutoFocus={(event) => {
+        const active = document.activeElement
+        // An `autoFocus` field inside the dialog has already taken focus by
+        // now, so what was focused before is lost. Don't use autoFocus inside a
+        // DialogContent: Radix puts the cursor in the first field anyway.
+        const inside = active instanceof Node && (event.currentTarget as Node | null)?.contains(active)
+        returnTo.current = active instanceof HTMLElement && active !== document.body && !inside ? active : null
+        onOpenAutoFocus?.(event)
+      }}
+      onCloseAutoFocus={(event) => {
+        onCloseAutoFocus?.(event)
+        if (event.defaultPrevented) return
+        const el = returnTo.current
+        // A menu item that opened the dialog is gone by now; then the page's
+        // own handling (or nothing) is the honest answer.
+        if (el && el.isConnected) {
+          event.preventDefault()
+          el.focus()
+        }
+      }}
       // A toast sits outside the dialog in the DOM, so pressing its Undo or its
       // × counted as a click outside and closed the dialog under it.
       onInteractOutside={(event) => {
@@ -47,7 +76,8 @@ const DialogContent = React.forwardRef<
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>
   </DialogPortal>
-))
+  )
+})
 DialogContent.displayName = DialogPrimitive.Content.displayName
 
 const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (

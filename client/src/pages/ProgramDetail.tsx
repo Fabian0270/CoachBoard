@@ -577,21 +577,21 @@ export default function ProgramDetail() {
                   >
                     <button
                       type="button" role="menuitem"
-                      onClick={() => { setExportMenuOpen(false); setPreviewOpen(true) }}
+                      onClick={() => { exportMenu.triggerRef.current?.focus(); setExportMenuOpen(false); setPreviewOpen(true) }}
                       className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none"
                     >
                       <Eye className="h-4 w-4" />Preview Excel
                     </button>
                     <button
                       type="button" role="menuitem"
-                      onClick={() => { setExportMenuOpen(false); handleExport() }}
+                      onClick={() => { exportMenu.triggerRef.current?.focus(); setExportMenuOpen(false); handleExport() }}
                       className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none"
                     >
                       <Download className="h-4 w-4" />Download as Excel
                     </button>
                     <button
                       type="button" role="menuitem"
-                      onClick={() => { setExportMenuOpen(false); setEmailOpen(true) }}
+                      onClick={() => { exportMenu.triggerRef.current?.focus(); setExportMenuOpen(false); setEmailOpen(true) }}
                       className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none"
                     >
                       <Mail className="h-4 w-4" />Email to athlete
@@ -721,7 +721,7 @@ export default function ProgramDetail() {
                           <button
                             type="button" role="menuitem"
                             disabled={!weekHasExercises(row.weekIndex) || grid.rows.length < 2}
-                            onClick={() => { setWeekMenu(null); setCopyWeekTo(new Set()); setCopyWeekFrom(row.weekIndex) }}
+                            onClick={() => { weekMenuKeys.triggerRef.current?.focus(); setWeekMenu(null); setCopyWeekTo(new Set()); setCopyWeekFrom(row.weekIndex) }}
                             className="flex w-full items-center gap-2 px-3 py-2 hover:bg-accent focus:bg-accent focus:outline-none disabled:opacity-50"
                           >
                             <Copy className="h-4 w-4" />Copy week to…
@@ -729,7 +729,7 @@ export default function ProgramDetail() {
                           <button
                             type="button" role="menuitem"
                             disabled={!weekHasExercises(row.weekIndex)}
-                            onClick={() => { setWeekMenu(null); void days.clearDays(weekDates(row.weekIndex), `Week ${row.weekIndex + 1} cleared`) }}
+                            onClick={() => { weekMenuKeys.triggerRef.current?.focus(); setWeekMenu(null); void days.clearDays(weekDates(row.weekIndex), `Week ${row.weekIndex + 1} cleared`) }}
                             className="flex w-full items-center gap-2 px-3 py-2 text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:outline-none disabled:opacity-50"
                           >
                             <Trash2 className="h-4 w-4" />Clear week
@@ -1034,7 +1034,7 @@ export default function ProgramDetail() {
             <div className="space-y-1">
               <Label htmlFor="program_name">Name</Label>
               <Input
-                id="program_name" required autoFocus maxLength={200}
+                id="program_name" required maxLength={200}
                 value={detailsForm.name}
                 onChange={(e) => setDetailsForm({ ...detailsForm, name: e.target.value })}
               />
@@ -1070,7 +1070,7 @@ export default function ProgramDetail() {
             <div className="space-y-1">
               <Label htmlFor="duration_start">Start date</Label>
               <Input
-                id="duration_start" type="date" required autoFocus
+                id="duration_start" type="date" required
                 value={setupForm.start_date}
                 onChange={(e) => setSetupForm({ ...setupForm, start_date: e.target.value })}
               />

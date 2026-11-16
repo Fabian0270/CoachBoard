@@ -30,6 +30,17 @@ export default function SendProgramDialog({ programId, programName, athleteId, o
   const [showPreview, setShowPreview] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
+  // The fields appear only once the settings and athlete have loaded, by which
+  // time the dialog has put the cursor on the one control it had: Cancel. Move
+  // it to the recipient, so the coach checks the address before sending —
+  // never to Send, where an Enter would send straight away.
+  useEffect(() => {
+    if (!open || loadingMeta || !configured) return
+    const field = document.getElementById('to')
+    const active = document.activeElement
+    if (field && (!active || active === document.body || active.textContent?.trim() === 'Cancel')) field.focus()
+  }, [open, loadingMeta, configured])
+
   useEffect(() => {
     if (!open) return
     setLoadingMeta(true)
