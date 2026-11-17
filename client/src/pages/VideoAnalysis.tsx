@@ -24,6 +24,7 @@ import VideoPicker, { type AnalysisSource } from '../components/analysis/VideoPi
 import type { Stroke } from '../components/analysis/annotations'
 import { useTracker, type TrackStream } from '../components/analysis/useTracker'
 import { captureInto } from '../components/analysis/captureFrames'
+import { DecodeUnavailable, decodeInto } from '../components/analysis/decodeFrames'
 import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
 import { usePlateMm, useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
 import { usePose, type PoseStream } from '../components/analysis/usePose'
@@ -623,7 +624,17 @@ export default function VideoAnalysis() {
     }
 
     try {
-      const handle = await captureInto(
+      // Every frame decoded from the file (BP21), faster than real time; the
+      // playing video only when this clip cannot be decoded here.
+      const decodeSource = source?.kind === 'local' ? source.file : source?.kind === 'discord' ? `/api/discord/media/${source.item.id}/file` : null
+      const readFrames: typeof captureInto = (el, push, opts) =>
+        decodeSource
+          ? decodeInto(decodeSource, el, push, opts).catch((err) => {
+              if (err instanceof DecodeUnavailable && !stale()) return captureInto(el, push, opts)
+              throw err
+            })
+          : captureInto(el, push, opts)
+      const handle = await readFrames(
         video,
         async (frame, isFirst) => {
           if (isFirst) {
