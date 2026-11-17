@@ -17,13 +17,7 @@ import {
   type VbtLift,
 } from 'coachboard-shared/vbt'
 import type { RepMetrics } from 'coachboard-shared/videoAnalysis'
-import {
-  applyCorrections,
-  anglesAgainstBar,
-  frameAngles,
-  type PoseFrame,
-} from 'coachboard-shared/pose'
-import { analysePath } from 'coachboard-shared/videoAnalysis'
+import { applyCorrections, type PoseFrame } from 'coachboard-shared/pose'
 import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
 import AnalysisStage, { repWindows, type StageMode } from '../components/analysis/AnalysisStage'
@@ -35,7 +29,7 @@ import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
 import LoadError from '../components/LoadError'
 import { ApiError, errorMessage, getJson, sendJson } from '../lib/api'
 import PathPlot from '../components/analysis/PathPlot'
-import JointAngleChart from '../components/analysis/JointAngleChart'
+import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleChart'
 import BarSpeedChart from '../components/analysis/BarSpeedChart'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
 import { useTrackerColor } from '../components/analysis/trackerColor'
@@ -199,24 +193,10 @@ export default function SavedAnalysis() {
     [id, toast],
   )
 
-  /**
-   * Joint angles beside the bar's own speed, on one time axis.
-   *
-   * Computed above the early returns because hooks cannot run after one, and
-   * derived rather than stored — angles are a function of the landmarks plus the
-   * corrections, like payment_end and unlike the cached per-rep metrics. Storing
-   * them would mean a coach's correction could leave a stale number behind.
-   */
+  /** Joint angles beside the bar's speed. Above the early returns: hooks cannot run after one. */
   const poseSeries = useMemo(() => {
     if (!analysis || !pose || pose.frames.length === 0) return null
-    const scale = analysisPixelsPerMetre(analysis)
-    const { velocities } = analysePath(analysis.track ?? [], scale)
-    // verticalVelocity works in pixels; convert once here so the chart's axis
-    // and its unit label cannot disagree.
-    const inUnits = scale
-      ? velocities.map((v) => ({ t: v.t, vy: v.vy / scale }))
-      : velocities.map((v) => ({ t: v.t, vy: v.vy }))
-    return anglesAgainstBar(frameAngles(pose.frames), inUnits)
+    return angleSeries(pose.frames, analysis.track ?? [], analysisPixelsPerMetre(analysis))
   }, [analysis, pose])
 
   /**

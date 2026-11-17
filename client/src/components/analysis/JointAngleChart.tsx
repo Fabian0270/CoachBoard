@@ -10,7 +10,23 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { stickingPoint, type AngleVsBar } from 'coachboard-shared/pose'
+import { anglesAgainstBar, frameAngles, stickingPoint, type AngleVsBar, type PoseFrame } from 'coachboard-shared/pose'
+import { verticalVelocity, type Sample } from 'coachboard-shared/videoAnalysis'
+
+/**
+ * Joint angles beside the bar's own speed, on one time axis — the same on
+ * the saved page and the tracking page (BP13).
+ *
+ * Derived rather than stored: angles are a function of the landmarks plus the
+ * corrections, so storing them would let a correction leave a stale number
+ * behind. Speed is converted to m/s once here when there is a scale, so the
+ * chart's axis and its unit label cannot disagree.
+ */
+export function angleSeries(frames: PoseFrame[], track: Sample[], pixelsPerMetre: number | null): AngleVsBar[] {
+  const per = pixelsPerMetre && pixelsPerMetre > 0 ? pixelsPerMetre : 1
+  const velocities = verticalVelocity(track).map((v) => ({ t: v.t, vy: v.vy / per }))
+  return anglesAgainstBar(frameAngles(frames), velocities)
+}
 
 // ---------------------------------------------------------------------------
 // What the body was doing, against what the bar was doing (Feature 11e-6).

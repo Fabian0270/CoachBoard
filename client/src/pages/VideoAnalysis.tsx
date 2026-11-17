@@ -47,6 +47,7 @@ import {
 import RepTable from '../components/analysis/RepTable'
 import PathPlot from '../components/analysis/PathPlot'
 import BarSpeedChart from '../components/analysis/BarSpeedChart'
+import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleChart'
 import { captionFill, type CaptionField } from '../components/analysis/captionFill'
 import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
 import TrackingControls from '../components/analysis/TrackingControls'
@@ -968,6 +969,20 @@ export default function VideoAnalysis() {
   )
 
   /**
+   * Joint angles against the bar on this page too (BP13), once a run has
+   * finished: the capture awaits every pose frame, so the skeleton is complete
+   * by then. poseRef is read rather than depended on — a correction is what
+   * changes it, and poseCorrections is the state that says so.
+   */
+  const poseSeries = useMemo(() => {
+    if (busy || !showPose || !samples || samples.length < 2) return null
+    const frames = poseRef.current
+    if (frames.length < 2) return null
+    return angleSeries(frames, samples, pixelsPerMetre)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, showPose, samples, poseCorrections, pixelsPerMetre])
+
+  /**
    * The skeleton before any tracking has happened.
    *
    * Pose used to run ONLY inside the tracking pass, which meant switching it on
@@ -1270,6 +1285,15 @@ export default function VideoAnalysis() {
         <div className="space-y-2 rounded-md border p-4">
           <h2 className="text-sm font-medium">Bar speed</h2>
           <BarSpeedChart track={samples} reps={trackedReps} pixelsPerMetre={pixelsPerMetre} currentTime={currentTime} />
+        </div>
+      )}
+
+      {/* What the body was doing when the bar slowed (BP13) — it used to be on
+          the saved page only. */}
+      {poseSeries && poseSeries.length > 1 && (
+        <div className="space-y-2 rounded-md border p-4">
+          <h2 className="text-sm font-medium">Joint angles against the bar</h2>
+          <JointAngleChart series={poseSeries} calibrated={pixelsPerMetre !== null} />
         </div>
       )}
 
