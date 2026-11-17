@@ -67,6 +67,62 @@ function Stage({ keyboard }: { keyboard: boolean }) {
   )
 }
 
+const rep = (index: number, startT: number) => ({
+  index, startT, endT: startT + 0.9, durationMs: 900, romPx: 200, meanVelocityPxS: 150, peakVelocityPxS: 200,
+  romM: 0.75, meanVelocity: 0.55, peakVelocity: 0.74, meanPropulsiveVelocity: 0.6, propulsiveFraction: 0.9,
+})
+function StripStage() {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const empty = useRef<never[]>([])
+  const samples = Array.from({ length: 240 }, (_, i) => ({ t: i / 30, x: 300, y: 200 }))
+  return (
+    <AnalysisStage
+      src="clip.mp4" videoRef={videoRef} seed={null} samples={samples} livePathRef={empty}
+      onPlaceSeed={() => {}} onLoadedMetadata={() => {}} onTimeUpdate={() => {}} disabled
+      color="#34d399" mode="seed" calibration={null} onCalibratePoint={() => {}}
+      reps={[rep(0, 1.8), rep(1, 4.4)]}
+    />
+  )
+}
+
+describe('AnalysisStage — the rep strip (BP17)', () => {
+  it('shows the chosen range before anything is tracked, with no reps to loop', () => {
+    function Untracked() {
+      const videoRef = useRef<HTMLVideoElement | null>(null)
+      const empty = useRef<never[]>([])
+      return (
+        <AnalysisStage
+          src="clip.mp4" videoRef={videoRef} seed={null} samples={null} livePathRef={empty}
+          onPlaceSeed={() => {}} onLoadedMetadata={() => {}} onTimeUpdate={() => {}} disabled
+          color="#34d399" mode="seed" calibration={null} onCalibratePoint={() => {}}
+          trackRange={{ from: 1, to: 6 }}
+        />
+      )
+    }
+    renderScreen(<Untracked />)
+    expect(screen.getByRole('group', { name: 'Reps in the clip' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Loop rep' })).toBeNull()
+  })
+
+  it('a rep block goes to the top before that rep', async () => {
+    renderScreen(<StripStage />)
+    await userEvent.click(screen.getByRole('button', { name: 'Rep 2' }))
+    expect(clock).toBeCloseTo(2.7) // the end of rep 1
+  })
+
+  it('Loop plays the rep under the playhead over and over', async () => {
+    renderScreen(<StripStage />)
+    const video = document.querySelector('video')!
+    clock = 5
+    fireEvent(video, new Event('timeupdate'))
+    await userEvent.click(screen.getByRole('button', { name: 'Loop rep' }))
+    expect(screen.getByRole('button', { name: 'Looping rep 2' })).toBeTruthy()
+    clock = 5.4 // past the rep's top at 5.3
+    fireEvent(video, new Event('timeupdate'))
+    expect(clock).toBeCloseTo(2.7)
+  })
+})
+
 describe('AnalysisStage — playback', () => {
   it('steps a frame and a second from the bar, and plays slow motion', async () => {
     renderScreen(<Stage keyboard={false} />)

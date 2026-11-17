@@ -1253,6 +1253,7 @@ export default function VideoAnalysis() {
           keyboard
           repStarts={repTops}
           reps={trackedReps}
+          trackRange={range}
         />
         {samples && trackedReps.length > 0 && (
           <PathPlot track={samples} color={color} pixelsPerMetre={pixelsPerMetre} reps={trackedReps} currentTime={currentTime} height={320} />

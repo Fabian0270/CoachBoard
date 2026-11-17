@@ -123,6 +123,12 @@ interface Props {
   repStarts?: number[]
   /** Each rep's way up (its concentric), to draw the reps apart (BP9). */
   reps?: { startT: number; endT: number }[]
+  /**
+   * The stretch of the clip chosen for tracking, drawn on the strip under the
+   * video (BP17) before anything is tracked. Without it the strip shows the
+   * tracked path's own stretch, once there are reps.
+   */
+  trackRange?: { from: number; to: number } | null
 }
 
 /**
@@ -167,6 +173,7 @@ export default function AnalysisStage({
   keyboard = false,
   repStarts,
   reps,
+  trackRange,
 }: Props) {
   /**
    * The joint under the pointer, and whether it has actually been dragged yet.
@@ -907,6 +914,101 @@ export default function AnalysisStage({
         </div>
       </div>
       <PlaybackBar videoRef={videoRef} onStep={step} />
+      {(() => {
+        const tracked = reps && reps.length > 0 && samples && samples.length > 1
+        const range = trackRange ?? (tracked ? { from: samples[0].t, to: samples[samples.length - 1].t } : null)
+        if (!range) return null
+        return <RepStrip videoRef={videoRef} windows={tracked ? repWindows(reps, samples[0].t) : []} range={range} />
+      })()}
+    </div>
+  )
+}
+
+/**
+ * The clip as a strip (BP17): the tracked range, each rep as a block. Click
+ * anywhere to go there, a block to go to that rep, and Loop to play the rep
+ * under the playhead over and over. The range used to be two buttons with
+ * timestamps and nothing to see.
+ */
+function RepStrip({ videoRef, windows, range }: {
+  videoRef: React.MutableRefObject<HTMLVideoElement | null>
+  windows: { from: number; bottom: number; to: number }[]
+  range: { from: number; to: number }
+}) {
+  const [now, setNow] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [loop, setLoop] = useState<number | null>(null)
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const sync = () => {
+      setNow(v.currentTime)
+      if (Number.isFinite(v.duration)) setDuration(v.duration)
+    }
+    sync()
+    v.addEventListener('timeupdate', sync)
+    v.addEventListener('durationchange', sync)
+    v.addEventListener('seeked', sync)
+    return () => {
+      v.removeEventListener('timeupdate', sync)
+      v.removeEventListener('durationchange', sync)
+      v.removeEventListener('seeked', sync)
+    }
+  }, [videoRef])
+  // Loop: past the end of the rep, back to its top.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || loop == null) return
+    const w = windows[loop]
+    if (!w) return
+    const keep = () => { if (v.currentTime > w.to || v.currentTime < w.from - 0.05) v.currentTime = w.from }
+    v.addEventListener('timeupdate', keep)
+    return () => v.removeEventListener('timeupdate', keep)
+  }, [videoRef, loop, windows])
+
+  const total = duration > 0 ? duration : range.to
+  const pct = (t: number) => `${Math.max(0, Math.min(100, (t / total) * 100))}%`
+  const seek = (t: number) => { const v = videoRef.current; if (v) v.currentTime = t }
+  const under = windows.findIndex((w) => now >= w.from && now <= w.to)
+  return (
+    <div className="flex w-full items-center gap-2 border-t border-white/10 px-2 py-1.5">
+      <div
+        role="group"
+        aria-label="Reps in the clip"
+        className="relative h-6 flex-1 cursor-pointer rounded bg-white/5"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect()
+          seek(((e.clientX - r.left) / r.width) * total)
+        }}
+      >
+        <span aria-hidden className="absolute inset-y-0 rounded bg-white/10" style={{ left: pct(range.from), width: `calc(${pct(range.to)} - ${pct(range.from)})` }} />
+        {windows.map((w, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); seek(w.from) }}
+            aria-label={`Rep ${i + 1}`}
+            title={`Rep ${i + 1}: go to its start`}
+            className={`absolute inset-y-0.5 rounded-sm text-[10px] font-medium leading-5 text-white/90 transition-colors ${
+              i === under ? 'bg-primary/80' : 'bg-white/25 hover:bg-white/40'
+            }`}
+            style={{ left: pct(w.from), width: `calc(${pct(w.to)} - ${pct(w.from)})` }}
+          >
+            {i + 1}
+          </button>
+        ))}
+        <span aria-hidden className="pointer-events-none absolute inset-y-0 w-0.5 bg-white" style={{ left: pct(now) }} />
+      </div>
+      {windows.length > 0 && <button
+        type="button"
+        aria-pressed={loop !== null}
+        disabled={loop === null && under === -1}
+        onClick={() => setLoop((l) => (l !== null ? null : under >= 0 ? under : null))}
+        title={loop !== null ? `Looping rep ${loop + 1} — click to stop` : 'Loop the rep under the playhead'}
+        className={`rounded px-2 py-1 text-xs transition disabled:opacity-40 ${loop !== null ? 'bg-primary text-primary-foreground' : 'text-white/80 hover:bg-white/10 hover:text-white'}`}
+      >
+        {loop !== null ? `Looping rep ${loop + 1}` : 'Loop rep'}
+      </button>}
     </div>
   )
 }
