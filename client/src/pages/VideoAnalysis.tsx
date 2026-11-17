@@ -23,7 +23,7 @@ import type { Stroke } from '../components/analysis/annotations'
 import { useTracker, type TrackStream } from '../components/analysis/useTracker'
 import { captureInto } from '../components/analysis/captureFrames'
 import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
-import { useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
+import { usePlateMm, useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
 import { usePose, type PoseStream } from '../components/analysis/usePose'
 import { savePose, putCorrection } from '../components/analysis/poseApi'
 import {
@@ -36,7 +36,6 @@ import {
 import {
   analysePath,
   pixelsPerMetreFromPlate,
-  PLATE_DIAMETERS_MM,
   type RepMetrics,
 } from 'coachboard-shared/videoAnalysis'
 import {
@@ -170,7 +169,7 @@ export default function VideoAnalysis() {
   const [progress, setProgress] = useState(0)
   const [color, setColor] = useTrackerColor()
   const [showPose, setShowPose] = useShowPose()
-  const [plateMm, setPlateMm] = useState<number>(PLATE_DIAMETERS_MM[0].value)
+  const [plateMm, setPlateMm] = usePlateMm()
   const [mode, setMode] = useState<StageMode>('seed')
   /**
    * Freehand marks the coach has drawn over the lift.
@@ -1249,6 +1248,10 @@ export default function VideoAnalysis() {
           mode={mode}
           calibration={calibration}
           onCalibratePoint={addCalibrationPoint}
+          onCalibrationChange={(line) => {
+            setCalibration(line)
+            setAwaitingSecondPoint(false)
+          }}
           strokes={strokes}
           onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
           keyboard

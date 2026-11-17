@@ -92,6 +92,11 @@ interface Props {
   calibration: CalibrationLine | null
   /** Called with each click while in 'calibrate' mode. */
   onCalibratePoint: (point: { x: number; y: number }) => void
+  /**
+   * Called when the coach drags an end of the scale line (BP18). Its presence
+   * is what makes the ends draggable — the saved page passes nothing.
+   */
+  onCalibrationChange?: (line: CalibrationLine) => void
   /** Freehand marks over the lift, in video pixels. See annotations.ts. */
   strokes?: Stroke[]
   /** Called with the finished stroke when the pointer lifts in 'draw' mode. */
@@ -143,6 +148,10 @@ export function repWindows(reps: { startT: number; endT: number }[], pathStart: 
 /** One step of ← / →. The clip's real frame rate is not knowable from the element; 1/30 s is a frame of a phone clip. */
 const FRAME_S = 1 / 30
 
+/** The scale loupe's size on screen, and how much closer it shows the picture than the video does. */
+const LOUPE_PX = 128
+const LOUPE_ZOOM = 4
+
 /**
  * The video with a drawing surface over it.
  *
@@ -165,6 +174,7 @@ export default function AnalysisStage({
   mode,
   calibration,
   onCalibratePoint,
+  onCalibrationChange,
   strokes,
   onDrawStroke,
   poseRef,
@@ -215,6 +225,15 @@ export default function AnalysisStage({
    * itself. Exactly the reasoning behind livePathRef during tracking.
    */
   const drawingRef = useRef<Point[] | null>(null)
+  /**
+   * An end of the scale line being dragged (BP18). The line lives here until
+   * release, like a joint being corrected, so it follows the pointer at frame
+   * rate and the page hears about it once.
+   */
+  const calibDragRef = useRef<{ end: 'a' | 'b'; line: CalibrationLine; from: Point; moved: boolean } | null>(null)
+  /** Where the pointer is over the picture, in video pixels, for the loupe. */
+  const loupeAtRef = useRef<Point | null>(null)
+  const loupeRef = useRef<HTMLCanvasElement | null>(null)
   const [fullscreen, setFullscreen] = useState(false)
 
   const bar = fullscreen ? CONTROL_BAR_FULLSCREEN_PX : CONTROL_BAR_PX
@@ -557,11 +576,12 @@ export default function AnalysisStage({
     // really choosing when they click, so its size should not be a mystery.
     // The scale reference, drawn distinctly from the tracking overlay so the
     // two are never confused — this one is a measurement, not a result.
-    if (calibration) {
-      const ax = calibration.a.x * scale
-      const ay = calibration.a.y * scale
-      const bx = calibration.b.x * scale
-      const by = calibration.b.y * scale
+    const line = calibDragRef.current?.line ?? calibration
+    if (line) {
+      const ax = line.a.x * scale
+      const ay = line.a.y * scale
+      const bx = line.b.x * scale
+      const by = line.b.y * scale
       ctx.setLineDash([6, 4])
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
       ctx.lineWidth = 4
@@ -588,10 +608,66 @@ export default function AnalysisStage({
     // looking and the +/- buttons change its size, so the extra rectangle only
     // added clutter over the lift.
     ctx.restore()
+
+    // The loupe (BP18): the picture under the pointer, close up, while setting
+    // the scale or dragging an end of it. A plate's edge is a few pixels wide
+    // on a phone clip, and every number on the page is in proportion to where
+    // the two clicks landed. A second canvas beside the real video, like the
+    // recorder's zoom — not a canvas standing in for the video.
+    const loupe = loupeRef.current
+    if (loupe) {
+      const at = loupeAtRef.current
+      const drag = calibDragRef.current
+      if (!at || disabled || !(mode === 'calibrate' || drag?.moved)) {
+        loupe.style.display = 'none'
+      } else {
+        const L = LOUPE_PX
+        const src = L / (scale * LOUPE_ZOOM)
+        const sx = at.x - src / 2
+        const sy = at.y - src / 2
+        const px = picture.left + at.x * scale
+        const py = picture.top + at.y * scale
+        // Up and to the right of the pointer, so the hand never covers it;
+        // flipped at the edges of the picture.
+        const left = px + 24 + L > rect.width ? px - 24 - L : px + 24
+        const top = py - 24 - L < 0 ? py + 24 : py - 24 - L
+        loupe.style.display = 'block'
+        loupe.style.left = `${offsetX + left}px`
+        loupe.style.top = `${offsetY + top}px`
+        if (loupe.width !== L) { loupe.width = L; loupe.height = L }
+        const lc = loupe.getContext('2d')
+        if (lc) {
+          lc.fillStyle = '#000'
+          lc.fillRect(0, 0, L, L)
+          lc.drawImage(video, sx, sy, src, src, 0, 0, L, L)
+          const toLoupe = (p: Point) => [(p.x - sx) * (L / src), (p.y - sy) * (L / src)] as const
+          if (line) {
+            const [ax, ay] = toLoupe(line.a)
+            const [bx, by] = toLoupe(line.b)
+            lc.setLineDash([6, 4])
+            lc.strokeStyle = '#fbbf24'
+            lc.lineWidth = 1.5
+            lc.beginPath()
+            lc.moveTo(ax, ay)
+            lc.lineTo(bx, by)
+            lc.stroke()
+            lc.setLineDash([])
+          }
+          lc.strokeStyle = 'rgba(255, 255, 255, 0.85)'
+          lc.lineWidth = 1
+          lc.beginPath()
+          lc.moveTo(L / 2, L / 2 - 12)
+          lc.lineTo(L / 2, L / 2 + 12)
+          lc.moveTo(L / 2 - 12, L / 2)
+          lc.lineTo(L / 2 + 12, L / 2)
+          lc.stroke()
+        }
+      }
+    }
     // poseRef is a ref like livePathRef, so it is not a dependency — its
     // contents change every inference without the identity ever changing, and
     // the loop below redraws every animation frame regardless.
-  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps])
+  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps, mode, disabled])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
   // once on any state change so it is right while paused too.
@@ -623,6 +699,15 @@ export default function AnalysisStage({
       justDraggedRef.current = false
       return
     }
+    // The click that ends a correction or a scale-end drag is not a request to
+    // seed the tracker or to start a new scale line. Only a real drag sets this
+    // — a press that never moved falls through, so a plate sitting near a wrist
+    // is still clickable. Cleared before anything else can return, or a drag
+    // that ended over the letterbox would swallow the next real click.
+    if (justDraggedRef.current) {
+      justDraggedRef.current = false
+      return
+    }
     // The second click of a double-click is the fullscreen gesture, not a seed.
     // Without this, going fullscreen also drops a tracking point or a
     // calibration endpoint wherever the coach happened to double-click.
@@ -636,14 +721,6 @@ export default function AnalysisStage({
     }
     // A click in the letterbox bars is not on the lift.
     if (point.x < 0 || point.y < 0 || point.x > video.videoWidth || point.y > video.videoHeight) {
-      return
-    }
-    // The click that ends a correction is not a request to seed the tracker or
-    // to move the scale line. Only a real drag sets this — a press on a joint
-    // that never moved falls through, so a plate sitting near a wrist is still
-    // clickable.
-    if (justDraggedRef.current) {
-      justDraggedRef.current = false
       return
     }
     if (mode === 'draw') return // strokes are built from pointer events, not clicks
@@ -708,7 +785,49 @@ export default function AnalysisStage({
     return best === null ? null : { frameIndex, landmark: best }
   }
 
+  /** Screen pixels per video pixel, right now. */
+  const displayScale = () => {
+    const video = videoRef.current
+    if (!video || !video.videoWidth) return 1
+    const rect = video.getBoundingClientRect()
+    return pictureRect(rect.width, rect.height, video.videoWidth, video.videoHeight).scale
+  }
+
+  /** Whether the scale line's ends can be dragged here at all (BP18). */
+  const canAdjustScale = !!onCalibrationChange && !!calibration && !disabled && mode !== 'draw'
+
+  /**
+   * The end of the scale line under a pointer, if one is close enough to have
+   * been aimed at. Same on-screen reach as a joint. Nothing while the line is
+   * still a single point (the first click of two).
+   */
+  const calibrationEndAt = (point: Point): 'a' | 'b' | null => {
+    if (!calibration) return null
+    const s = displayScale()
+    const { a, b } = calibration
+    if (Math.hypot(a.x - b.x, a.y - b.y) * s < GRAB_PX) return null
+    const da = Math.hypot(a.x - point.x, a.y - point.y) * s
+    const db = Math.hypot(b.x - point.x, b.y - point.y) * s
+    if (!(Math.min(da, db) <= GRAB_PX)) return null
+    return da <= db ? 'a' : 'b'
+  }
+
   const startStroke = (e: React.PointerEvent<HTMLDivElement>) => {
+    // An end of the scale line comes first: it is small, it was put there on
+    // purpose, and a press that never moves still falls through as a click.
+    if (canAdjustScale) {
+      const at = pointFor(e)
+      const end = at && calibrationEndAt(at)
+      if (at && end) {
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId)
+        } catch {
+          /* the drag still works, it just cannot follow the pointer off-frame */
+        }
+        calibDragRef.current = { end, line: calibration!, from: at, moved: false }
+        return
+      }
+    }
     // Correcting a joint takes precedence over drawing on it: the coach who
     // grabs a knee that is in the wrong place means to move it, and a freehand
     // circle can start a few pixels further out.
@@ -742,6 +861,20 @@ export default function AnalysisStage({
   }
 
   const extendStroke = (e: React.PointerEvent<HTMLDivElement>) => {
+    const here = pointFor(e)
+    loupeAtRef.current = here
+    const cd = calibDragRef.current
+    if (cd) {
+      if (!here) return
+      if (!cd.moved) {
+        if (Math.hypot(here.x - cd.from.x, here.y - cd.from.y) * displayScale() < DRAG_SLOP_PX) return
+        cd.moved = true
+        e.currentTarget.style.cursor = 'grabbing'
+      }
+      cd.line = { ...cd.line, [cd.end]: here }
+      return
+    }
+    if (canAdjustScale) e.currentTarget.style.cursor = here && calibrationEndAt(here) ? 'grab' : ''
     const drag = draggingRef.current
     if (drag) {
       const point = pointFor(e)
@@ -779,6 +912,18 @@ export default function AnalysisStage({
   }
 
   const endStroke = (e: React.PointerEvent<HTMLDivElement>) => {
+    const cd = calibDragRef.current
+    if (cd) {
+      calibDragRef.current = null
+      e.currentTarget.style.cursor = ''
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+      if (cd.moved) {
+        // The click that follows a drag is not a new first point.
+        justDraggedRef.current = true
+        onCalibrationChange?.(cd.line)
+      }
+      return
+    }
     const drag = draggingRef.current
     draggingRef.current = null
     if (drag?.moved) {
@@ -876,6 +1021,7 @@ export default function AnalysisStage({
             onPointerMove={extendStroke}
             onPointerUp={endStroke}
             onPointerCancel={endStroke}
+            onPointerLeave={() => { if (!calibDragRef.current) loupeAtRef.current = null }}
             className={`absolute left-0 top-0 ${
               // Drawing needs the layer even on a saved analysis, which is always
               // disabled — that is where a coach explains a lift they tracked
@@ -892,6 +1038,12 @@ export default function AnalysisStage({
           >
             <canvas ref={canvasRef} className="pointer-events-none absolute left-0 top-0" />
           </div>
+          <canvas
+            ref={loupeRef}
+            aria-hidden
+            style={{ display: 'none', width: LOUPE_PX, height: LOUPE_PX }}
+            className="pointer-events-none absolute rounded-full border-2 border-white/80 shadow-lg"
+          />
 
           {/* On the video rather than in the page toolbar, because it acts on
               the video. NOT in the control bar with the browser's own buttons:

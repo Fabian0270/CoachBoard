@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { PLATE_DIAMETERS_MM } from 'coachboard-shared/videoAnalysis'
 
 // ---------------------------------------------------------------------------
 // Overlay colour for the bar path and tracking dot.
@@ -88,6 +89,35 @@ export function useShowPose(): [boolean, (next: boolean) => void] {
   }, [])
 
   return [show, setShow]
+}
+
+const PLATE_STORAGE_KEY = 'coachboard-plate-mm'
+
+/**
+ * The plate size for the scale, remembered across clips (BP18). A coach's
+ * gym has the plates it has; it used to go back to 450 mm on every visit.
+ * Only a size from the list is taken back, so a stale value cannot stick.
+ */
+export function usePlateMm(): [number, (mm: number) => void] {
+  const [mm, setMmState] = useState<number>(() => {
+    try {
+      const stored = Number(localStorage.getItem(PLATE_STORAGE_KEY))
+      return PLATE_DIAMETERS_MM.some((d) => d.value === stored) ? stored : PLATE_DIAMETERS_MM[0].value
+    } catch {
+      return PLATE_DIAMETERS_MM[0].value
+    }
+  })
+
+  const setMm = useCallback((next: number) => {
+    setMmState(next)
+    try {
+      localStorage.setItem(PLATE_STORAGE_KEY, String(next))
+    } catch {
+      /* not worth surfacing */
+    }
+  }, [])
+
+  return [mm, setMm]
 }
 
 /** Same colour at reduced opacity, for the dashed search box. */

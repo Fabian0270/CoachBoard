@@ -152,7 +152,7 @@ export default function TrackingControls(p: TrackingControlsProps) {
         </Button>
         {p.pixelsPerMetre ? (
           <span className="text-muted-foreground">
-            {Math.round(p.calibrationPx)} px across a {p.plateMm} mm plate — velocity in m/s
+            {Math.round(p.calibrationPx)} px across a {p.plateMm} mm plate — velocity in m/s. Drag either end to adjust it.
           </span>
         ) : (
           <span className="text-muted-foreground">Not set — velocity will be in pixels/second</span>
