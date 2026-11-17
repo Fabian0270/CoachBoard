@@ -408,8 +408,11 @@ export interface ProgressPR {
 
 /** One line of the dashboard's "needs attention" list (I2). */
 export interface AttentionItem {
-  /** block-ending: ends within a week with no next program. no-results: a training day a week or more ago has nothing logged. no-program: no active program. */
-  kind: 'block-ending' | 'no-results' | 'no-program'
+  /**
+   * block-ending: ends within a week with no next program. no-results: a training day a week or more ago has nothing logged. no-program: no active program.
+   * slow-session: a bar path session in the last week read 7 % or more under the athlete's usual max (BP33, D59).
+   */
+  kind: 'block-ending' | 'no-results' | 'no-program' | 'slow-session'
   athleteId: string
   athleteName: string
   programId: string | null
@@ -418,6 +421,9 @@ export interface AttentionItem {
   date: string | null
   /** no-results: how many training days have nothing logged. */
   count: number | null
+  /** slow-session: the lift (a VbtLift id) and how far under the usual, as a fraction (0.09 = 9 % under). */
+  lift?: string
+  under?: number
 }
 
 export interface ProgramReport {

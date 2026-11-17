@@ -78,6 +78,26 @@ describe('Athlete Progress tab', () => {
     ])
   })
 
+  it("lists sessions: each day's estimated max against the usual (BP33)", async () => {
+    // Three sets a day on v = mvt + (1 − load/max); the published back squat MVT.
+    const { resolveMvt } = await import('coachboard-shared/vbt')
+    const mvt = resolveMvt('back-squat')!
+    const dayOf = (date: string, max: number) => [0.5, 0.7, 0.85].map((f, i) => ({
+      ...analysis(`${date}T1${i}:00:00Z`, 'back-squat', f * max, [mvt + (1 - f)]),
+      liftedAt: `${date}T1${i}:00:00`,
+    }))
+    serve({
+      '/api/athletes/a1/progress': { body: progress },
+      '/api/analysis': { body: [...dayOf('2026-10-20', 200), ...dayOf('2026-10-27', 200), ...dayOf('2026-11-03', 180)] },
+      '/api/athletes/a1/mvt': { body: {} },
+    })
+    render()
+    const table = await screen.findByRole('table', { name: 'Sessions' })
+    const rows = within(table).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell').map((c) => c.textContent))
+    expect(rows[0]).toEqual([expect.stringMatching(/^3 Nov 26$/), 'Back squat', '3', '180 kg', '−10 %'])
+    expect(rows).toHaveLength(3)
+  })
+
   it('says what is missing rather than showing empty charts', async () => {
     serve({ '/api/athletes/a1/progress': { body: { e1rm: [], prs: [] } }, '/api/analysis': { body: [] } })
     render()

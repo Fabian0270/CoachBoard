@@ -13,6 +13,7 @@ import LoadError from './LoadError'
 import { errorMessage, getJson, getList } from '../lib/api'
 import { kgTicks } from '../pages/ProgramReport'
 import { velocityPrTimeline, type VelocityPrEvent } from './analysis/setHistory'
+import { readSessions, sessionMvt, SLOW_SESSION, type SessionReading } from 'coachboard-shared/vbtSession'
 
 // ---------------------------------------------------------------------------
 // The athlete's progress across every block (I1): e1RM of the competition
@@ -89,6 +90,7 @@ export default function AthleteProgress({ athleteId }: { athleteId: string }) {
   const [speed, setSpeed] = useState<ReturnType<typeof speedByLift> | null>(null)
   const [speedError, setSpeedError] = useState<string | null>(null)
   const [velocityPrs, setVelocityPrs] = useState<VelocityPrEvent[]>([])
+  const [sessions, setSessions] = useState<SessionReading[]>([])
 
   const load = useCallback(() => {
     setError(null)
@@ -97,11 +99,16 @@ export default function AthleteProgress({ athleteId }: { athleteId: string }) {
       .catch((e) => { setProgress(null); setError(errorMessage(e)) })
     setSpeedError(null)
     getList<VideoAnalysisDto>(`/api/analysis?athleteId=${encodeURIComponent(athleteId)}&withTrack=0`)
-      .then((rows) => {
+      .then(async (rows) => {
         setSpeed(speedByLift(rows))
         setVelocityPrs(velocityPrTimeline(rows))
+        // Sessions (BP33, D59): each day's estimated max against the usual,
+        // read with the athlete's stored 1RM speed like the saved page does.
+        const stored = await getJson<Record<string, number>>(`/api/athletes/${encodeURIComponent(athleteId)}/mvt`).catch(() => ({} as Record<string, number>))
+        const lifts = [...new Set(rows.map((r) => r.lift).filter((l): l is VbtLift => isVbtLift(l) && l !== 'other'))]
+        setSessions(lifts.flatMap((l) => readSessions(rows, l, sessionMvt(l, stored[l])).filter((s) => s.todayMax != null)).sort((a, b) => b.day.localeCompare(a.day)))
       })
-      .catch((e) => { setSpeed(null); setVelocityPrs([]); setSpeedError(errorMessage(e)) })
+      .catch((e) => { setSpeed(null); setVelocityPrs([]); setSessions([]); setSpeedError(errorMessage(e)) })
   }, [athleteId])
   useEffect(() => { load() }, [load])
 
@@ -257,6 +264,45 @@ export default function AthleteProgress({ athleteId }: { athleteId: string }) {
           ))}
         </CardContent>
       </Card>
+
+      {/* Sessions (BP33, D59): each day with three or more bar path sets of a
+          lift on a clear line, today's estimated max against the usual. */}
+      {sessions.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Sessions</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Days with three or more saved sets of a lift: that day&rsquo;s estimated max from the sets, against the usual (the middle of the other days).
+            </p>
+          </CardHeader>
+          <CardContent>
+            <table className="w-full text-sm" aria-label="Sessions">
+              <thead>
+                <tr className="border-b text-left text-muted-foreground">
+                  <th className="pb-2 pr-6 font-medium">Date</th>
+                  <th className="pb-2 pr-6 font-medium">Lift</th>
+                  <th className="pb-2 pr-6 font-medium">Sets</th>
+                  <th className="pb-2 pr-6 font-medium">Today&rsquo;s max</th>
+                  <th className="pb-2 font-medium">Against the usual</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.map((s) => (
+                  <tr key={`${s.lift}:${s.day}`} className="border-b last:border-0">
+                    <td className="num py-1.5 pr-6">{shortDate(s.day)}</td>
+                    <td className="py-1.5 pr-6">{liftLabel(s.lift)}</td>
+                    <td className="num py-1.5 pr-6">{s.sets}</td>
+                    <td className="num py-1.5 pr-6 font-medium">{Math.round(s.todayMax! * 2) / 2} kg</td>
+                    <td className={`num py-1.5 ${s.vsUsual != null && s.vsUsual <= -SLOW_SESSION ? 'text-warning' : 'text-muted-foreground'}`}>
+                      {s.vsUsual == null ? '—' : `${s.vsUsual >= 0 ? '+' : '−'}${Math.abs(Math.round(s.vsUsual * 100))} %`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

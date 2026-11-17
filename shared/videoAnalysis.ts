@@ -674,6 +674,11 @@ export interface VideoAnalysisDto extends SetContext {
   hasVideo: boolean
   createdAt: string
   updatedAt: string
+  /**
+   * When the set was lifted, as near as the app knows: a synced clip's posting
+   * time, else when it was saved. What sessions are grouped by (BP33).
+   */
+  liftedAt: string
 }
 
 export interface SaveVideoAnalysisInput extends SetContext {

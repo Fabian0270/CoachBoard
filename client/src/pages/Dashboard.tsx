@@ -8,7 +8,8 @@ import LoadError from '../components/LoadError'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import PageHeader from '../components/PageHeader'
-import { Plus, AlertTriangle, ArrowUpRight, CalendarClock, FileInput, UserX, Film } from 'lucide-react'
+import { Plus, AlertTriangle, ArrowUpRight, CalendarClock, FileInput, UserX, Film, Gauge } from 'lucide-react'
+import { isVbtLift, liftLabel } from 'coachboard-shared/vbt'
 import MyStyleCard from '../components/MyStyleCard'
 import Onboarding, { isOnboardingComplete } from '../components/Onboarding'
 import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
@@ -88,6 +89,14 @@ function AttentionCard({ unreviewedVideos }: { unreviewedVideos: number }) {
           key: `res:${item.programId}`,
           icon: <FileInput className="h-4 w-4 text-warning" />,
           body: <>{athlete} · {program}: <span className="num">{item.count}</span> training day{item.count === 1 ? '' : 's'} with nothing logged <span className="text-muted-foreground">(latest <span className="num">{shortDay(item.date!)}</span>)</span></>,
+        }
+      }
+      if (item.kind === 'slow-session') {
+        // BP33, D59: a session that read well under the athlete's usual max.
+        return {
+          key: `slow:${item.athleteId}:${item.lift}:${item.date}`,
+          icon: <Gauge className="h-4 w-4 text-warning" />,
+          body: <>{athlete}&rsquo;s {isVbtLift(item.lift) ? liftLabel(item.lift).toLowerCase() : 'lift'} read <span className="num">{Math.round((item.under ?? 0) * 100)} %</span> under the usual on <span className="num">{shortDay(item.date!)}</span> <span className="text-muted-foreground">— from the bar path sets that day</span></>,
         }
       }
       return {

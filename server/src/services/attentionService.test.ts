@@ -22,6 +22,47 @@ async function trainingDay(programId: string, date: string, logged: boolean) {
 }
 const kinds = async () => (await needsAttention(TODAY)).map((i) => [i.kind, i.athleteName, i.programName, i.date, i.count])
 
+// BP33 (D59): a bar path session in the last week 7 % or more under the usual.
+async function squatDay(athleteId: string, date: string, max: number) {
+  // Three sets on the line v = 1.3 − load/max, so the day reads `max` at the default MVT.
+  const { saveAnalysis } = await import('./videoAnalysisService.js')
+  const { resolveMvt } = await import('coachboard-shared/vbt')
+  const mvt = resolveMvt('back-squat')!
+  for (const load of [0.5 * max, 0.7 * max, 0.85 * max]) {
+    const v = mvt + (1 - load / max) * 1.0
+    const s = await saveAnalysis({
+      mediaId: null, athleteId, sourceLabel: 'clip', track: [{ t: 0, x: 0, y: 0 }, { t: 1, x: 0, y: 1 }],
+      calibration: null, notes: null, lift: 'back-squat', loadKg: load, calledRpe: null, metric: null,
+      metrics: [{ index: 0, startT: 0, endT: 1, durationMs: 900, romPx: 1, meanVelocityPxS: 1, peakVelocityPxS: 1.2, romM: 0.7, meanVelocity: v, peakVelocity: v * 1.2, meanPropulsiveVelocity: null, propulsiveFraction: null }],
+    })
+    await getDb().updateTable('video_analyses').set({ created_at: `${date}T12:00:00.000Z` }).where('id', '=', s.id).execute()
+  }
+}
+
+describe('needsAttention — bar path sessions (BP33)', () => {
+  it('flags a session in the last week 7 % or more under the usual, and not an older one', async () => {
+    const anna = (await createAthlete({ name: 'Anna' })).id
+    await block(anna, 'Block', '2026-11-02', 8) // an active program, so she is not "no program"
+    await squatDay(anna, '2026-10-20', 200)
+    await squatDay(anna, '2026-10-27', 200)
+    await squatDay(anna, '2026-11-03', 200)
+    await squatDay(anna, '2026-11-13', 180) // 10 % under, this week
+    const items = (await needsAttention(TODAY)).filter((i) => i.kind === 'slow-session')
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ athleteName: 'Anna', lift: 'back-squat', date: '2026-11-13' })
+    expect(items[0].under!).toBeCloseTo(0.1, 2)
+  })
+
+  it('not for a session within 7 % of the usual', async () => {
+    const anna = (await createAthlete({ name: 'Anna' })).id
+    await block(anna, 'Block', '2026-11-02', 8)
+    await squatDay(anna, '2026-10-20', 200)
+    await squatDay(anna, '2026-10-27', 200)
+    await squatDay(anna, '2026-11-13', 190) // 5 % under
+    expect((await needsAttention(TODAY)).filter((i) => i.kind === 'slow-session')).toEqual([])
+  })
+})
+
 describe('needsAttention', () => {
   it('a block ending within a week with no next program', async () => {
     const anna = (await createAthlete({ name: 'Anna' })).id

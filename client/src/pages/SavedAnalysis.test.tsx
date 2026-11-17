@@ -20,11 +20,11 @@ const analysis = {
   id: 's1', mediaId: null, athleteId: 'a1', athleteName: 'Anna', sourceLabel: 'squat.mp4',
   track: [{ t: 0, x: 0, y: 0 }, { t: 1, x: 0, y: 10 }],
   calibration: { a: { x: 0, y: 0 }, b: { x: 0, y: 100 }, plateDiameterMm: 450 },
-  metrics, notes: null, hasVideo: false, createdAt: '2026-11-16T10:00:00Z', updatedAt: '2026-11-16T10:00:00Z',
+  metrics, notes: null, hasVideo: false, createdAt: '2026-11-16T10:00:00Z', updatedAt: '2026-11-16T10:00:00Z', liftedAt: '2026-11-16T10:00:00Z',
   lift: 'back-squat', loadKg: 180, calledRpe: 8, metric: null,
 }
 // Another saved squat of Anna's, and her recorded max: the live page reads against both.
-const other = { ...analysis, id: 's0', createdAt: '2026-11-01T10:00:00Z', loadKg: 160, calledRpe: 7, metrics: [rep(0, 0.7), rep(1, 0.62)] }
+const other = { ...analysis, id: 's0', createdAt: '2026-11-01T10:00:00Z', liftedAt: '2026-11-01T10:00:00Z', loadKg: 160, calledRpe: 7, metrics: [rep(0, 0.7), rep(1, 0.62)] }
 const maxes = [{ lift_name: 'Squat', weight: 220 }]
 
 const routes = (extra: Record<string, unknown> = {}) => ({
@@ -159,6 +159,15 @@ describe('Saved bar path set', () => {
     open()
     expect(await screen.findByRole('table', { name: 'Against the reference rep' })).toBeTruthy()
     expect(screen.getByText(/reference back squat: rep 1 of the 180 kg set on 2026-11-10/)).toBeTruthy()
+  })
+
+  // BP33 (D59): the day this set belongs to.
+  it("says what this set's session read, or why it cannot", async () => {
+    serve(routes() as never)
+    open()
+    const box = await screen.findByLabelText('This session')
+    expect(box.textContent).toContain('This session — 1 set of back squat')
+    expect(box.textContent).toContain('Three sets at different loads that day are needed')
   })
 
   it('only a missing analysis says it no longer exists', async () => {

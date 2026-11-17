@@ -15,6 +15,7 @@
     "./warmup": "./warmup.ts",
     "./videoAnalysis": "./videoAnalysis.ts",
     "./vbt": "./vbt.ts",
-    "./pose": "./pose.ts"
+    "./pose": "./pose.ts",
+    "./vbtSession": "./vbtSession.ts"
   }
 }

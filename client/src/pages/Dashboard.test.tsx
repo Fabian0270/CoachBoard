@@ -11,6 +11,7 @@ const items = [
   { kind: 'block-ending', athleteId: 'a1', athleteName: 'Anna', programId: 'p1', programName: 'Autumn Block', date: '2099-11-22', count: null },
   { kind: 'no-results', athleteId: 'a2', athleteName: 'Erik', programId: 'p2', programName: 'Strength', date: '2026-11-09', count: 2 },
   { kind: 'no-program', athleteId: 'a3', athleteName: 'Lisa', programId: null, programName: null, date: null, count: null },
+  { kind: 'slow-session', athleteId: 'a1', athleteName: 'Anna', programId: null, programName: null, date: '2026-11-13', count: null, lift: 'back-squat', under: 0.094 },
 ]
 
 const routes = (attention: unknown, discord = false) => ({
@@ -40,6 +41,7 @@ describe('Dashboard — needs attention', () => {
       'Anna · Autumn Block ends Sun 22 Nov — no next block yet',
       'Erik · Strength: 2 training days with nothing logged (latest Mon 9 Nov)',
       'Lisa has no active program',
+      'Anna’s back squat read 9 % under the usual on Fri 13 Nov — from the bar path sets that day',
     ])
     expect(within(section).getByRole('link', { name: 'Autumn Block' }).getAttribute('href')).toBe('/programs/p1')
     expect(within(section).getByRole('link', { name: 'Lisa' }).getAttribute('href')).toBe('/athletes/a3')

@@ -1,6 +1,10 @@
 import { sql } from 'kysely'
 import { getDb } from '../db.js'
 import type { AttentionItem } from 'coachboard-shared'
+import { isVbtLift } from 'coachboard-shared/vbt'
+import { readSessions, sessionMvt, SLOW_SESSION } from 'coachboard-shared/vbtSession'
+import { listAnalyses } from './videoAnalysisService.js'
+import { getAthleteMvts } from './athleteMvtService.js'
 
 // ---------------------------------------------------------------------------
 // The dashboard's "needs attention" list (I2): what the coach should act on,
@@ -77,7 +81,24 @@ export async function needsAttention(today: string): Promise<AttentionItem[]> {
     items.push({ kind: 'no-program', athleteId: a.id, athleteName: a.name, programId: null, programName: null, date: null, count: null })
   }
 
-  const order = { 'block-ending': 0, 'no-results': 1, 'no-program': 2 } as const
+  // A bar path session in the last week that read well under the athlete's
+  // usual max (BP33, D59) — read exactly as the saved page and Progress tab do.
+  for (const a of athletes) {
+    const sets = await listAnalyses({ athleteId: a.id, withTrack: false })
+    if (sets.length === 0) continue
+    const stored = await getAthleteMvts(a.id)
+    for (const lift of new Set(sets.map((s) => s.lift).filter(isVbtLift))) {
+      for (const s of readSessions(sets, lift, sessionMvt(lift, stored[lift]))) {
+        if (s.day < cutoff || s.day > today || s.vsUsual == null || s.vsUsual > -SLOW_SESSION) continue
+        items.push({
+          kind: 'slow-session', athleteId: a.id, athleteName: a.name, programId: null, programName: null,
+          date: s.day, count: null, lift, under: -s.vsUsual,
+        })
+      }
+    }
+  }
+
+  const order = { 'block-ending': 0, 'no-results': 1, 'slow-session': 2, 'no-program': 3 } as const
   return items.sort((x, y) =>
     order[x.kind] - order[y.kind] || (x.date ?? '').localeCompare(y.date ?? '') || x.athleteName.localeCompare(y.athleteName))
 }

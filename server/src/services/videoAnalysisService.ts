@@ -36,6 +36,7 @@ interface AnalysisRow {
   created_at: string
   updated_at: string
   athlete_name?: string | null
+  posted_at?: string | null
 }
 
 /**
@@ -75,6 +76,7 @@ function toDto(row: AnalysisRow): VideoAnalysisDto {
     hasVideo: !!row.video_path || !!row.media_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    liftedAt: row.posted_at ?? row.created_at,
   }
 }
 
@@ -111,6 +113,10 @@ function baseQuery(withTrack = true) {
       'video_analyses.created_at as created_at',
       'video_analyses.updated_at as updated_at',
       'athletes.name as athlete_name',
+      // When the set was lifted, as near as the app knows (BP33): a synced
+      // clip's posting time, else when the set was saved. A coach clearing an
+      // inbox on Thursday must not turn Tuesday's sets into Thursday's.
+      (eb) => eb.selectFrom('discord_media').select('discord_media.posted_at').whereRef('discord_media.id', '=', 'video_analyses.media_id').as('posted_at'),
     ])
 }
 

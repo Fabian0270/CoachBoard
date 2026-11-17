@@ -36,6 +36,7 @@ import PathImageButtons from '../components/analysis/PathImageButtons'
 import { downloadCsv, repCsv } from '../components/analysis/repCsv'
 import { lastTimeAtLoad, velocityPr } from '../components/analysis/setHistory'
 import { useReferenceRep } from '../components/analysis/referenceRep'
+import { localDay, readSessions, sessionMvt, SLOW_SESSION } from 'coachboard-shared/vbtSession'
 import ReferencePanel from '../components/analysis/ReferencePanel'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
 import { useShowAngles, useShowMidFoot, useTrackerColor } from '../components/analysis/trackerColor'
@@ -297,6 +298,10 @@ export default function SavedAnalysis() {
   // the last one, to compare with (BP29, D53), and whether this is the
   // fastest so far (BP35, D54).
   const lastTime = athleteId ? lastTimeAtLoad(historyRows, analysis) : null
+  // This set's session (BP33, D59), read the same way as the Progress tab and the dashboard.
+  const session = athleteId && lift !== 'other'
+    ? readSessions(historyRows, lift, sessionMvt(lift, mvtByLift[lift])).find((s) => s.day === localDay(analysis.liftedAt)) ?? null
+    : null
   // This set holds the reference itself: no ghost over it, and its star is lit.
   const isReferenceSet = reference.pointer?.analysisId === analysis.id
   const ghost = reference.shape && !isReferenceSet && pixelsPerMetre ? { path: reference.shape.path, pixelsPerMetre } : null
@@ -627,6 +632,30 @@ export default function SavedAnalysis() {
             value={estimate ? `${Math.round(estimate.e1rm * 2) / 2} kg` : '—'}
           />
           <Row label="Quality" value={lastV != null ? (zoneFor(lastV)?.label ?? '—') : '—'} />
+          {/* The day this set belongs to (BP33, D59): that day's sets of the
+              lift give today's estimated max, against the athlete's usual. */}
+          {session && (
+            <div className="mt-3 rounded-md border bg-muted/30 p-2" aria-label="This session">
+              <p className="text-xs font-medium">This session — {session.sets} set{session.sets === 1 ? '' : 's'} of {liftLabel(lift).toLowerCase()}</p>
+              {session.todayMax != null ? (
+                <p className="text-sm">
+                  Today&rsquo;s max ≈ <span className="num font-medium">{Math.round(session.todayMax * 2) / 2} kg</span>
+                  {session.vsUsual != null && (
+                    <span className={session.vsUsual <= -SLOW_SESSION ? 'text-warning' : 'text-muted-foreground'}>
+                      {' '}— about {Math.abs(Math.round(session.vsUsual * 100))} % {session.vsUsual < 0 ? 'under' : 'over'} the usual {Math.round(session.usualMax! * 2) / 2} kg
+                    </span>
+                  )}
+                  {session.vsUsual == null && <span className="text-muted-foreground"> — no other day to compare with yet</span>}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {session.unreadable === 'too-few-sets'
+                    ? "Three sets at different loads that day are needed to read today's max."
+                    : "That day's sets do not line up clearly enough to read today's max."}
+                </p>
+              )}
+            </div>
+          )}
           <p className="pt-2 text-xs text-muted-foreground">
             {analysis.athleteId
               ? `Read against ${analysis.athleteName ?? 'the athlete'}'s own saved sets, stored 1RM speed and recorded max where there are any, the same way as on the tracking page. Where there are none, the published reference for this lift is used.`
