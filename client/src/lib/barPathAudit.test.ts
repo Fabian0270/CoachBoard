@@ -117,7 +117,7 @@ describe('sticking point', () => {
     for (let i = 0; i < 0.5 * fps; i++) s.push({ t: 4.5 + i / fps, x: 0, y: yTop + (i % 2 ? 0.4 : -0.4) })
 
     const angles: FrameAngles[] = s.map((p) => ({
-      t: p.t, knee: null, hip: null, ankle: null, torsoLean: null, metric: true,
+      t: p.t, knee: null, hip: null, ankle: null, torsoLean: null, elbow: null, shoulder: null, metric: true,
     }))
     const series = anglesAgainstBar(angles, verticalVelocity(s))
     const at = stickingPoint(series)
@@ -130,7 +130,7 @@ describe('sticking point', () => {
     const s: Sample[] = []
     rep(s, 0, 3.0, 600, 30, 400)
     const angles: FrameAngles[] = s.map((p) => ({
-      t: p.t, knee: null, hip: null, ankle: null, torsoLean: null, metric: true,
+      t: p.t, knee: null, hip: null, ankle: null, torsoLean: null, elbow: null, shoulder: null, metric: true,
     }))
     expect(stickingPoint(anglesAgainstBar(angles, verticalVelocity(s)))).toBeNull()
   })

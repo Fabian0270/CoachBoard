@@ -91,6 +91,31 @@ export function useShowPose(): [boolean, (next: boolean) => void] {
   return [show, setShow]
 }
 
+const ANGLES_STORAGE_KEY = 'coachboard-show-angles'
+
+/**
+ * Whether the skeleton's joints carry their degrees (D56). Off by default so
+ * the picture stays clean until wanted; remembered like the skeleton switch.
+ */
+export function useShowAngles(): [boolean, (next: boolean) => void] {
+  const [show, setShowState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(ANGLES_STORAGE_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+  const setShow = useCallback((next: boolean) => {
+    setShowState(next)
+    try {
+      localStorage.setItem(ANGLES_STORAGE_KEY, String(next))
+    } catch {
+      /* not worth surfacing */
+    }
+  }, [])
+  return [show, setShow]
+}
+
 const PLATE_STORAGE_KEY = 'coachboard-plate-mm'
 
 /**

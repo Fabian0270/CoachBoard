@@ -34,6 +34,8 @@ export interface TrackingControlsProps {
   poseStatus: string
   poseError: string | null
   correctionsCount: number
+  showAngles: boolean
+  onShowAngles: (next: boolean) => void
   color: string
   onColor: (color: string) => void
   range: { from: number; to: number } | null
@@ -95,6 +97,17 @@ export default function TrackingControls(p: TrackingControlsProps) {
           />
           <PersonStanding className="h-4 w-4 text-muted-foreground" />
           Skeleton
+        </label>
+        {/* The joints' degrees (D56), only meaningful with the skeleton on. */}
+        <label className={`flex items-center gap-1.5 text-sm ${p.showPose ? '' : 'opacity-50'}`} title="Show each joint's angle in degrees on the skeleton">
+          <input
+            type="checkbox"
+            checked={p.showAngles}
+            disabled={!p.showPose}
+            onChange={(e) => p.onShowAngles(e.target.checked)}
+            className="h-3.5 w-3.5 accent-cyan-400"
+          />
+          Angles
         </label>
         {p.poseStatus === 'loading' && (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">

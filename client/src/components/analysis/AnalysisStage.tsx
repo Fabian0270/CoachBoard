@@ -3,9 +3,13 @@ import { Maximize, Minimize } from 'lucide-react'
 import { pictureRect } from 'coachboard-shared/videoAnalysis'
 import {
   POSE_BONES,
+  cameraSide,
+  frameAngles,
   frameIndexAt,
   isVisible,
+  sideJoints,
   type PoseFrame,
+  type Side,
 } from 'coachboard-shared/pose'
 import { isDrawable, simplify, type Point, type Stroke } from './annotations'
 import { paintDot, paintPath, paintStrokes, repWindows, sampleAt } from './pathPaint'
@@ -135,6 +139,8 @@ interface Props {
    * tracked path's own stretch, once there are reps.
    */
   trackRange?: { from: number; to: number } | null
+  /** The joints' degrees beside the skeleton (D56). Only drawn with the skeleton on. */
+  showAngles?: boolean
 }
 
 // Kept importable from here, where the pages have always found it.
@@ -179,7 +185,10 @@ export default function AnalysisStage({
   repStarts,
   reps,
   trackRange,
+  showAngles = false,
 }: Props) {
+  /** Which side the camera sees, worked out once per skeleton rather than every frame. */
+  const sideCacheRef = useRef<{ frames: PoseFrame[]; side: Side } | null>(null)
   /**
    * The joint under the pointer, and whether it has actually been dragged yet.
    *
@@ -466,6 +475,37 @@ export default function AnalysisStage({
           ctx.arc(l.x * scale, l.y * scale, 3, 0, Math.PI * 2)
           ctx.fill()
         }
+
+        // The joints' degrees (D56), on the side nearest the camera — the same
+        // reading the joint-angle chart uses. Only joints the model could see.
+        if (showAngles && poseFrames) {
+          if (sideCacheRef.current?.frames !== poseFrames) sideCacheRef.current = { frames: poseFrames, side: cameraSide(poseFrames) }
+          const side = sideCacheRef.current.side
+          const [a] = frameAngles([pose], side)
+          const j = sideJoints(side)
+          const label = (text: string, p: { x: number; y: number } | undefined) => {
+            if (!p) return
+            ctx.font = '600 12px system-ui, sans-serif'
+            const w = ctx.measureText(text).width + 8
+            const x = p.x * scale + 9
+            const y = p.y * scale - 9
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+            ctx.fillRect(x, y - 8, w, 16)
+            ctx.fillStyle = 'rgba(224, 242, 254, 1)'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(text, x + 4, y)
+          }
+          const deg = (v: number | null) => (v == null ? null : `${Math.round(v)}°`)
+          const put = (v: number | null, i: number) => { const t = deg(v); if (t && isVisible(lm[i])) label(t, lm[i]) }
+          put(a.knee, j.knee)
+          put(a.hip, j.hip)
+          put(a.ankle, j.ankle)
+          put(a.elbow, j.elbow)
+          put(a.shoulder, j.shoulder)
+          // Lean is not at a joint: between the shoulder and the hip.
+          const s = lm[j.shoulder], h = lm[j.hip]
+          if (a.torsoLean != null && s && h) label(`lean ${Math.round(a.torsoLean)}°`, { x: (s.x + h.x) / 2, y: (s.y + h.y) / 2 })
+        }
       }
     }
 
@@ -594,7 +634,7 @@ export default function AnalysisStage({
     // poseRef is a ref like livePathRef, so it is not a dependency — its
     // contents change every inference without the identity ever changing, and
     // the loop below redraws every animation frame regardless.
-  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps, mode, disabled])
+  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps, mode, disabled, showAngles])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
   // once on any state change so it is right while paused too.

@@ -27,7 +27,7 @@ import { useTracker, type TrackStream } from '../components/analysis/useTracker'
 import { captureInto } from '../components/analysis/captureFrames'
 import { DecodeUnavailable, decodeInto } from '../components/analysis/decodeFrames'
 import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
-import { usePlateMm, useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
+import { usePlateMm, useShowAngles, useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
 import { usePose, type PoseStream } from '../components/analysis/usePose'
 import { savePose, putCorrection } from '../components/analysis/poseApi'
 import {
@@ -178,6 +178,7 @@ export default function VideoAnalysis() {
   const [progress, setProgress] = useState(0)
   const [color, setColor] = useTrackerColor()
   const [showPose, setShowPose] = useShowPose()
+  const [showAngles, setShowAngles] = useShowAngles()
   const [plateMm, setPlateMm] = usePlateMm()
   const [mode, setMode] = useState<StageMode>('seed')
   /**
@@ -1376,6 +1377,7 @@ export default function VideoAnalysis() {
           livePathRef={livePathRef}
           poseRef={poseRef}
           showPose={showPose}
+          showAngles={showAngles}
           onCorrectLandmark={correctPoseLandmark}
           onPlaceSeed={placeSeed}
           onLoadedMetadata={onLoadedMetadata}
@@ -1448,6 +1450,8 @@ export default function VideoAnalysis() {
               poseStatus={pose.status}
               poseError={pose.error}
               correctionsCount={poseCorrections.length}
+              showAngles={showAngles}
+              onShowAngles={setShowAngles}
               color={color}
               onColor={setColor}
               range={range}

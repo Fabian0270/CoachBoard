@@ -254,6 +254,8 @@ export function sideJoints(side: Side) {
   return side === 'left'
     ? {
         shoulder: LM.LEFT_SHOULDER,
+        elbow: LM.LEFT_ELBOW,
+        wrist: LM.LEFT_WRIST,
         hip: LM.LEFT_HIP,
         knee: LM.LEFT_KNEE,
         ankle: LM.LEFT_ANKLE,
@@ -261,6 +263,8 @@ export function sideJoints(side: Side) {
       }
     : {
         shoulder: LM.RIGHT_SHOULDER,
+        elbow: LM.RIGHT_ELBOW,
+        wrist: LM.RIGHT_WRIST,
         hip: LM.RIGHT_HIP,
         knee: LM.RIGHT_KNEE,
         ankle: LM.RIGHT_ANKLE,
@@ -285,6 +289,10 @@ export interface FrameAngles {
    * actually asks of a squat, and it belongs on the same axis as the rest.
    */
   torsoLean: number | null
+  /** Shoulder-elbow-wrist. Straight arm 180 — the bench and press lockout. (D56) */
+  elbow: number | null
+  /** Elbow-shoulder-hip: how far the upper arm is from the torso. (D56) */
+  shoulder: number | null
   /**
    * False when this frame had no world landmarks and the angles above were read
    * off the pixels instead.
@@ -345,6 +353,8 @@ export function frameAngles(frames: PoseFrame[], side: Side = cameraSide(frames)
             // world-space test in pose.test.ts, which pins it.
             Math.abs((Math.atan2(hip.x - shoulder.x, hip.y - shoulder.y) * 180) / Math.PI)
           : null,
+      elbow: jointAngle(shoulder, at(j.elbow), at(j.wrist)),
+      shoulder: jointAngle(at(j.elbow), shoulder, hip),
       metric: frame.world != null,
     }
   })

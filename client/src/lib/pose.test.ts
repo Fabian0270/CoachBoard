@@ -182,6 +182,26 @@ describe('frameAngles', () => {
     expect(a.torsoLean).toBeCloseTo(0, 4)
   })
 
+  it('reads the elbow and shoulder too (D56): a bench press arm, bent then locked', () => {
+    // Lying lifter: hip and shoulder level, upper arm straight up from the shoulder.
+    const bent = frame(0, {
+      [LM.LEFT_HIP]: at(0, 300),
+      [LM.LEFT_SHOULDER]: at(200, 300),
+      [LM.LEFT_ELBOW]: at(200, 200),
+      [LM.LEFT_WRIST]: at(300, 200),
+    })
+    const [a] = frameAngles([bent], 'left')
+    expect(a.elbow).toBeCloseTo(90, 4)
+    expect(a.shoulder).toBeCloseTo(90, 4)
+    const locked = frame(0, {
+      [LM.LEFT_HIP]: at(0, 300),
+      [LM.LEFT_SHOULDER]: at(200, 300),
+      [LM.LEFT_ELBOW]: at(200, 200),
+      [LM.LEFT_WRIST]: at(200, 100),
+    })
+    expect(frameAngles([locked], 'left')[0].elbow).toBeCloseTo(180, 4)
+  })
+
   it('closes the knee as the lifter squats', () => {
     // Hip driven back and down behind the knee, ankle fixed: a real squat's
     // knee angle, and it must come out well under the standing 180.
@@ -692,7 +712,7 @@ describe('correctionsAtTimes', () => {
 
 describe('anglesAgainstBar', () => {
   const angles = (ts: number[]) =>
-    ts.map((t) => ({ t, knee: 90, hip: 90, ankle: 90, torsoLean: 0, metric: true }))
+    ts.map((t) => ({ t, knee: 90, hip: 90, ankle: 90, torsoLean: 0, elbow: null, shoulder: null, metric: true }))
 
   it('samples the nearest velocity reading to each pose frame', () => {
     const out = anglesAgainstBar(angles([0, 0.1, 0.2]), [

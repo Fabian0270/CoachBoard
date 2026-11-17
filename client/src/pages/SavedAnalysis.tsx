@@ -36,7 +36,7 @@ import PathImageButtons from '../components/analysis/PathImageButtons'
 import { downloadCsv, repCsv } from '../components/analysis/repCsv'
 import { lastTimeAtLoad, velocityPr } from '../components/analysis/setHistory'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
-import { useTrackerColor } from '../components/analysis/trackerColor'
+import { useShowAngles, useTrackerColor } from '../components/analysis/trackerColor'
 import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
 
 // ---------------------------------------------------------------------------
@@ -136,6 +136,7 @@ export default function SavedAnalysis() {
   const [pose, setPose] = useState<LoadedPose | null>(null)
   const poseRef = useRef<PoseFrame[]>([])
   const [showPose, setShowPose] = useState(true)
+  const [showAngles, setShowAngles] = useShowAngles()
 
   useEffect(() => {
     if (!id) return
@@ -404,6 +405,7 @@ export default function SavedAnalysis() {
           onCalibratePoint={() => {}}
           poseRef={poseRef}
           showPose={showPose}
+          showAngles={showAngles}
           onCorrectLandmark={correctLandmark}
           strokes={strokes}
           onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
@@ -439,6 +441,17 @@ export default function SavedAnalysis() {
             />
             <PersonStanding className="h-4 w-4 text-muted-foreground" />
             Skeleton
+          </label>
+          {/* The joints' degrees on the skeleton (D56). */}
+          <label className={`flex items-center gap-1.5 ${showPose ? '' : 'opacity-50'}`} title="Show each joint's angle in degrees on the skeleton">
+            <input
+              type="checkbox"
+              checked={showAngles}
+              disabled={!showPose}
+              onChange={(e) => setShowAngles(e.target.checked)}
+              className="h-3.5 w-3.5 accent-cyan-400"
+            />
+            Angles
           </label>
           {showPose && videoSrc && (
             <span className="text-xs text-muted-foreground">
