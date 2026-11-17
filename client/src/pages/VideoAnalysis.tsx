@@ -48,6 +48,7 @@ import {
 import RepTable from '../components/analysis/RepTable'
 import PathPlot from '../components/analysis/PathPlot'
 import BarSpeedChart from '../components/analysis/BarSpeedChart'
+import PathClipButton from '../components/analysis/PathClipButton'
 import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleChart'
 import { captionFill, type CaptionField } from '../components/analysis/captionFill'
 import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
@@ -1251,9 +1252,22 @@ export default function VideoAnalysis() {
           <h1 className="text-lg font-semibold">Bar path analysis</h1>
           <p className="truncate text-sm text-muted-foreground">{sourceLabel}</p>
         </div>
-        <Button variant="outline" size="sm" className="ml-auto" onClick={chooseAnother} disabled={busy}>
-          Choose another video
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          {/* The clip with the path drawn in (BP25), once there is a path. */}
+          {samples && samples.length > 1 && !busy && source && (
+            <PathClipButton
+              source={source.kind === 'local' ? source.file : `/api/discord/media/${source.item.id}/file`}
+              track={samples}
+              reps={trackedReps}
+              strokes={strokes}
+              color={color}
+              name={source.kind === 'local' ? source.name : sourceLabel}
+            />
+          )}
+          <Button variant="outline" size="sm" onClick={chooseAnother} disabled={busy}>
+            Choose another video
+          </Button>
+        </div>
       </div>
 
       {videoSrc && (

@@ -31,6 +31,7 @@ import { ApiError, errorMessage, getJson, sendJson } from '../lib/api'
 import PathPlot from '../components/analysis/PathPlot'
 import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleChart'
 import BarSpeedChart from '../components/analysis/BarSpeedChart'
+import PathClipButton from '../components/analysis/PathClipButton'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
 import { useTrackerColor } from '../components/analysis/trackerColor'
 import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
@@ -299,7 +300,18 @@ export default function SavedAnalysis() {
         </div>
         {/* The same pen as the tracking page and Compare (BP7), wherever a video plays. */}
         {videoSrc && (
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {/* The clip with the path drawn in (BP25), from the stored copy. */}
+            {analysis.hasVideo && analysis.track.length > 1 && (
+              <PathClipButton
+                source={`/api/analysis/${analysis.id}/video`}
+                track={analysis.track}
+                reps={metrics}
+                strokes={strokes}
+                color={color}
+                name={analysis.sourceLabel || 'lift'}
+              />
+            )}
             <DrawControls mode={mode} onModeChange={setMode} strokes={strokes} onStrokesChange={setStrokes} />
           </div>
         )}
