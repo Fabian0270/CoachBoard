@@ -29,7 +29,7 @@ export function useVbtHistory(
   metric: VelocityMetric,
   /** A saved set to leave out: the saved page reads a set against the OTHERS. */
   excludeId: string | null = null,
-): { anchors: LrvAnchor[]; points: LvPoint[] } {
+): { anchors: LrvAnchor[]; points: LvPoint[]; rows: VideoAnalysisDto[] } {
   const [rows, setRows] = useState<VideoAnalysisDto[]>([])
 
   useEffect(() => {
@@ -68,7 +68,9 @@ export function useVbtHistory(
         points.push({ load: row.loadKg, velocity: best, label: row.createdAt.slice(0, 10) })
       }
     }
-    return { anchors, points }
+    // The rows too: the saved page finds the last set at this load and the
+    // velocity PR in them (BP29, BP35) without a second request.
+    return { anchors, points, rows }
   }, [rows, lift, metric, excludeId])
 }
 

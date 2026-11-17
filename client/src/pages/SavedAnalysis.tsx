@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, FileDown, FileVideo, LineChart, Pencil, PersonStanding } from 'lucide-react'
+import { ArrowLeft, Columns2, FileDown, FileVideo, LineChart, Pencil, PersonStanding, Trophy } from 'lucide-react'
 import { RPE_VALUES } from 'coachboard-shared/rpe'
 import { num } from '../lib/num'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
@@ -34,6 +34,7 @@ import BarSpeedChart from '../components/analysis/BarSpeedChart'
 import PathClipButton from '../components/analysis/PathClipButton'
 import PathImageButtons from '../components/analysis/PathImageButtons'
 import { downloadCsv, repCsv } from '../components/analysis/repCsv'
+import { lastTimeAtLoad, velocityPr } from '../components/analysis/setHistory'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
 import { useTrackerColor } from '../components/analysis/trackerColor'
 import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
@@ -103,7 +104,7 @@ export default function SavedAnalysis() {
   const athleteId = analysis?.athleteId ?? null
   // The athlete's OTHER sets: this one is added below exactly as the live page
   // adds the set it is tracking, so both pages read it against the same history.
-  const { anchors: otherAnchors, points: savedPoints } = useVbtHistory(athleteId, lift, metric, id ?? null)
+  const { anchors: otherAnchors, points: savedPoints, rows: historyRows } = useVbtHistory(athleteId, lift, metric, id ?? null)
   const { byLift: mvtByLift } = useAthleteMvt(athleteId)
   const maxes = useAthleteMaxes(athleteId)
 
@@ -284,6 +285,12 @@ export default function SavedAnalysis() {
   // localUrl still wins, for an analysis saved before videos were kept.
   const videoSrc = localUrl ?? (analysis.hasVideo ? `/api/analysis/${analysis.id}/video` : null)
 
+  // Against the athlete's earlier sets of this lift at exactly this load:
+  // the last one, to compare with (BP29, D53), and whether this is the
+  // fastest so far (BP35, D54).
+  const lastTime = athleteId ? lastTimeAtLoad(historyRows, analysis) : null
+  const pr = athleteId ? velocityPr(historyRows, { ...analysis, metrics }, metric) : null
+
   return (
     <div className="space-y-4 p-6">
       <div className="flex items-center gap-3">
@@ -299,6 +306,15 @@ export default function SavedAnalysis() {
             {analysis.athleteName ?? 'Unassigned'} · {analysis.createdAt.slice(0, 10)} ·{' '}
             {analysis.sourceLabel || 'no source name'}
           </p>
+          {pr?.kind === 'pr' && (
+            <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
+              <Trophy className="h-3.5 w-3.5" />
+              Velocity PR — fastest {analysis.loadKg} kg {liftLabel(lift).toLowerCase()} so far: {pr.best.toFixed(2)} m/s (was {pr.previous.toFixed(2)})
+            </p>
+          )}
+          {pr?.kind === 'first' && (
+            <p className="mt-1 text-xs text-muted-foreground">The first {analysis.loadKg} kg {liftLabel(lift).toLowerCase()} tracked for this athlete.</p>
+          )}
         </div>
         {/* The same pen as the tracking page and Compare (BP7), wherever a video plays. */}
         {videoSrc && (
@@ -336,11 +352,22 @@ export default function SavedAnalysis() {
             <DrawControls mode={mode} onModeChange={setMode} strokes={strokes} onStrokesChange={setStrokes} />
           </div>
         )}
-        {analysis.mediaId && (
+        {lastTime && (
           <Button
             variant="outline"
             size="sm"
             className={videoSrc ? '' : 'ml-auto'}
+            title={`Side by side with the ${analysis.loadKg} kg set from ${lastTime.createdAt.slice(0, 10)}`}
+            onClick={() => navigate(`/analysis/compare?left=${encodeURIComponent(lastTime.id)}&right=${encodeURIComponent(analysis.id)}`)}
+          >
+            <Columns2 className="h-4 w-4" /> Compare with last time
+          </Button>
+        )}
+        {analysis.mediaId && (
+          <Button
+            variant="outline"
+            size="sm"
+            className={videoSrc || lastTime ? '' : 'ml-auto'}
             onClick={() => navigate(`/analysis/${analysis.mediaId}`)}
           >
             <LineChart className="h-4 w-4" /> Track this clip again

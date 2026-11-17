@@ -114,6 +114,25 @@ describe('Saved bar path set', () => {
     expect(bodies[0]).toMatchObject({ notes: 'Keep the chest up', lift: 'back-squat', loadKg: 180 })
   })
 
+  // BP29 (D53) and BP35 (D54): the last set at exactly this load, and a velocity PR.
+  it('offers the last set at the same load, and marks a velocity PR', async () => {
+    const prev = { ...analysis, id: 's-1', createdAt: '2026-11-10T10:00:00Z', loadKg: 180, metrics: [rep(0, 0.5), rep(1, 0.48)] }
+    serve(routes({ '/api/analysis': { body: [analysis, other, prev] } }) as never)
+    open()
+    const button = await screen.findByRole('button', { name: /Compare with last time/ })
+    expect(button.getAttribute('title')).toContain('2026-11-10')
+    // The mistracked rep 3 does not count; rep 1 at 0.55 beats 0.50.
+    expect(await screen.findByText(/Velocity PR — fastest 180 kg back squat so far: 0\.55 m\/s \(was 0\.50\)/)).toBeTruthy()
+  })
+
+  it('no comparison when no earlier set was at exactly this load', async () => {
+    serve(routes() as never)
+    open()
+    await screen.findByRole('table', { name: 'Reps' })
+    expect(screen.queryByRole('button', { name: /Compare with last time/ })).toBeNull()
+    expect(await screen.findByText(/The first 180 kg back squat tracked/)).toBeTruthy()
+  })
+
   it('only a missing analysis says it no longer exists', async () => {
     serve(routes({ 'GET /api/analysis/s1': { status: 404, body: { error: 'Analysis not found' } } }) as never)
     open()

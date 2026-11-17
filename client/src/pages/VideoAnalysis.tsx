@@ -54,6 +54,7 @@ import BarSpeedChart from '../components/analysis/BarSpeedChart'
 import PathClipButton from '../components/analysis/PathClipButton'
 import PathImageButtons from '../components/analysis/PathImageButtons'
 import { downloadCsv, repCsv } from '../components/analysis/repCsv'
+import { velocityPr } from '../components/analysis/setHistory'
 import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleChart'
 import { captionFill, type CaptionField } from '../components/analysis/captionFill'
 import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
@@ -530,7 +531,7 @@ export default function VideoAnalysis() {
   // should actually travel, instead of a band wide enough to cover everyone.
   const athleteHeightCm = roster.find((a) => a.id === athleteId)?.height_cm ?? null
   const metric = setContext.metric ?? defaultVelocityMetric(setContext.lift)
-  const { anchors: savedAnchors, points: savedPoints } = useVbtHistory(
+  const { anchors: savedAnchors, points: savedPoints, rows: historyRows } = useVbtHistory(
     athleteId,
     setContext.lift,
     metric,
@@ -798,6 +799,14 @@ export default function VideoAnalysis() {
       setOfferSave(false)
       setSavedCount((n) => n + 1)
       toast.success('Analysis saved')
+      // The fastest set at this load so far (BP35, D54), against the athlete's
+      // earlier sets as they stood before this save.
+      if (athleteId && reps.length > 0 && loadKg != null) {
+        const pr = velocityPr(historyRows, { id: saved.id, lift: setContext.lift, loadKg, createdAt: new Date().toISOString(), metrics: reps }, metric)
+        if (pr?.kind === 'pr') {
+          toast.success(`Velocity PR — the fastest ${loadKg} kg ${liftLabel(setContext.lift).toLowerCase()} so far: ${pr.best.toFixed(2)} m/s (was ${pr.previous.toFixed(2)}).`)
+        }
+      }
 
       // The skeleton rides along in its own request. Separate because it is
       // ~238 KB against the analysis's ~10 KB and almost every read of an
