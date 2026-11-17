@@ -62,6 +62,22 @@ describe('Athlete Progress tab', () => {
     expect(await screen.findByText(/^One set so far: 0\.52 m\/s at 150 kg on 8 Sept? 26\.$/)).toBeTruthy()
   })
 
+  it('lists velocity PRs from saved sets: faster than every earlier set at the same load (BP35)', async () => {
+    serve({
+      '/api/athletes/a1/progress': { body: progress },
+      '/api/analysis': { body: [
+        analysis('2026-09-08T10:00:00Z', 'back-squat', 150, [0.52]),
+        analysis('2026-09-15T10:00:00Z', 'back-squat', 150, [0.58]),
+        analysis('2026-09-22T10:00:00Z', 'back-squat', 160, [0.61]),
+      ] },
+    })
+    render()
+    const table = await screen.findByRole('table', { name: 'Velocity PRs' })
+    expect(within(table).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell').map((c) => c.textContent))).toEqual([
+      [expect.stringMatching(/^15 Sept? 26$/), 'Back squat 150 kg', '0.58 m/s', '+0.06 m/s'],
+    ])
+  })
+
   it('says what is missing rather than showing empty charts', async () => {
     serve({ '/api/athletes/a1/progress': { body: { e1rm: [], prs: [] } }, '/api/analysis': { body: [] } })
     render()

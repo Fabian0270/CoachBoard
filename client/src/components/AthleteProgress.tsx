@@ -12,6 +12,7 @@ import { Badge } from './ui/badge'
 import LoadError from './LoadError'
 import { errorMessage, getJson, getList } from '../lib/api'
 import { kgTicks } from '../pages/ProgramReport'
+import { velocityPrTimeline, type VelocityPrEvent } from './analysis/setHistory'
 
 // ---------------------------------------------------------------------------
 // The athlete's progress across every block (I1): e1RM of the competition
@@ -87,6 +88,7 @@ export default function AthleteProgress({ athleteId }: { athleteId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [speed, setSpeed] = useState<ReturnType<typeof speedByLift> | null>(null)
   const [speedError, setSpeedError] = useState<string | null>(null)
+  const [velocityPrs, setVelocityPrs] = useState<VelocityPrEvent[]>([])
 
   const load = useCallback(() => {
     setError(null)
@@ -95,8 +97,11 @@ export default function AthleteProgress({ athleteId }: { athleteId: string }) {
       .catch((e) => { setProgress(null); setError(errorMessage(e)) })
     setSpeedError(null)
     getList<VideoAnalysisDto>(`/api/analysis?athleteId=${encodeURIComponent(athleteId)}&withTrack=0`)
-      .then((rows) => setSpeed(speedByLift(rows)))
-      .catch((e) => { setSpeed(null); setSpeedError(errorMessage(e)) })
+      .then((rows) => {
+        setSpeed(speedByLift(rows))
+        setVelocityPrs(velocityPrTimeline(rows))
+      })
+      .catch((e) => { setSpeed(null); setVelocityPrs([]); setSpeedError(errorMessage(e)) })
   }, [athleteId])
   useEffect(() => { load() }, [load])
 
@@ -172,6 +177,34 @@ export default function AthleteProgress({ athleteId }: { athleteId: string }) {
                     <td className="num py-1.5 text-success">
                       {pr.previous === null ? <span className="text-muted-foreground">first</span> : `+${Math.round((pr.weight - pr.previous) * 10) / 10} ${pr.unit}`}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {/* Velocity PRs from saved bar path sets (BP35): the fastest set at a
+              load so far, the same rule as the saved page's badge. */}
+          {velocityPrs.length > 0 && (
+            <table className="mt-6 w-full text-sm" aria-label="Velocity PRs">
+              <thead>
+                <tr className="border-b text-left text-muted-foreground">
+                  <th className="pb-2 pr-6 font-medium">Date</th>
+                  <th className="pb-2 pr-6 font-medium">Velocity PR</th>
+                  <th className="pb-2 pr-6 font-medium">Fastest rep</th>
+                  <th className="pb-2 font-medium">Up by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {velocityPrs.map((pr) => (
+                  <tr key={pr.id} className="border-b last:border-0">
+                    <td className="num py-1.5 pr-6">{shortDate(pr.date)}</td>
+                    <td className="py-1.5 pr-6">
+                      <Link to={`/analysis/saved/${pr.id}`} className="hover:text-primary">
+                        {isVbtLift(pr.lift) ? liftLabel(pr.lift) : pr.lift} {pr.loadKg} kg
+                      </Link>
+                    </td>
+                    <td className="num py-1.5 pr-6 font-medium">{pr.best.toFixed(2)} m/s</td>
+                    <td className="num py-1.5 text-success">+{(pr.best - pr.previous).toFixed(2)} m/s</td>
                   </tr>
                 ))}
               </tbody>

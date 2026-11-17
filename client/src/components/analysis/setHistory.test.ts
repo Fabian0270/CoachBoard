@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lastTimeAtLoad, velocityPr, type HistorySet } from './setHistory'
+import { lastTimeAtLoad, velocityPr, velocityPrTimeline, type HistorySet } from './setHistory'
 
 // Compare with last time (BP29, D53) and velocity PRs (BP35, D54).
 
@@ -42,6 +42,15 @@ describe('velocityPr', () => {
     const glitch = { ...set('x', '10', 180, [0.4]), metrics: [rep(0.4), rep(0.2, 1.9)] }
     expect(velocityPr(rows, glitch, 'peak')).toBeNull()
   })
+  it('the timeline lists each PR, newest first, and not first sets at a load', () => {
+    const all = [...rows, set('e', '12', 180, [0.52]), set('f', '14', 180, [0.51]), set('g', '15', 182.5, [0.8])]
+    expect(velocityPrTimeline(all).map((e) => [e.id, e.best, e.previous])).toEqual([
+      ['g', 0.8, 0.7],
+      ['e', 0.52, 0.5],
+      ['b', 0.5, 0.45],
+    ])
+  })
+
   it('nothing without a scale', () => {
     const raw = { ...set('x', '10', 180, [0.6]), metrics: [{ ...rep(0.6), meanVelocity: null, peakVelocity: null, romM: null }] }
     expect(velocityPr(rows, raw, 'mean')).toBeNull()

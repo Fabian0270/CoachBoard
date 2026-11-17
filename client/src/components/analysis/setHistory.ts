@@ -1,5 +1,5 @@
 import { looksMistracked, type RepMetrics } from 'coachboard-shared/videoAnalysis'
-import { readRep, type VelocityMetric } from 'coachboard-shared/vbt'
+import { defaultVelocityMetric, isVbtLift, isVelocityMetric, readRep, type VelocityMetric } from 'coachboard-shared/vbt'
 
 // ---------------------------------------------------------------------------
 // A set against the athlete's earlier ones: the last set at the same load
@@ -55,4 +55,31 @@ export function velocityPr(rows: HistorySet[], current: HistorySet, metric: Velo
   if (earlier.length === 0) return { kind: 'first', best }
   const previous = Math.max(...earlier)
   return best > previous ? { kind: 'pr', best, previous } : null
+}
+
+export interface VelocityPrEvent {
+  id: string
+  date: string
+  lift: string
+  loadKg: number
+  best: number
+  previous: number
+}
+
+/**
+ * Every velocity PR in an athlete's saved sets, newest first, for the Progress
+ * tab's PR timeline (BP35). The same rule as the saved page: each set in the
+ * speed it is read from. A first set at a load is not listed — it beat nothing.
+ */
+export function velocityPrTimeline(rows: (HistorySet & { metric?: string | null })[]): VelocityPrEvent[] {
+  const out: VelocityPrEvent[] = []
+  for (const row of rows) {
+    if (!isVbtLift(row.lift) || row.loadKg == null) continue
+    const metric = isVelocityMetric(row.metric) ? row.metric : defaultVelocityMetric(row.lift)
+    const pr = velocityPr(rows, row, metric)
+    if (pr?.kind === 'pr') {
+      out.push({ id: row.id, date: row.createdAt.slice(0, 10), lift: row.lift, loadKg: row.loadKg, best: pr.best, previous: pr.previous })
+    }
+  }
+  return out.sort((a, b) => b.date.localeCompare(a.date))
 }
