@@ -73,7 +73,7 @@ export function buildPathImage(opts: PathImageOptions): Promise<Blob> {
 
   ctx.drawImage(video, 0, 0, w, h)
   const playhead = video.currentTime
-  paintStrokes(ctx, strokes, scale, k)
+  paintStrokes(ctx, strokes, scale, k, vh)
   paintPath(ctx, { path: track, reps, playhead, color, scale, k })
   const at = sampleAt(track, playhead)
   if (at) paintDot(ctx, at, color, scale, k)

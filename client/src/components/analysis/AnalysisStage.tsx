@@ -11,7 +11,8 @@ import {
   type PoseFrame,
   type Side,
 } from 'coachboard-shared/pose'
-import { isDrawable, simplify, type Point, type Stroke } from './annotations'
+import { isDrawable, simplify, type PenTool, type Point, type Stroke } from './annotations'
+import { usePenTool } from './penTool'
 import { paintDot, paintPath, paintStrokes, repWindows, sampleAt } from './pathPaint'
 import { useAnalysisKeys } from './analysisKeys'
 import type { Sample } from './tracker.core'
@@ -229,6 +230,9 @@ export default function AnalysisStage({
    * itself. Exactly the reasoning behind livePathRef during tracking.
    */
   const drawingRef = useRef<Point[] | null>(null)
+  /** The shape being drawn right now (BP30), fixed when the press began. */
+  const drawingToolRef = useRef<PenTool>('free')
+  const [penTool] = usePenTool()
   /**
    * An end of the scale line being dragged (BP18). The line lives here until
    * release, like a joint being corrected, so it follows the pointer at frame
@@ -412,9 +416,9 @@ export default function AnalysisStage({
     // Freehand marks first, so the bar path and its dot stay readable on top of
     // whatever the coach has drawn.
     const penStrokes = drawingRef.current
-      ? [...(strokes ?? []), { color, points: drawingRef.current }]
+      ? [...(strokes ?? []), { color, points: drawingRef.current, kind: drawingToolRef.current }]
       : (strokes ?? [])
-    paintStrokes(ctx, penStrokes, scale)
+    paintStrokes(ctx, penStrokes, scale, 1, video.videoHeight)
 
     // Which frame the compositor has actually PRESENTED, not where the playback
     // clock has got to. The clock runs ahead, which made the bar-path dot lead
@@ -824,6 +828,9 @@ export default function AnalysisStage({
     // Capture, so a stroke that runs off the frame still ends cleanly — without
     // it the pointerup lands on some other element and the stroke never closes.
     e.currentTarget.setPointerCapture(e.pointerId)
+    // The shape is fixed at the press, so changing tools mid-drag cannot turn
+    // half a line into a circle.
+    drawingToolRef.current = penTool
     drawingRef.current = [point]
   }
 
@@ -875,7 +882,11 @@ export default function AnalysisStage({
     const point = pointFor(e)
     // Points outside the frame are dropped rather than ending the stroke: a
     // coach circling a knee often overshoots the edge and comes back.
-    if (point) drawingRef.current.push(point)
+    if (!point) return
+    const tool = drawingToolRef.current
+    if (tool === 'free') drawingRef.current.push(point)
+    // A shape is its start and wherever the pointer is now; a plumb line is its one point.
+    else if (tool !== 'plumb') drawingRef.current = [drawingRef.current[0], point]
   }
 
   const endStroke = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -920,8 +931,9 @@ export default function AnalysisStage({
     }
     if (!points) return
     // A tolerance of one video pixel: invisible to the coach, and it typically
-    // drops most of the points in a stroke.
-    const stroke = { color, points: simplify(points, 1) }
+    // drops most of the points in a stroke. Shapes keep their two points.
+    const tool = drawingToolRef.current
+    const stroke: Stroke = tool === 'free' ? { color, points: simplify(points, 1) } : { color, points, kind: tool }
     if (isDrawable(stroke)) onDrawStroke?.(stroke)
   }
 

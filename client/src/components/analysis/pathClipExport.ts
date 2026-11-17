@@ -94,7 +94,7 @@ export async function exportPathClip(opts: PathClipOptions): Promise<Blob> {
           sample.draw(ctx, 0, 0, width, height)
           // The sample's time is on the output timeline, which starts at the trim.
           const t = sample.timestamp + start
-          paintStrokes(ctx, strokes, scale, k)
+          paintStrokes(ctx, strokes, scale, k, srcHeight)
           paintPath(ctx, { path: track, reps, playhead: t, color, scale, k })
           const at = sampleAt(track, t)
           if (at) paintDot(ctx, at, color, scale, k)

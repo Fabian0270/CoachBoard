@@ -22,19 +22,46 @@ export function repWindows(reps: { startT: number; endT: number }[], pathStart: 
   return sorted.map((r, i) => ({ from: i ? sorted[i - 1].endT : pathStart, bottom: r.startT, to: r.endT }))
 }
 
-/** The coach's freehand marks, under everything else. */
-export function paintStrokes(ctx: PaintContext, strokes: Stroke[], scale: number, k = 1) {
+/**
+ * The coach's marks, under everything else: freehand, or a line, an arrow, a
+ * circle or a plumb line (BP30). `pictureHeight` is the frame's height in
+ * video pixels, which a plumb line runs the length of.
+ */
+export function paintStrokes(ctx: PaintContext, strokes: Stroke[], scale: number, k = 1, pictureHeight?: number) {
   for (const stroke of strokes) {
-    if (stroke.points.length < 2) continue
+    const kind = stroke.kind ?? 'free'
+    const pts = stroke.points
+    if (pts.length === 0 || (kind !== 'plumb' && pts.length < 2)) continue
+    const a = pts[0]
+    const b = pts[pts.length - 1]
     const trace = () => {
       ctx.beginPath()
-      stroke.points.forEach((p, i) =>
-        i ? ctx.lineTo(p.x * scale, p.y * scale) : ctx.moveTo(p.x * scale, p.y * scale),
-      )
+      if (kind === 'free') {
+        pts.forEach((p, i) => (i ? ctx.lineTo(p.x * scale, p.y * scale) : ctx.moveTo(p.x * scale, p.y * scale)))
+      } else if (kind === 'plumb') {
+        ctx.moveTo(a.x * scale, 0)
+        ctx.lineTo(a.x * scale, (pictureHeight ?? a.y * 2) * scale)
+      } else if (kind === 'circle') {
+        ctx.arc(a.x * scale, a.y * scale, Math.hypot(b.x - a.x, b.y - a.y) * scale, 0, Math.PI * 2)
+      } else {
+        ctx.moveTo(a.x * scale, a.y * scale)
+        ctx.lineTo(b.x * scale, b.y * scale)
+        if (kind === 'arrow') {
+          // The head, sized for the screen rather than the clip.
+          const ang = Math.atan2(b.y - a.y, b.x - a.x)
+          const head = 14 * k
+          for (const side of [-1, 1]) {
+            ctx.moveTo(b.x * scale, b.y * scale)
+            ctx.lineTo(b.x * scale - head * Math.cos(ang + side * 0.45), b.y * scale - head * Math.sin(ang + side * 0.45))
+          }
+        }
+      }
       ctx.stroke()
     }
     ctx.lineJoin = 'round'
     ctx.lineCap = 'round'
+    // A plumb line is a reference, not a mark: dashed, so it never reads as part of the path.
+    ctx.setLineDash(kind === 'plumb' ? [8 * k, 6 * k] : [])
     // Same dark casing as the bar path: gym footage contains something every
     // colour disappears into somewhere.
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
@@ -43,6 +70,7 @@ export function paintStrokes(ctx: PaintContext, strokes: Stroke[], scale: number
     ctx.strokeStyle = stroke.color
     ctx.lineWidth = 3.5 * k
     trace()
+    ctx.setLineDash([])
   }
 }
 
