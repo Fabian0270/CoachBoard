@@ -15,7 +15,8 @@ import { TRACKER_COLORS } from './trackerColor'
 // Moved out of VideoAnalysis.tsx (N6) as it was; the page keeps the state.
 // ---------------------------------------------------------------------------
 
-const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
+// A clip whose length is not known yet (a recorder WebM reports Infinity) ends at "the end", not "Infinity:NaN".
+const fmt = (s: number) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : 'the end')
 
 export interface TrackingControlsProps {
   mode: StageMode
