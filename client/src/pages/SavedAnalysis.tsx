@@ -384,6 +384,18 @@ export default function SavedAnalysis() {
             <Columns2 className="h-4 w-4" /> Compare with last time
           </Button>
         )}
+        {/* Rep against rep in this set (BP37): the first and the last, side by
+            side from the bottom, to show what fatigue changed. */}
+        {analysis.hasVideo && metrics.length >= 2 && (
+          <Button
+            variant="outline"
+            size="sm"
+            title="The first rep and the last rep of this set side by side, each from the bottom"
+            onClick={() => navigate(`/analysis/compare?left=${encodeURIComponent(analysis.id)}&right=${encodeURIComponent(analysis.id)}&leftRep=0&rightRep=${metrics.length - 1}`)}
+          >
+            <Columns2 className="h-4 w-4" /> First vs last rep
+          </Button>
+        )}
         {analysis.mediaId && (
           <Button
             variant="outline"

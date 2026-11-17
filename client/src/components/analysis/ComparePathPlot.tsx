@@ -32,12 +32,15 @@ function segments(side: CompareSide) {
   }).filter((s) => s.pts.length > 1)
 }
 
-export default function ComparePathPlot({ sides, focusRep = null, height = 320 }: {
+export default function ComparePathPlot({ sides, focusRep = null, focus, height = 320 }: {
   sides: [CompareSide, CompareSide]
   /** A rep to pick out on both sides (0-based); the rest are dimmed. */
   focusRep?: number | null
+  /** A rep to pick out on each side separately (BP37: rep 1 against the last); wins over focusRep. */
+  focus?: [number | null, number | null]
   height?: number
 }) {
+  const picked: [number | null, number | null] = focus ?? [focusRep, focusRep]
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const scaled = sides.every((s) => s.pixelsPerMetre != null && s.pixelsPerMetre > 0)
   const segs = useMemo(() => (scaled ? sides.map(segments) : null), [sides, scaled])
@@ -85,7 +88,7 @@ export default function ComparePathPlot({ sides, focusRep = null, height = 320 }
     segs.forEach((side, si) => {
       ctx.strokeStyle = sides[si].color
       side.forEach(({ w, pts }, i) => {
-        const on = focusRep == null || i === focusRep
+        const on = picked[si] == null || i === picked[si]
         ctx.globalAlpha = on ? 0.5 : 0.12
         ctx.lineWidth = on ? 2 : 1.5
         line(pts.filter((p) => p.t <= w.bottom))
@@ -95,7 +98,7 @@ export default function ComparePathPlot({ sides, focusRep = null, height = 320 }
       })
     })
     ctx.globalAlpha = 1
-  }, [segs, sides, focusRep, height])
+  }, [segs, sides, picked[0], picked[1], height]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!scaled) {
     return (
@@ -117,8 +120,10 @@ export default function ComparePathPlot({ sides, focusRep = null, height = 320 }
           </span>
         ))}
         <span>
-          Each set&rsquo;s reps from one start{focusRep != null ? `, rep ${focusRep + 1} picked out` : ''}; the way down is lighter. Real
-          units on both axes.
+          Each set&rsquo;s reps from one start
+          {picked[0] != null && picked[0] === picked[1] ? `, rep ${picked[0] + 1} picked out` : ''}
+          {picked[0] != null && picked[1] != null && picked[0] !== picked[1] ? `, rep ${picked[0] + 1} on the left against rep ${picked[1] + 1} on the right` : ''}
+          ; the way down is lighter. Real units on both axes.
         </span>
       </p>
     </div>

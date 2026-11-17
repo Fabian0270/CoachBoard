@@ -65,6 +65,28 @@ export default function CompareAnalyses() {
   const [focusRep, setFocusRep] = useState<number | null>(null)
   useEffect(() => setFocusRep(null), [left, right])
 
+  // Rep against rep (BP37): ?leftRep=0&rightRep=4 opens with each side at the
+  // bottom of its own rep — the first rep and the last of one set, side by
+  // side, to show what fatigue changed. Only while the sides are the linked ones.
+  const repParam = (key: string) => (params.get(key) != null && /^\d+$/.test(params.get(key)!) ? Number(params.get(key)) : null)
+  const linkedReps: [number | null, number | null] = [
+    left.kind === 'saved' && left.analysis.id === params.get('left') ? repParam('leftRep') : null,
+    right.kind === 'saved' && right.analysis.id === params.get('right') ? repParam('rightRep') : null,
+  ]
+  useEffect(() => {
+    const sides = [[left, leftVideo, linkedReps[0]], [right, rightVideo, linkedReps[1]]] as const
+    for (const [side, ref, n] of sides) {
+      if (side.kind !== 'saved' || n == null) continue
+      const sorted = [...side.analysis.metrics].sort((a, b) => a.startT - b.startT)
+      const bottom = sorted[n]?.startT
+      const video = ref.current
+      if (bottom == null || !video) continue
+      const place = () => { video.pause(); video.currentTime = bottom }
+      if (video.readyState >= 1) place()
+      else video.addEventListener('loadedmetadata', place, { once: true })
+    }
+  }, [left, right, linkedReps[0], linkedReps[1]]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // The list is fetched without tracks — the paths are only needed once a side
   // actually picks one, and a whole history of them is megabytes. A failure
   // used to leave the picker empty, as if nothing had ever been saved.
@@ -120,6 +142,7 @@ export default function CompareAnalyses() {
           b={right.analysis}
           colors={[color, rightColor]}
           focusRep={focusRep}
+          focus={focusRep == null && (linkedReps[0] != null || linkedReps[1] != null) ? linkedReps : undefined}
           onStartAt={(n) => {
             setFocusRep(n)
             if (n == null) return
@@ -403,11 +426,13 @@ function Numbers({ a, b }: { a: VideoAnalysisDto; b: VideoAnalysisDto }) {
 }
 
 /** Both sets' paths on one plot, and "start both at rep N" (BP26). */
-function BothPaths({ a, b, colors, focusRep, onStartAt }: {
+function BothPaths({ a, b, colors, focusRep, focus, onStartAt }: {
   a: VideoAnalysisDto
   b: VideoAnalysisDto
   colors: [string, string]
   focusRep: number | null
+  /** A rep per side (BP37); used when no "start both at" rep is chosen. */
+  focus?: [number | null, number | null]
   onStartAt: (rep: number | null) => void
 }) {
   const sides = useMemo<[CompareSide, CompareSide]>(() => [
@@ -436,7 +461,7 @@ function BothPaths({ a, b, colors, focusRep, onStartAt }: {
           </label>
         )}
       </div>
-      <ComparePathPlot sides={sides} focusRep={focusRep} />
+      <ComparePathPlot sides={sides} focusRep={focusRep} focus={focus} />
     </div>
   )
 }
