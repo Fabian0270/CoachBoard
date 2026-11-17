@@ -571,6 +571,57 @@ export function repStickingPoints(track: Sample[], reps: { startT: number; endT:
   })
 }
 
+/** A rep's tempo (BP12): how long the way down took, and the pause at the bottom. No lockout time (D36). */
+export interface RepTempo {
+  descentMs: number
+  /** From arriving at the bottom to moving up again; 0 for touch-and-go. */
+  pauseMs: number
+}
+
+/**
+ * Each rep's descent and pause, in the order given, worked out from the
+ * stored track like the sideways drift, so older sets get it too.
+ *
+ * Walked BACK from where the rep starts up (`startT`, already past the pause
+ * — see the trim in repMetrics): samples not moving down are the pause, the
+ * run moving down before them is the descent. "Moving down" is the same rule
+ * as the trim, a tenth of the descent's own top speed, so it holds at any zoom.
+ * The search stops at the top before the rep (the previous rep's end, or the
+ * start of the path for the first). Null when there is no descent there — the
+ * first pull of a deadlift starts on the floor — or it covers under a quarter
+ * of the rep's range, which is a wobble, not the way down.
+ */
+export function repTempos(track: Sample[], reps: { startT: number; endT: number; romPx: number }[]): (RepTempo | null)[] {
+  if (track.length < 3) return reps.map(() => null)
+  const velocities = verticalVelocity(track)
+  const indexAt = (t: number) => {
+    const i = track.findIndex((s) => s.t >= t - 1e-6)
+    return i === -1 ? track.length - 1 : i
+  }
+  const order = reps.map((_, i) => i).sort((a, b) => reps[a].startT - reps[b].startT)
+  const result: (RepTempo | null)[] = reps.map(() => null)
+  order.forEach((ri, k) => {
+    const rep = reps[ri]
+    const lower = k === 0 ? 0 : indexAt(reps[order[k - 1]].endT)
+    const up = indexAt(rep.startT)
+    if (up - lower < 3) return
+    const down = velocities.slice(lower, up + 1).map((v) => v.vy).filter((vy) => vy > 0)
+    if (down.length < 2) return
+    const moving = percentile(down, PEAK_PERCENTILE) * 0.1
+    let arrive = up - 1
+    while (arrive > lower && velocities[arrive].vy < moving) arrive--
+    if (arrive <= lower) return
+    let top = arrive
+    while (top > lower && velocities[top].vy >= moving) top--
+    if (track[arrive].y - track[top].y < rep.romPx * 0.25) return
+    result[ri] = {
+      descentMs: Math.round((track[arrive].t - track[top].t) * 1000),
+      pauseMs: Math.max(0, Math.round((rep.startT - track[arrive].t) * 1000)),
+    }
+  })
+  return result
+}
+
 /** Vertical distance over elapsed time between two samples, px/s. 0 for no time. */
 function displacementRate(samples: Sample[], from: number, to: number): number {
   const dt = samples[to].t - samples[from].t

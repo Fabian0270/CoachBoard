@@ -1,5 +1,6 @@
+import { useMemo } from 'react'
 import { Undo2, X } from 'lucide-react'
-import { looksMistracked, repDrift, type RepDrift, type RepMetrics, type Sample } from 'coachboard-shared/videoAnalysis'
+import { looksMistracked, repDrift, repTempos, type RepDrift, type RepMetrics, type Sample } from 'coachboard-shared/videoAnalysis'
 import {
   readRep,
   rpeFromLastRepVelocity,
@@ -46,6 +47,9 @@ export function fmtDrift(d: RepDrift): string {
 }
 
 export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump }: RepTableProps) {
+  // The way down and the pause at the bottom (BP12), from the path like the drift.
+  const tempos = useMemo(() => (track ? repTempos(track, reps) : null), [track, reps])
+  const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
   const head = (m: VelocityMetric, label: string) => (
     <th className={`py-1 pr-4 font-medium ${metric === m ? 'text-foreground' : ''}`} title={metric === m ? 'The set is read from this one' : undefined}>
       {label}{metric === m && ' •'}
@@ -66,7 +70,13 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
                 Sideways
               </th>
             )}
-            <th className="py-1 pr-4 font-medium">Duration</th>
+            {track && (
+              <>
+                <th className="py-1 pr-4 font-medium" title="How long the bar took on the way down, from the top to the bottom">Down</th>
+                <th className="py-1 pr-4 font-medium" title="How long the bar sat at the bottom before it moved up again; 0.0 s is touch-and-go">Pause</th>
+              </>
+            )}
+            <th className="py-1 pr-4 font-medium" title="How long the bar took on the way up">Duration</th>
             {/* Dropped without a scale rather than shown as dashes: neither an
                 RPE table nor a velocity zone means anything in px/s. */}
             {calibrated && (
@@ -79,8 +89,9 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
           </tr>
         </thead>
         <tbody>
-          {reps.map((r) => {
+          {reps.map((r, i) => {
             const out = excluded?.has(r.index) ?? false
+            const tempo = tempos?.[i] ?? null
             const suspect = looksMistracked(r)
             // Whatever speed the panel reads the set from, so one rep never carries two RPEs.
             const v = readRep(r, metric)
@@ -125,6 +136,12 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
                 </td>
                 <td className="py-1 pr-4">{r.romM !== null ? `${(r.romM * 100).toFixed(0)} cm` : `${Math.round(r.romPx)} px`}</td>
                 {track && <td className="num whitespace-nowrap py-1 pr-4">{drift ? fmtDrift(drift) : '—'}</td>}
+                {track && (
+                  <>
+                    <td className="py-1 pr-4">{tempo ? secs(tempo.descentMs) : '—'}</td>
+                    <td className="py-1 pr-4">{tempo ? secs(tempo.pauseMs) : '—'}</td>
+                  </>
+                )}
                 <td className="py-1 pr-4">{(r.durationMs / 1000).toFixed(2)} s</td>
                 {calibrated && (
                   <>
