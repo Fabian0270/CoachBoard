@@ -55,6 +55,8 @@ import PathClipButton from '../components/analysis/PathClipButton'
 import PathImageButtons from '../components/analysis/PathImageButtons'
 import { downloadCsv, repCsv } from '../components/analysis/repCsv'
 import { velocityPr } from '../components/analysis/setHistory'
+import { useReferenceRep } from '../components/analysis/referenceRep'
+import ReferencePanel from '../components/analysis/ReferencePanel'
 import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleChart'
 import { captionFill, type CaptionField } from '../components/analysis/captionFill'
 import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
@@ -550,6 +552,8 @@ export default function VideoAnalysis() {
         : savedAnchors,
     [savedAnchors, setContext.calledRpe, lastV],
   )
+  // The athlete's reference rep for this lift (BP28), drawn over this set.
+  const reference = useReferenceRep(athleteId, setContext.lift === 'other' ? null : setContext.lift)
 
   const resizeSeed = (delta: number) => {
     const video = videoRef.current
@@ -1378,6 +1382,7 @@ export default function VideoAnalysis() {
           poseRef={poseRef}
           showPose={showPose}
           showAngles={showAngles}
+          ghost={reference.shape && pixelsPerMetre ? { path: reference.shape.path, pixelsPerMetre } : null}
           onCorrectLandmark={correctPoseLandmark}
           onPlaceSeed={placeSeed}
           onLoadedMetadata={onLoadedMetadata}
@@ -1620,6 +1625,17 @@ export default function VideoAnalysis() {
                     v.currentTime = at
                   }}
                 />
+                {reference.shape && (
+                  <ReferencePanel
+                    shape={reference.shape}
+                    reps={reps}
+                    track={samples}
+                    pixelsPerMetre={pixelsPerMetre}
+                    loadKg={loadKg}
+                    metric={metric}
+                    athleteName={roster.find((a) => a.id === athleteId)?.name ?? null}
+                  />
+                )}
               </div>
             )}
 

@@ -12,6 +12,7 @@ import {
   deleteAthleteMax,
 } from '../services/athleteService.js'
 import { getAthleteMvts, setAthleteMvt } from '../services/athleteMvtService.js'
+import { getReferenceReps, ReferenceRepRefused, setReferenceRep } from '../services/referenceRepService.js'
 import { getAthleteProgress } from '../services/athleteProgressService.js'
 import { fail } from '../lib/httpError.js'
 
@@ -104,6 +105,31 @@ router.put('/:id/mvt', async (req: Request, res: Response): Promise<void> => {
   } catch (err) {
     // A rejected value is the coach's typo, not a server fault.
     res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid velocity' })
+  }
+})
+
+// The athlete's reference rep per lift (BP28), keyed by lift.
+router.get('/:id/reference-reps', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const athlete = await findAthleteById(String(req.params.id))
+    if (!athlete) { res.status(404).json({ error: 'Athlete not found' }); return }
+    res.json(await getReferenceReps(athlete.id))
+  } catch (err) {
+    fail(res, 'Failed to fetch reference reps', err)
+  }
+})
+
+router.put('/:id/reference-reps', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.referenceRep.set, req.body, res)
+  if (!body) return
+  try {
+    const athlete = await findAthleteById(String(req.params.id))
+    if (!athlete) { res.status(404).json({ error: 'Athlete not found' }); return }
+    await setReferenceRep(athlete.id, body.lift, body.analysisId, body.repIndex ?? 0)
+    res.json(await getReferenceReps(athlete.id))
+  } catch (err) {
+    if (err instanceof ReferenceRepRefused) { res.status(400).json({ error: err.message }); return }
+    fail(res, 'Failed to set the reference rep', err)
   }
 })
 

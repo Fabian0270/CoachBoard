@@ -42,7 +42,7 @@ describe('Saved bar path set', () => {
     open()
     const table = await screen.findByRole('table', { name: 'Reps' })
     expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
-      'Rep', 'Mean •', 'Propulsive', 'Peak', 'Range', 'Sideways', 'Down', 'Pause', 'Duration', '≈ RPE', 'Quality', 'Strike off',
+      'Rep', 'Mean •', 'Propulsive', 'Peak', 'Range', 'Sideways', 'Down', 'Pause', 'Duration', '≈ RPE', 'Quality', 'Reference rep', 'Strike off',
     ])
     expect(within(table).getByLabelText('probably mistracked')).toBeTruthy()
   })
@@ -131,6 +131,34 @@ describe('Saved bar path set', () => {
     await screen.findByRole('table', { name: 'Reps' })
     expect(screen.queryByRole('button', { name: /Compare with last time/ })).toBeNull()
     expect(await screen.findByText(/The first 180 kg back squat tracked/)).toBeTruthy()
+  })
+
+  // BP28 (D57): the reference rep, marked with a star, compared on another set.
+  it('a star makes a rep the reference for the athlete and lift', async () => {
+    const puts: unknown[] = []
+    serve(routes({
+      'GET /api/athletes/a1/reference-reps': { body: {} },
+      'PUT /api/athletes/a1/reference-reps': (_u: URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body))
+        puts.push(body)
+        return { body: { 'back-squat': { analysisId: body.analysisId, repIndex: body.repIndex } } }
+      },
+    }) as never)
+    open()
+    await userEvent.click(await screen.findByRole('button', { name: 'Make rep 2 the reference' }))
+    await waitFor(() => expect(puts).toEqual([{ lift: 'back-squat', analysisId: 's1', repIndex: 1 }]))
+    expect(await screen.findByRole('button', { name: 'Rep 2 is the reference' })).toBeTruthy()
+  })
+
+  it("another set of the lift is compared against the reference", async () => {
+    const ref = { ...analysis, id: 'r1', createdAt: '2026-11-10T10:00:00Z', track: [{ t: 0, x: 0, y: 0 }, { t: 0.5, x: 0, y: 50 }, { t: 1, x: 0, y: 0 }, { t: 1.5, x: 0, y: 1 }] }
+    serve(routes({
+      'GET /api/athletes/a1/reference-reps': { body: { 'back-squat': { analysisId: 'r1', repIndex: 0 } } },
+      'GET /api/analysis/r1': { body: ref },
+    }) as never)
+    open()
+    expect(await screen.findByRole('table', { name: 'Against the reference rep' })).toBeTruthy()
+    expect(screen.getByText(/reference back squat: rep 1 of the 180 kg set on 2026-11-10/)).toBeTruthy()
   })
 
   it('only a missing analysis says it no longer exists', async () => {

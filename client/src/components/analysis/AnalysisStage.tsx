@@ -142,6 +142,11 @@ interface Props {
   trackRange?: { from: number; to: number } | null
   /** The joints' degrees beside the skeleton (D56). Only drawn with the skeleton on. */
   showAngles?: boolean
+  /**
+   * The athlete's reference rep (BP28): its path in metres from the top before
+   * it, and this clip's scale to draw it at. Absent without a scale on both.
+   */
+  ghost?: { path: { x: number; y: number }[]; pixelsPerMetre: number } | null
 }
 
 // Kept importable from here, where the pages have always found it.
@@ -187,6 +192,7 @@ export default function AnalysisStage({
   reps,
   trackRange,
   showAngles = false,
+  ghost = null,
 }: Props) {
   /** Which side the camera sees, worked out once per skeleton rather than every frame. */
   const sideCacheRef = useRef<{ frames: PoseFrame[]; side: Side } | null>(null)
@@ -517,6 +523,26 @@ export default function AnalysisStage({
     // so far — so the line grows as the clip plays.
     const path = samples ?? livePathRef?.current ?? null
 
+    // The athlete's reference rep (BP28, D57), faintly, from the top of the rep
+    // under the playhead: the shape this rep is being held against. Under the
+    // path, so the measurement stays on top.
+    if (ghost && samples?.length && reps?.length) {
+      const w = repWindows(reps, samples[0].t).find((x) => playhead >= x.from && playhead <= x.to)
+      const top = w ? sampleAt(samples, w.from) : null
+      if (top) {
+        const px = (p: { x: number; y: number }) => [(top.x + p.x * ghost.pixelsPerMetre) * scale, (top.y + p.y * ghost.pixelsPerMetre) * scale] as const
+        ctx.save()
+        ctx.setLineDash([5, 5])
+        ctx.lineJoin = 'round'
+        ctx.lineWidth = 2.5
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)'
+        ctx.beginPath()
+        ghost.path.forEach((p, i) => { const [x, y] = px(p); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y) })
+        ctx.stroke()
+        ctx.restore()
+      }
+    }
+
     // The whole path, reps apart once it is finished (BP9) — see paintPath.
     if (path) paintPath(ctx, { path, reps: samples ? reps : null, playhead, color, scale })
 
@@ -638,7 +664,7 @@ export default function AnalysisStage({
     // poseRef is a ref like livePathRef, so it is not a dependency — its
     // contents change every inference without the identity ever changing, and
     // the loop below redraws every animation frame regardless.
-  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps, mode, disabled, showAngles])
+  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps, mode, disabled, showAngles, ghost])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
   // once on any state change so it is right while paused too.

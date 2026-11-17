@@ -35,6 +35,8 @@ import PathClipButton from '../components/analysis/PathClipButton'
 import PathImageButtons from '../components/analysis/PathImageButtons'
 import { downloadCsv, repCsv } from '../components/analysis/repCsv'
 import { lastTimeAtLoad, velocityPr } from '../components/analysis/setHistory'
+import { useReferenceRep } from '../components/analysis/referenceRep'
+import ReferencePanel from '../components/analysis/ReferencePanel'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
 import { useShowAngles, useTrackerColor } from '../components/analysis/trackerColor'
 import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
@@ -107,6 +109,9 @@ export default function SavedAnalysis() {
   const { anchors: otherAnchors, points: savedPoints, rows: historyRows } = useVbtHistory(athleteId, lift, metric, id ?? null)
   const { byLift: mvtByLift } = useAthleteMvt(athleteId)
   const maxes = useAthleteMaxes(athleteId)
+  // The athlete's reference rep for this lift (BP28): marked from this table,
+  // drawn over every other set of the lift.
+  const reference = useReferenceRep(athleteId, lift === 'other' ? null : lift)
 
   // The pen (BP7). The stage's own comments name this page as where a coach
   // talks over a lift, and it had no pen; Compare did.
@@ -290,6 +295,9 @@ export default function SavedAnalysis() {
   // the last one, to compare with (BP29, D53), and whether this is the
   // fastest so far (BP35, D54).
   const lastTime = athleteId ? lastTimeAtLoad(historyRows, analysis) : null
+  // This set holds the reference itself: no ghost over it, and its star is lit.
+  const isReferenceSet = reference.pointer?.analysisId === analysis.id
+  const ghost = reference.shape && !isReferenceSet && pixelsPerMetre ? { path: reference.shape.path, pixelsPerMetre } : null
   const pr = athleteId ? velocityPr(historyRows, { ...analysis, metrics }, metric) : null
 
   return (
@@ -406,6 +414,7 @@ export default function SavedAnalysis() {
           poseRef={poseRef}
           showPose={showPose}
           showAngles={showAngles}
+          ghost={ghost}
           onCorrectLandmark={correctLandmark}
           strokes={strokes}
           onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
@@ -535,7 +544,25 @@ export default function SavedAnalysis() {
               v.pause()
               v.currentTime = at
             } : undefined}
+            referenceIndex={isReferenceSet ? reference.pointer!.repIndex : null}
+            onReference={athleteId && lift !== 'other' && calibrated ? (index) => {
+              const clearing = isReferenceSet && reference.pointer!.repIndex === index
+              reference.mark(clearing ? null : analysis.id, index)
+                .then(() => toast.success(clearing ? 'Reference rep cleared.' : `Rep ${index + 1} is now the reference ${liftLabel(lift).toLowerCase()} for ${analysis.athleteName ?? 'this athlete'}.`))
+                .catch((err) => toast.error(`Could not set the reference rep. ${errorMessage(err)}`))
+            } : undefined}
           />
+          {reference.shape && !isReferenceSet && (
+            <ReferencePanel
+              shape={reference.shape}
+              reps={metrics}
+              track={analysis.track}
+              pixelsPerMetre={pixelsPerMetre}
+              loadKg={analysis.loadKg}
+              metric={metric}
+              athleteName={analysis.athleteName}
+            />
+          )}
         </div>
 
         <div className="space-y-1 text-sm">

@@ -117,6 +117,17 @@ export interface AthleteMvtTable {
   updated_at: string
 }
 
+/** An athlete's reference rep for one lift (BP28): one saved rep their other sets are drawn against. */
+export interface ReferenceRepTable {
+  athlete_id: string
+  /** A `VbtLift` id. */
+  lift: string
+  analysis_id: string
+  /** The rep's `index` in that analysis's metrics. */
+  rep_index: number
+  updated_at: string
+}
+
 export interface PaymentTable {
   id: string
   athlete_id: string
@@ -320,6 +331,7 @@ export interface DB {
   progress_records: ProgressRecordTable
   athlete_maxes: AthleteMaxTable
   athlete_mvt: AthleteMvtTable
+  reference_reps: ReferenceRepTable
   payments: PaymentTable
   export_styles: ExportStyleTable
   template_blobs: TemplateBlobTable
@@ -862,6 +874,21 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
       x REAL NOT NULL,
       y REAL NOT NULL,
       PRIMARY KEY (analysis_id, frame_index, landmark),
+      FOREIGN KEY (analysis_id) REFERENCES video_analyses(id) ON DELETE CASCADE
+    )
+  `.execute(_db)
+
+  // An athlete's reference rep per lift (BP28). CASCADE on both: it is a
+  // pointer, meaningless once the athlete or the set it points at is gone.
+  await sql`
+    CREATE TABLE IF NOT EXISTS reference_reps (
+      athlete_id TEXT NOT NULL,
+      lift TEXT NOT NULL,
+      analysis_id TEXT NOT NULL,
+      rep_index INTEGER NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (athlete_id, lift),
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE,
       FOREIGN KEY (analysis_id) REFERENCES video_analyses(id) ON DELETE CASCADE
     )
   `.execute(_db)

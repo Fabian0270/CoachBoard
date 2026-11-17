@@ -265,6 +265,16 @@ export const schemas = {
     }),
   },
 
+  // The rep an athlete's sets of a lift are drawn against (BP28). A null
+  // analysisId clears it.
+  referenceRep: {
+    set: z.object({
+      lift: z.string().min(1).max(60),
+      analysisId: z.string().min(1).max(64).nullable(),
+      repIndex: z.number().int().min(0).max(1000).optional(),
+    }),
+  },
+
   athleteMax: {
     create: z.object({
       lift_name: z.string().min(1).max(100),

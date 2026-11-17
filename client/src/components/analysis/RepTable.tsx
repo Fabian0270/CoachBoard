@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Undo2, X } from 'lucide-react'
+import { Star, Undo2, X } from 'lucide-react'
 import { looksMistracked, repDrift, repTempos, type RepDrift, type RepMetrics, type Sample } from 'coachboard-shared/videoAnalysis'
 import {
   readRep,
@@ -35,6 +35,10 @@ interface RepTableProps {
   onToggle?: (index: number) => void
   /** Jump the video to a rep (BP9). Absent: the rep number is plain text. */
   onJump?: (index: number) => void
+  /** The rep that is the athlete's reference for this lift, if it is in this set (BP28). */
+  referenceIndex?: number | null
+  /** Make a rep the reference, or clear it when it already is. Absent: no star. */
+  onReference?: (index: number) => void
 }
 
 /** "4 cm, ends 2 cm →": the furthest it strayed, and where the top ended up against the bottom. */
@@ -46,7 +50,7 @@ export function fmtDrift(d: RepDrift): string {
   return `${val(d.maxPx, d.maxM)} ${unit}, ends ${ends}`
 }
 
-export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump }: RepTableProps) {
+export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump, referenceIndex = null, onReference }: RepTableProps) {
   // The way down and the pause at the bottom (BP12), from the path like the drift.
   const tempos = useMemo(() => (track ? repTempos(track, reps) : null), [track, reps])
   const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
@@ -85,6 +89,7 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
                 <th className="py-1 font-medium">Quality</th>
               </>
             )}
+            {onReference && <th className="py-1 pl-4 font-medium"><span className="sr-only">Reference rep</span></th>}
             {onToggle && <th className="py-1 pl-4 font-medium"><span className="sr-only">Strike off</span></th>}
           </tr>
         </thead>
@@ -148,6 +153,20 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
                     <td className="py-1 pr-4">{reading ? reading.rpe : '—'}</td>
                     <td className="py-1 text-muted-foreground">{zone ? zone.label : '—'}</td>
                   </>
+                )}
+                {onReference && (
+                  <td className="py-1 pl-4 text-right">
+                    <button
+                      type="button"
+                      onClick={() => onReference(r.index)}
+                      aria-pressed={referenceIndex === r.index}
+                      title={referenceIndex === r.index ? 'The reference rep for this lift — click to clear it' : 'Make this the reference rep for this lift: later sets are drawn against it'}
+                      aria-label={referenceIndex === r.index ? `Rep ${r.index + 1} is the reference` : `Make rep ${r.index + 1} the reference`}
+                      className={`rounded p-1 no-underline hover:bg-muted ${referenceIndex === r.index ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+                    >
+                      <Star className={`h-3.5 w-3.5 ${referenceIndex === r.index ? 'fill-current' : ''}`} />
+                    </button>
+                  </td>
                 )}
                 {onToggle && (
                   <td className="py-1 pl-4 text-right">
