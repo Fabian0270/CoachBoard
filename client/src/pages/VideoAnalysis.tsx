@@ -48,6 +48,7 @@ import {
   lastRepVelocity,
   liftLabel,
   measuredMvt,
+  type VbtLift,
 } from 'coachboard-shared/vbt'
 import RepTable from '../components/analysis/RepTable'
 import PathPlot from '../components/analysis/PathPlot'
@@ -79,6 +80,21 @@ import { uploadVideo } from '../lib/uploadAnalysisVideo'
 import { useUnsavedWork } from '../lib/unsavedWork'
 
 type Phase = 'idle' | 'capturing' | 'tracking' | 'done'
+
+/**
+ * The name an estimated max is stored under (BP34): the plain lift name where
+ * there is one, so the load hints rank it like a lifted max of that lift (the
+ * newest wins) rather than as a variation.
+ */
+function maxNameFor(lift: VbtLift): string {
+  const plain: Partial<Record<VbtLift, string>> = {
+    'back-squat': 'Back squat',
+    'bench-press': 'Bench press',
+    'deadlift-conventional': 'Deadlift',
+    'deadlift-sumo': 'Sumo deadlift',
+  }
+  return plain[lift] ?? liftLabel(lift)
+}
 
 /**
  * Below this the numbers stop meaning anything, so no path is shown at all.
@@ -495,6 +511,28 @@ export default function VideoAnalysis() {
     setSavedContext(null)
     setSavedScale(null)
     setOfferSave(false)
+    setMaxOffer('open')
+  }
+
+  /** The estimate on screen, offered as a max after saving (BP34, D60). */
+  const [estimateKg, setEstimateKg] = useState<number | null>(null)
+  const [maxOffer, setMaxOffer] = useState<'open' | 'saving' | 'done' | 'declined'>('open')
+  const recordEstimatedMax = async () => {
+    if (!athleteId || estimateKg == null) return
+    setMaxOffer('saving')
+    try {
+      await sendJson('POST', `/api/athletes/${encodeURIComponent(athleteId)}/maxes`, {
+        lift_name: maxNameFor(setContext.lift),
+        weight: estimateKg,
+        estimated: true,
+        notes: `Estimated from bar speed (${sourceLabel || 'a saved set'})`,
+      })
+      setMaxOffer('done')
+      toast.success(`Recorded ${estimateKg} kg as an estimated ${liftLabel(setContext.lift).toLowerCase()} max. It is used for load hints, not counted as a PR.`)
+    } catch (err) {
+      setMaxOffer('open')
+      toast.error(`Could not record the max. ${errorMessage(err)}`)
+    }
   }
 
   const scaleNow = () => JSON.stringify(calibration ? { ...calibration, plateMm } : null)
@@ -1574,6 +1612,21 @@ export default function VideoAnalysis() {
                   )}
                 </div>
               ))}
+            {/* The estimate as a max (BP34, D60): only when the coach confirms,
+                stored marked "estimated" — used for load hints and generated
+                blocks, never as a PR, never to calibrate another estimate. */}
+            {savedId && athleteId && estimateKg != null && maxOffer !== 'done' && maxOffer !== 'declined' && reps.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-sm">
+                <span>
+                  Record <span className="num font-medium">{estimateKg} kg</span> as an estimated {liftLabel(setContext.lift).toLowerCase()} max
+                  {athleteName ? ` for ${athleteName}` : ''}?
+                </span>
+                <Button size="sm" variant="outline" onClick={recordEstimatedMax} disabled={maxOffer === 'saving'}>
+                  {maxOffer === 'saving' ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Record
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setMaxOffer('declined')}>Not now</Button>
+              </div>
+            )}
             {savedId && savedScale !== null && savedScale !== scaleNow() && (
               <p className="text-sm text-warning">
                 The scale changed since you saved. The saved set keeps the scale it was saved with; the
@@ -1659,6 +1712,7 @@ export default function VideoAnalysis() {
                 onChange={changeSetContext}
                 fromCaption={fromCaption}
                 onSetScale={startCalibration}
+                onEstimate={setEstimateKg}
               />
             )}
 

@@ -282,6 +282,8 @@ export const schemas = {
       unit: z.preprocess(emptyToNull, z.string().max(20).nullable().optional()),
       recorded_at: z.preprocess(emptyToUndefined, isoDate.optional()),
       notes: optionalString(2000),
+      // A bar path estimate the coach confirmed (BP34), not a lifted max.
+      estimated: z.boolean().optional(),
     }),
   },
 

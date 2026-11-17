@@ -106,6 +106,8 @@ export interface AthleteMaxTable {
   unit: string
   recorded_at: string
   notes: string | null
+  /** 1 when it is a bar path estimate the coach confirmed (BP34, D60), not a lifted max. Defaults to 0. */
+  estimated: Generated<number>
 }
 
 /** One athlete's measured 1RM bar speed for one lift. See the CREATE below. */
@@ -636,6 +638,10 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   `.execute(_db)
 
   await sql`CREATE INDEX IF NOT EXISTS idx_athlete_maxes_athlete_id ON athlete_maxes(athlete_id)`.execute(_db)
+  // A max estimated from bar speed and confirmed by the coach (BP34, D60):
+  // load hints and generated blocks use it, the PR timeline does not, and the
+  // velocity estimates never calibrate against one (that would be circular).
+  await addColumnIfMissing('athlete_maxes', 'estimated', 'INTEGER NOT NULL DEFAULT 0')
 
   // The velocity an athlete's bar actually moves at on a true 1RM, per lift.
   //

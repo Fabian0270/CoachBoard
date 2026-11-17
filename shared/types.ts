@@ -125,6 +125,8 @@ export interface AthleteMax {
   unit: string
   recorded_at: string
   notes: string | null
+  /** 1 for a bar path estimate the coach confirmed (BP34, D60). Absent from older servers. */
+  estimated?: number
 }
 
 // ---------------------------------------------------------------------------

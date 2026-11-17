@@ -125,6 +125,8 @@ export async function createAthleteMax(data: {
   unit?: string | null
   recorded_at?: string
   notes?: string | null
+  /** A bar path estimate the coach confirmed (BP34), not a lifted max. */
+  estimated?: boolean
 }) {
   return getDb()
     .insertInto('athlete_maxes')
@@ -136,6 +138,7 @@ export async function createAthleteMax(data: {
       unit: data.unit ?? 'kg',
       recorded_at: data.recorded_at ?? new Date().toISOString().slice(0, 10),
       notes: data.notes ?? null,
+      estimated: data.estimated ? 1 : 0,
     })
     .returningAll()
     .executeTakeFirstOrThrow()

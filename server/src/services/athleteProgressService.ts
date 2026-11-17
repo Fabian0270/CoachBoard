@@ -71,8 +71,10 @@ export async function getAthleteProgress(athleteId: string): Promise<AthleteProg
   // PRs: each recorded max that beat every earlier one for the same lift.
   // The competition lifts are matched as one lift whatever they were typed as
   // ("Squat", "Back Squat"); anything else by its own name.
+  // Lifted maxes only: an estimate from bar speed is not a PR (D60).
   const maxes = await db.selectFrom('athlete_maxes').selectAll()
     .where('athlete_id', '=', athleteId)
+    .where('estimated', '=', 0)
     .orderBy('recorded_at').orderBy('weight')
     .execute()
   const top = new Map<string, number>()

@@ -74,4 +74,12 @@ describe('getAthleteProgress — PR timeline', () => {
       ['2026-01-10', 'Squat', 180, null],
     ])
   })
+
+  it('leaves out a max estimated from bar speed (BP34, D60)', async () => {
+    await createAthleteMax({ athlete_id: athleteId, lift_name: 'Squat', weight: 180, recorded_at: '2026-01-10' })
+    const est = await createAthleteMax({ athlete_id: athleteId, lift_name: 'Back squat', weight: 195, recorded_at: '2026-03-01', estimated: true })
+    expect(est.estimated).toBe(1)
+    const { prs } = (await getAthleteProgress(athleteId))!
+    expect(prs.map((p) => [p.liftName, p.weight])).toEqual([['Squat', 180]])
+  })
 })

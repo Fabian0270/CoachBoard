@@ -189,7 +189,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
                     variant={m.lift_name === activeLift ? 'default' : 'outline'}
                     onClick={() => setSelectedLift(m.lift_name)}
                   >
-                    {m.lift_name} · {formatWeight(m.weight)} {m.unit}
+                    {m.lift_name} · {formatWeight(m.weight)} {m.unit}{m.estimated ? ' (est.)' : ''}
                   </Button>
                 ))}
               </div>
@@ -242,6 +242,12 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
                     <span className="font-medium">{m.lift_name}</span>
                     <span className="ml-2 text-primary font-semibold">{formatWeight(m.weight)} {m.unit}</span>
                     <span className="ml-2 text-sm text-muted-foreground">{m.recorded_at.slice(0, 10)}</span>
+                    {/* From bar speed, confirmed by the coach (BP34, D60): not a lifted max. */}
+                    {!!m.estimated && (
+                      <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" title="Estimated from bar speed and confirmed by you — used for load hints, not counted as a PR">
+                        estimated
+                      </span>
+                    )}
                   </div>
                   <button
                     type="button"

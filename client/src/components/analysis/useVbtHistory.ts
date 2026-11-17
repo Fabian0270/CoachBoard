@@ -92,9 +92,11 @@ export function useAthleteMaxes(athleteId: string | null): { lift_name: string; 
       return
     }
     let cancelled = false
-    getList<{ lift_name: string; weight: number }>(`/api/athletes/${encodeURIComponent(athleteId)}/maxes`)
+    getList<{ lift_name: string; weight: number; estimated?: number }>(`/api/athletes/${encodeURIComponent(athleteId)}/maxes`)
       .then((data) => {
-        if (!cancelled) setMaxes(data)
+        // Lifted maxes only: an estimate from bar speed calibrating the bar-speed
+        // estimate would be the estimate agreeing with itself (BP34, D60).
+        if (!cancelled) setMaxes(data.filter((m) => !m.estimated))
       })
       // No maxes on file simply means no calibration — the estimate falls back
       // to a population slope and says so. A failed read must not pass for

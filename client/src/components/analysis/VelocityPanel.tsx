@@ -129,6 +129,8 @@ interface Props {
    *  between a coach and every reading here, so the fix belongs where they
    *  notice the problem, not only in the toolbar above the video. */
   onSetScale?: () => void
+  /** Told the estimated 1RM this panel shows (kg, or null), so the page can offer to record it (BP34). */
+  onEstimate?: (e1rm: number | null) => void
 }
 
 export default function VelocityPanel({
@@ -146,6 +148,7 @@ export default function VelocityPanel({
   onChange,
   fromCaption,
   onSetScale,
+  onEstimate,
 }: Props) {
   const [mvtText, setMvtText] = useState('')
   const [targetRpe, setTargetRpe] = useState(8)
@@ -219,6 +222,9 @@ export default function VelocityPanel({
     [reps, lift, metric, calibrated, validLoad, value.calledRpe, allAnchors, storedMvt, typedMvt, savedPoints, maxes],
   )
   const { mistracked, trusted, lastV, bestV, chart, reading, loss, knownMax, suggestedMvt, mvt, lvPoints, profile, slope, estimate } = read
+  // The exact figure shown here, rounded as shown, for the page's "record it as a max?" offer.
+  const shownE1rm = estimate ? Math.round(estimate.e1rm * 2) / 2 : null
+  useEffect(() => { onEstimate?.(shownE1rm) }, [shownE1rm]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /** What to put on screen — see effectiveRpe for why it is not always the bar's own number. */
   const shownRpe = reading ? effectiveRpe(reading, value.calledRpe) : 0
