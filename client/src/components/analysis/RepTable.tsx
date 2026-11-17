@@ -44,6 +44,18 @@ interface RepTableProps {
   midFoot?: Map<number, RepMidFoot | null> | null
 }
 
+/**
+ * The bench pause, judged (BP32, D64): advice only, from the measured pause.
+ * The competition rule is "motionless on the chest" with no fixed time, so
+ * these lines are the coach's: about a second still is good, half a second to
+ * a second is borderline, under half a second is too short.
+ */
+export function pauseVerdict(pauseMs: number): { label: 'looks good' | 'borderline' | 'check'; tone: string } {
+  if (pauseMs >= 1000) return { label: 'looks good', tone: 'text-success' }
+  if (pauseMs >= 500) return { label: 'borderline', tone: 'text-warning' }
+  return { label: 'check', tone: 'text-destructive' }
+}
+
 /** "4 cm front · 1 cm behind": the furthest the bar went either side of mid-foot. */
 function fmtMidFoot(m: RepMidFoot): string {
   const unit = m.frontM != null ? 'cm' : 'px'
@@ -162,7 +174,18 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
                 {track && (
                   <>
                     <td className="py-1 pr-4">{tempo ? secs(tempo.descentMs) : '—'}</td>
-                    <td className="py-1 pr-4">{tempo ? secs(tempo.pauseMs) : '—'}</td>
+                    <td className="whitespace-nowrap py-1 pr-4">
+                      {tempo ? secs(tempo.pauseMs) : '—'}
+                      {/* The bench pause, judged (BP32, D64) — advice only. */}
+                      {tempo && lift === 'bench-press' && (() => {
+                        const v = pauseVerdict(tempo.pauseMs)
+                        return (
+                          <span className={`ml-1.5 text-xs ${v.tone}`} title="Advice only: about a second still on the chest is good, half a second to a second is borderline, under half a second is too short. You decide.">
+                            {v.label}
+                          </span>
+                        )
+                      })()}
+                    </td>
                   </>
                 )}
                 <td className="py-1 pr-4">{(r.durationMs / 1000).toFixed(2)} s</td>
