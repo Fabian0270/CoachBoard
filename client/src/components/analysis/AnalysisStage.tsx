@@ -8,6 +8,7 @@ import {
   type PoseFrame,
 } from 'coachboard-shared/pose'
 import { isDrawable, simplify, type Point, type Stroke } from './annotations'
+import { useAnalysisKeys } from './analysisKeys'
 import type { Sample } from './tracker.core'
 
 /**
@@ -113,7 +114,17 @@ interface Props {
    * page passes nothing, because a track being built is not something to edit.
    */
   onCorrectLandmark?: (frameIndex: number, landmark: number, x: number, y: number) => void
+  /**
+   * Space, ← / →, Shift+← / →, F and 1–9 drive this video (BP15). Off on the
+   * Compare page, where two stages would both answer every key.
+   */
+  keyboard?: boolean
+  /** Where each rep starts, in seconds: 1–9 jump to them. */
+  repStarts?: number[]
 }
+
+/** One step of ← / →. The clip's real frame rate is not knowable from the element; 1/30 s is a frame of a phone clip. */
+const FRAME_S = 1 / 30
 
 /**
  * The video with a drawing surface over it.
@@ -142,6 +153,8 @@ export default function AnalysisStage({
   poseRef,
   showPose,
   onCorrectLandmark,
+  keyboard = false,
+  repStarts,
 }: Props) {
   /**
    * The joint under the pointer, and whether it has actually been dragged yet.
@@ -248,6 +261,39 @@ export default function AnalysisStage({
     document.addEventListener('fullscreenchange', sync)
     return () => document.removeEventListener('fullscreenchange', sync)
   }, [])
+
+  // ── Playback by button and by key (BP15, BP16) ──────────────────────────
+  /** Pause, then move by `s` seconds: a frame, or a second. */
+  const step = useCallback((s: number) => {
+    const v = videoRef.current
+    if (!v) return
+    v.pause()
+    v.currentTime = Math.min(Number.isFinite(v.duration) ? v.duration : Infinity, Math.max(0, v.currentTime + s))
+  }, [videoRef])
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current
+    if (!v) return
+    if (v.paused) void v.play().catch(() => {})
+    else v.pause()
+  }, [videoRef])
+  useAnalysisKeys(keyboard, (e) => {
+    if (e.ctrlKey || e.metaKey) return false
+    if (e.key === ' ') { togglePlay(); return true }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      step((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1 : FRAME_S))
+      return true
+    }
+    if (e.key.toLowerCase() === 'f') { toggleFullscreen(); return true }
+    if (/^[1-9]$/.test(e.key)) {
+      const at = repStarts?.[Number(e.key) - 1]
+      const v = videoRef.current
+      if (at == null || !v) return false
+      v.pause()
+      v.currentTime = at
+      return true
+    }
+    return false
+  })
 
   /**
    * Whether a pointer is over the browser's control bar rather than the lift.
@@ -727,7 +773,7 @@ export default function AnalysisStage({
   }
 
   return (
-    <div className="flex items-center justify-center bg-black/90">
+    <div className="flex flex-col items-center justify-center bg-black/90">
       {/* The element that goes fullscreen. The canvas is a descendant, so it
           travels into the top layer with the video and the bar path and the
           coach's marks stay ON the lift at any size. Sending the <video> itself
@@ -826,6 +872,51 @@ export default function AnalysisStage({
           </button>
         </div>
       </div>
+      <PlaybackBar videoRef={videoRef} onStep={step} />
+    </div>
+  )
+}
+
+const SPEEDS = [0.25, 0.5, 1]
+
+/**
+ * Frame steps and slow motion as buttons (BP16). Slow motion was only in
+ * Chromium's own ⋮ menu on the video, and stepping a frame was not there at
+ * all; both are how a coach reads a sticking point.
+ */
+function PlaybackBar({ videoRef, onStep }: {
+  videoRef: React.MutableRefObject<HTMLVideoElement | null>
+  onStep: (seconds: number) => void
+}) {
+  const [rate, setRate] = useState(1)
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const sync = () => setRate(v.playbackRate)
+    sync()
+    v.addEventListener('ratechange', sync)
+    return () => v.removeEventListener('ratechange', sync)
+  }, [videoRef])
+  const btn = 'rounded px-2 py-1 text-xs text-white/80 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/60'
+  return (
+    <div role="group" aria-label="Playback" className="flex w-full flex-wrap items-center justify-center gap-1 border-t border-white/10 px-2 py-1">
+      <button type="button" className={btn} onClick={() => onStep(-1)} title="Back one second (Shift+←)" aria-label="Back one second">« 1 s</button>
+      <button type="button" className={btn} onClick={() => onStep(-FRAME_S)} title="Back one frame (←)" aria-label="Back one frame">‹ frame</button>
+      <button type="button" className={btn} onClick={() => onStep(FRAME_S)} title="Forward one frame (→)" aria-label="Forward one frame">frame ›</button>
+      <button type="button" className={btn} onClick={() => onStep(1)} title="Forward one second (Shift+→)" aria-label="Forward one second">1 s »</button>
+      <span aria-hidden className="mx-2 h-4 w-px bg-white/20" />
+      {SPEEDS.map((s) => (
+        <button
+          key={s}
+          type="button"
+          aria-pressed={rate === s}
+          onClick={() => { if (videoRef.current) videoRef.current.playbackRate = s }}
+          title={s === 1 ? 'Normal speed' : `Slow motion, ${s}×`}
+          className={`${btn} ${rate === s ? 'bg-white/15 text-white' : ''}`}
+        >
+          {s}×
+        </button>
+      ))}
     </div>
   )
 }

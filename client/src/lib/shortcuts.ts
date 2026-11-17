@@ -47,6 +47,22 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
+    title: 'Bar path',
+    where: 'With a clip open on the Bar path page or a saved analysis. Not while typing in a field.',
+    shortcuts: [
+      { keys: [['Space']], does: 'Play / pause' },
+      { keys: [['←'], ['→']], does: 'Back / forward one frame' },
+      { keys: [['Shift', '←'], ['Shift', '→']], does: 'Back / forward one second' },
+      { keys: [['1'], ['…'], ['9']], does: 'Jump to that rep' },
+      { keys: [['F']], does: 'Fullscreen' },
+      { keys: [['P']], does: 'Pen on / off' },
+      { keys: [['I'], ['O']], does: 'Start / end of the range to track (tracking page)' },
+      { keys: [['T']], does: 'Track the bar path (tracking page)' },
+      { keys: [['S']], does: 'Set the scale (tracking page)' },
+      { keys: [['Ctrl', 'S']], does: 'Save the analysis, or save what changed (tracking page)' },
+    ],
+  },
+  {
     title: 'Program buttons',
     where: 'On a program, with nothing else open.',
     shortcuts: [

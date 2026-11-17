@@ -31,6 +31,7 @@ import DrawControls from '../components/analysis/DrawControls'
 import type { Stroke } from '../components/analysis/annotations'
 import RepTable from '../components/analysis/RepTable'
 import { readSet } from '../components/analysis/readSet'
+import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
 import LoadError from '../components/LoadError'
 import { ApiError, errorMessage, getJson, sendJson } from '../lib/api'
 import PathPlot from '../components/analysis/PathPlot'
@@ -124,6 +125,12 @@ export default function SavedAnalysis() {
   // talks over a lift, and it had no pen; Compare did.
   const [mode, setMode] = useState<StageMode>('seed')
   const [strokes, setStrokes] = useState<Stroke[]>([])
+  // P picks up and puts down the pen (BP15), wherever a video plays.
+  useAnalysisKeys(!!(localUrl || analysis?.hasVideo), (e) => {
+    if (!plainKey(e, 'p')) return false
+    setMode((m) => (m === 'draw' ? 'seed' : 'draw'))
+    return true
+  })
 
   /**
    * The stored skeleton, if this analysis has one.
@@ -364,6 +371,8 @@ export default function SavedAnalysis() {
           onCorrectLandmark={correctLandmark}
           strokes={strokes}
           onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
+          keyboard
+          repStarts={metrics.map((r) => r.startT)}
         />
       ) : (
         <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} />

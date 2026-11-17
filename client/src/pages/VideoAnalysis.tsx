@@ -46,6 +46,7 @@ import {
 } from 'coachboard-shared/vbt'
 import RepTable from '../components/analysis/RepTable'
 import { captionFill, type CaptionField } from '../components/analysis/captionFill'
+import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
 import TrackingControls from '../components/analysis/TrackingControls'
 import LoadError from '../components/LoadError'
 import VelocityPanel, {
@@ -1115,6 +1116,41 @@ export default function VideoAnalysis() {
     // and a lost preview — on every render.
   }, [showPose, busy, source])
 
+  // ── Keys (BP15, D37) ────────────────────────────────────────────────────
+  // The stage takes Space, ← / →, F and 1–9; these are the page's own.
+  // Above the early returns, as every hook must be; it works out what it needs
+  // from state rather than from values declared further down.
+  const setRangeStart = () =>
+    setRange((r) => ({ from: currentTime, to: Math.max(currentTime + 0.2, r?.to ?? duration) }))
+  const setRangeEnd = () =>
+    setRange((r) => ({ from: Math.min(r?.from ?? 0, currentTime - 0.2), to: currentTime }))
+  const toggleCalibrate = () => {
+    setMode((m) => (m === 'calibrate' ? 'seed' : 'calibrate'))
+    setAwaitingSecondPoint(false)
+  }
+  useAnalysisKeys(!!videoSrc, (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      if (!samples || saving || updatingSaved) return true
+      if (!savedId) void saveAnalysis()
+      else if (savedContext !== contextNow()) void updateSavedContext()
+      return true
+    }
+    if (busy) return false
+    if (plainKey(e, 'i')) { setRangeStart(); return true }
+    if (plainKey(e, 'o')) { setRangeEnd(); return true }
+    if (plainKey(e, 't')) {
+      if (!!seed && cvStatus === 'ready' && !!range) retrack()
+      return true
+    }
+    if (plainKey(e, 's')) { toggleCalibrate(); return true }
+    if (plainKey(e, 'p')) {
+      setMode((m) => (m === 'draw' ? 'seed' : 'draw'))
+      setAwaitingSecondPoint(false)
+      return true
+    }
+    return false
+  })
+
   if (linkError) {
     return (
       <div className="space-y-4 p-8">
@@ -1207,6 +1243,8 @@ export default function VideoAnalysis() {
           onCalibratePoint={addCalibrationPoint}
           strokes={strokes}
           onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
+          keyboard
+          repStarts={trackedReps.map((r) => r.startT)}
         />
       )}
 
@@ -1228,10 +1266,7 @@ export default function VideoAnalysis() {
                 setMode(next)
                 setAwaitingSecondPoint(false)
               }}
-              onToggleCalibrate={() => {
-                setMode((m) => (m === 'calibrate' ? 'seed' : 'calibrate'))
-                setAwaitingSecondPoint(false)
-              }}
+              onToggleCalibrate={toggleCalibrate}
               awaitingSecondPoint={awaitingSecondPoint}
               hasSeed={!!seed}
               hasSamples={!!samples}
@@ -1246,8 +1281,8 @@ export default function VideoAnalysis() {
               onColor={setColor}
               range={range}
               duration={duration}
-              onSetStart={() => setRange((r) => ({ from: currentTime, to: Math.max(currentTime + 0.2, r?.to ?? duration) }))}
-              onSetEnd={() => setRange((r) => ({ from: Math.min(r?.from ?? 0, currentTime - 0.2), to: currentTime }))}
+              onSetStart={setRangeStart}
+              onSetEnd={setRangeEnd}
               plateMm={plateMm}
               onPlateMm={setPlateMm}
               pixelsPerMetre={pixelsPerMetre}
