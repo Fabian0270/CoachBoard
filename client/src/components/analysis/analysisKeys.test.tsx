@@ -104,6 +104,24 @@ describe('AnalysisStage — the rep strip (BP17)', () => {
     expect(screen.queryByRole('button', { name: 'Loop rep' })).toBeNull()
   })
 
+  it('stays away while the clip’s length is not known', () => {
+    Object.defineProperty(HTMLMediaElement.prototype, 'duration', { configurable: true, get: () => Infinity })
+    function Unknown() {
+      const videoRef = useRef<HTMLVideoElement | null>(null)
+      const empty = useRef<never[]>([])
+      return (
+        <AnalysisStage
+          src="clip.webm" videoRef={videoRef} seed={null} samples={null} livePathRef={empty}
+          onPlaceSeed={() => {}} onLoadedMetadata={() => {}} onTimeUpdate={() => {}} disabled
+          color="#34d399" mode="seed" calibration={null} onCalibratePoint={() => {}}
+          trackRange={{ from: 0, to: Infinity }}
+        />
+      )
+    }
+    renderScreen(<Unknown />)
+    expect(screen.queryByRole('group', { name: 'Reps in the clip' })).toBeNull()
+  })
+
   it('a rep block goes to the top before that rep', async () => {
     renderScreen(<StripStage />)
     await userEvent.click(screen.getByRole('button', { name: 'Rep 2' }))

@@ -1119,6 +1119,10 @@ function RepStrip({ videoRef, windows, range }: {
   }, [videoRef, loop, windows])
 
   const total = duration > 0 ? duration : range.to
+  // A clip whose length is not known yet (a WebM straight from a recorder
+  // reports Infinity until it has been played to the end) has nowhere to put
+  // anything.
+  if (!(Number.isFinite(total) && total > 0)) return null
   const pct = (t: number) => `${Math.max(0, Math.min(100, (t / total) * 100))}%`
   const seek = (t: number) => { const v = videoRef.current; if (v) v.currentTime = t }
   const under = windows.findIndex((w) => now >= w.from && now <= w.to)
