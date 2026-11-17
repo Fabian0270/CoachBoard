@@ -449,7 +449,9 @@ export async function commitImport(
       await trx
         .updateTable('exercises')
         .set({
-          ...(m.load_used !== null ? { load_used: m.load_used } : {}),
+          // A new load from the sheet: the reps a caption once said were done
+          // (L1) belonged to the old one.
+          ...(m.load_used !== null ? { load_used: m.load_used, reps_done: null } : {}),
           ...(m.rpe !== null ? { rpe: m.rpe } : {}),
         })
         .where('id', '=', m.exerciseId)

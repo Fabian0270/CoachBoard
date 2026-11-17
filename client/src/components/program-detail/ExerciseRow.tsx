@@ -517,6 +517,15 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                 </button>
               </>
             ) : cellContent}
+            {/* L1 (D66): reps the athlete's caption said were done, when not the plan. */}
+            {c.key === 'reps' && exercise.reps_done && (
+              <div
+                className="num px-1 pb-1 text-[10.5px] leading-tight text-primary"
+                title="Reps done, from the athlete's Discord caption. Used for the e1RM."
+              >
+                {exercise.reps_done} done
+              </div>
+            )}
           </td>
         )
         if (c.key === 'sets') {

@@ -50,6 +50,9 @@ export interface Exercise {
   intensity: string | null
   load_used: string | null
   rpe: string | null
+  /** Reps the athlete actually did, when a Discord caption said they differed
+   *  from the plan (L1, D66). Cleared when Load Used is typed or imported. */
+  reps_done?: string | null
   group_id: string | null
   suggestion_note: string | null
 }

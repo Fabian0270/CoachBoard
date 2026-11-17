@@ -40,7 +40,11 @@ export default function DayPreview({
             const prev = workout.exercises[i - 1]
             // Further set rows of an exercise show without its name, as in the editor.
             const isSet = !!(ex.group_id && prev?.group_id === ex.group_id)
-            const logged = [ex.load_used && `${ex.load_used}`, ex.rpe && `RPE ${ex.rpe}`].filter(Boolean).join(' · ')
+            const logged = [
+              ex.load_used && `${ex.load_used}`,
+              ex.reps_done && `${ex.reps_done} reps done`,
+              ex.rpe && `RPE ${ex.rpe}`,
+            ].filter(Boolean).join(' · ')
             return (
               <tr key={ex.id} className="align-top">
                 <td className="py-0.5 pr-2 font-medium text-foreground">

@@ -77,7 +77,9 @@ export async function updateExercise(
       ...(data.order_index !== undefined ? { order_index: data.order_index } : {}),
       ...(data.rest_time !== undefined ? { rest_time: data.rest_time ?? null } : {}),
       ...(data.intensity !== undefined ? { intensity: data.intensity ?? null } : {}),
-      ...(data.load_used !== undefined ? { load_used: data.load_used ?? null } : {}),
+      // A load typed by hand replaces the one a caption logged, and with it the
+      // reps that caption said were done (L1).
+      ...(data.load_used !== undefined ? { load_used: data.load_used ?? null, reps_done: null } : {}),
       ...(data.rpe !== undefined ? { rpe: data.rpe ?? null } : {}),
       ...(data.group_id !== undefined ? { group_id: data.group_id ?? null } : {}),
     })
@@ -279,7 +281,9 @@ export async function pasteExercises(
     if (anchorId && !anchor) return null
 
     if (anchor && anchorPatch && Object.keys(anchorPatch).length > 0) {
-      await db.updateTable('exercises').set(anchorPatch).where('id', '=', anchor.id).execute()
+      // A pasted Load Used replaces a caption's, and the reps it said were done (L1).
+      const patch = 'load_used' in anchorPatch ? { ...anchorPatch, reps_done: null } : anchorPatch
+      await db.updateTable('exercises').set(patch).where('id', '=', anchor.id).execute()
     }
 
     // New rows go under the anchor's whole exercise (after its set rows).

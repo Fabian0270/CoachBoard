@@ -259,6 +259,7 @@ export interface RestoredExercise {
   intensity?: string | null
   load_used?: string | null
   rpe?: string | null
+  reps_done?: string | null
   group_id?: string | null
   suggestion_note?: string | null
 }
@@ -292,6 +293,7 @@ const exerciseRow = (workoutId: string, ex: RestoredExercise) => ({
   intensity: ex.intensity ?? null,
   load_used: ex.load_used ?? null,
   rpe: ex.rpe ?? null,
+  reps_done: ex.reps_done ?? null,
   group_id: ex.group_id ?? null,
   suggestion_note: ex.suggestion_note ?? null,
 })

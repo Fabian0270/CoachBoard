@@ -44,6 +44,7 @@ const restoredExercise = z.object({
   intensity: optionalString(100),
   load_used: optionalString(100),
   rpe: optionalString(50),
+  reps_done: optionalString(50),
   group_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
   suggestion_note: optionalString(2000),
 })

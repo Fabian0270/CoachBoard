@@ -86,6 +86,12 @@ export interface ExerciseTable {
   rpe: string | null
   group_id: string | null
   suggestion_note: string | null
+  /**
+   * Reps the athlete actually did, when they differ from the plan (L1, D66):
+   * filled from a confirmed Discord caption. The report's e1RM uses it over
+   * the planned reps. Null almost always.
+   */
+  reps_done: Generated<string | null>
 }
 
 export interface ProgressRecordTable {
@@ -608,6 +614,8 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   await addColumnIfMissing('exercises', 'rpe', 'TEXT')
   await addColumnIfMissing('exercises', 'group_id', 'TEXT')
   await addColumnIfMissing('exercises', 'suggestion_note', 'TEXT')
+  // L1 (D66): reps done when a confirmed caption differs from the plan.
+  await addColumnIfMissing('exercises', 'reps_done', 'TEXT')
 
   await sql`
     CREATE TABLE IF NOT EXISTS progress_records (

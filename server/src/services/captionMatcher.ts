@@ -96,7 +96,7 @@ function dayDiff(a: string, b: string): number {
   return Math.abs(Date.UTC(ay, am - 1, ad) - Date.UTC(by, bm - 1, bd)) / 86_400_000
 }
 
-function exerciseMatchesKeyword(exerciseName: string, keywords: string[]): boolean {
+export function exerciseMatchesKeyword(exerciseName: string, keywords: string[]): boolean {
   const lower = exerciseName.toLowerCase()
   return keywords.some((canonical) =>
     (LIFT_KEYWORDS[canonical] ?? [canonical]).some((v) => keywordHits(v, exerciseName, lower)),

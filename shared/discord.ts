@@ -66,6 +66,31 @@ export interface ParsedCaption {
   liftKeywords: string[]
 }
 
+/**
+ * A row of a training day the result in a caption ("180x3 @8") could be
+ * logged on (L1, D66). Rows that already hold a Load Used or RPE are never
+ * overwritten; they come back with `alreadyLogged` so the picker can say so.
+ */
+export interface CaptionLogRow {
+  exerciseId: string
+  name: string
+  sets: string | null
+  reps: string | null
+  /** The planned load (Load Cap), when there is one. */
+  weight: number | null
+  intensity: string | null
+  loadUsed: string | null
+  rpe: string | null
+  alreadyLogged: boolean
+  /** The lift and load agree with the caption. */
+  fits: boolean
+}
+
+export interface CaptionLogCandidates {
+  caption: ParsedCaption
+  rows: CaptionLogRow[]
+}
+
 export type DownloadStatus = 'pending' | 'downloaded' | 'failed' | 'skipped_too_large'
 
 export interface DiscordMediaItem {

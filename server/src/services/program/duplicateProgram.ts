@@ -158,6 +158,7 @@ export async function duplicateProgram(sourceId: string, opts: DuplicateOptions)
           intensity: ex.intensity,
           load_used: opts.keepResults ? ex.load_used : null,
           rpe: opts.keepResults ? ex.rpe : null,
+          reps_done: opts.keepResults ? ex.reps_done : null,
           group_id: groupId,
           suggestion_note: ex.suggestion_note,
         }).execute()

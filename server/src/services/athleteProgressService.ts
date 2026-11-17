@@ -31,7 +31,7 @@ export async function getAthleteProgress(athleteId: string): Promise<AthleteProg
     .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
     .innerJoin('programs', 'programs.id', 'workouts.program_id')
     .select([
-      'exercises.name', 'exercises.reps', 'exercises.load_used', 'exercises.rpe',
+      'exercises.name', 'exercises.reps', 'exercises.reps_done', 'exercises.load_used', 'exercises.rpe',
       'workouts.scheduled_date as date', 'programs.id as programId', 'programs.name as programName',
     ])
     .where('programs.athlete_id', '=', athleteId)
@@ -44,7 +44,8 @@ export async function getAthleteProgress(athleteId: string): Promise<AthleteProg
   for (const s of sets) {
     const lift = competitionLiftKey(s.name)
     if (!lift || !s.date) continue
-    const reps = parseInt((s.reps ?? '').match(/\d+/)?.[0] ?? '', 10)
+    // The reps actually done when a caption said so (L1, D66), else the plan.
+    const reps = parseInt((s.reps_done ?? s.reps ?? '').match(/\d+/)?.[0] ?? '', 10)
     const weight = parseFloat((s.load_used ?? '').replace(',', '.'))
     const rpe = parseFloat((s.rpe ?? '').replace(',', '.'))
     if (!(reps > 0) || !(weight > 0) || isNaN(rpe)) continue

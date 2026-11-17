@@ -50,6 +50,7 @@ import {
 } from '../services/discordMediaService.js'
 import { replyToMedia, dmAthlete, dmRecordingToAthlete, listSentForMedia, DiscordSendError } from '../services/discordSendService.js'
 import { resolveMediaAbsPath } from '../services/mediaStore.js'
+import { logCandidates, logCaption, CaptionLogError } from '../services/captionLogService.js'
 import { getDb } from '../db.js'
 import type { ConfiguredChannelDto } from 'coachboard-shared/discord'
 
@@ -606,6 +607,40 @@ router.post('/media/:id/retry-download', async (req, res) => {
 
 router.get('/media/:id/workout-candidates', async (req, res) => {
   res.json(await listWorkoutCandidates(req.params.id))
+})
+
+// --- Logging a caption's result (L1, D66) ------------------------------------
+
+const logCandidatesSchema = z.object({ workoutId: z.string().min(1) })
+
+router.get('/media/:id/log-candidates', async (req, res) => {
+  const parsed = logCandidatesSchema.safeParse(req.query)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Which day?' })
+    return
+  }
+  try {
+    res.json(await logCandidates(req.params.id, parsed.data.workoutId))
+  } catch (err) {
+    if (err instanceof CaptionLogError) { res.status(err.status).json({ error: err.message }); return }
+    throw err
+  }
+})
+
+const logSchema = z.object({ exerciseId: z.string().min(1) })
+
+router.post('/media/:id/log', async (req, res) => {
+  const parsed = logSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Which row?' })
+    return
+  }
+  try {
+    res.json(await logCaption(req.params.id, parsed.data.exerciseId))
+  } catch (err) {
+    if (err instanceof CaptionLogError) { res.status(err.status).json({ error: err.message }); return }
+    throw err
+  }
 })
 
 // --- Two-way messaging -----------------------------------------------------------

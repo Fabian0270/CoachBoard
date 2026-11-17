@@ -743,7 +743,11 @@ function describeLastWeek(ex: Exercise): string {
     ex.weight != null ? `@${ex.weight}` : '',
     ex.intensity ? `· ${ex.intensity}` : '',
   ].filter(Boolean).join(' ')
-  const did = [ex.load_used ? ex.load_used : '', ex.rpe ? `@${ex.rpe}` : ''].filter(Boolean).join(' ')
+  const did = [
+    ex.load_used ? ex.load_used : '',
+    ex.reps_done ? `×${ex.reps_done}` : '',
+    ex.rpe ? `@${ex.rpe}` : '',
+  ].filter(Boolean).join(' ')
   return `Last week: ${planned || '—'}${did ? ` → did ${did}` : ''}`
 }
 

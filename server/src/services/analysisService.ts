@@ -64,6 +64,8 @@ export function buildWorkoutWeekMap(
 type E1RMExercise = {
   name: string
   reps: string | null
+  /** Reps actually done, when a caption said they differed from the plan (L1, D66). */
+  reps_done?: string | null
   load_used: string | null
   rpe: string | null
   workout_id: string
@@ -84,12 +86,13 @@ export function computeE1RMTrends(
   >()
 
   for (const ex of exercises) {
-    if (!ex.load_used || !ex.rpe || !ex.reps) continue
+    const repsText = ex.reps_done || ex.reps
+    if (!ex.load_used || !ex.rpe || !repsText) continue
 
     const keyword = competitionLiftKey(ex.name)
     if (!keyword) continue
 
-    const repsMatch = ex.reps.match(/\d+/)
+    const repsMatch = repsText.match(/\d+/)
     if (!repsMatch) continue
 
     const weight = parseFloat(ex.load_used.replace(',', '.'))
