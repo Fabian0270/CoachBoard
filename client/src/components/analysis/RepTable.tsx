@@ -32,6 +32,8 @@ interface RepTableProps {
   pixelsPerMetre?: number | null
   /** Strike a rep off, or count it again. Absent: no strike buttons. */
   onToggle?: (index: number) => void
+  /** Jump the video to a rep (BP9). Absent: the rep number is plain text. */
+  onJump?: (index: number) => void
 }
 
 /** "4 cm, ends 2 cm →": the furthest it strayed, and where the top ended up against the bottom. */
@@ -43,7 +45,7 @@ export function fmtDrift(d: RepDrift): string {
   return `${val(d.maxPx, d.maxM)} ${unit}, ends ${ends}`
 }
 
-export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle }: RepTableProps) {
+export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump }: RepTableProps) {
   const head = (m: VelocityMetric, label: string) => (
     <th className={`py-1 pr-4 font-medium ${metric === m ? 'text-foreground' : ''}`} title={metric === m ? 'The set is read from this one' : undefined}>
       {label}{metric === m && ' •'}
@@ -88,7 +90,17 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
             return (
               <tr key={r.index} className={`border-b last:border-0 ${out ? 'text-muted-foreground line-through opacity-60' : ''}`}>
                 <td className="py-1 pr-4">
-                  {r.index + 1}
+                  {onJump ? (
+                    <button
+                      type="button"
+                      onClick={() => onJump(r.index)}
+                      title={r.index < 9 ? `Jump to this rep (${r.index + 1})` : 'Jump to this rep'}
+                      aria-label={`Jump to rep ${r.index + 1}`}
+                      className="rounded px-1 font-medium text-primary underline-offset-2 hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                    >
+                      {r.index + 1}
+                    </button>
+                  ) : r.index + 1}
                   {suspect && !out && (
                     <span
                       className="ml-1.5 text-warning"

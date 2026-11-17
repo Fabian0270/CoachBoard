@@ -13,6 +13,7 @@ import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
 import { ApiError, errorMessage, getJson, getList, sendJson } from '../lib/api'
 import AnalysisStage, {
+  repWindows,
   type CalibrationLine,
   type SeedPoint,
   type StageMode,
@@ -45,6 +46,7 @@ import {
   measuredMvt,
 } from 'coachboard-shared/vbt'
 import RepTable from '../components/analysis/RepTable'
+import PathPlot from '../components/analysis/PathPlot'
 import { captionFill, type CaptionField } from '../components/analysis/captionFill'
 import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
 import TrackingControls from '../components/analysis/TrackingControls'
@@ -1206,6 +1208,8 @@ export default function VideoAnalysis() {
     )
   }
 
+  // The top before each rep: 1–9 and a click on a rep's number go there, so the whole rep plays.
+  const repTops = samples?.length && trackedReps.length ? repWindows(trackedReps, samples[0].t).map((w) => w.from) : []
   const canTrack = !!seed && cvStatus === 'ready' && !busy && !!range
 
   return (
@@ -1224,6 +1228,9 @@ export default function VideoAnalysis() {
       </div>
 
       {videoSrc && (
+        // The reps' paths beside the video once there are any (BP10), laid
+        // over each other; it was never on this page before.
+        <div className={samples && trackedReps.length > 0 ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]' : ''}>
         <AnalysisStage
           src={videoSrc}
           videoRef={videoRef}
@@ -1244,8 +1251,13 @@ export default function VideoAnalysis() {
           strokes={strokes}
           onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
           keyboard
-          repStarts={trackedReps.map((r) => r.startT)}
+          repStarts={repTops}
+          reps={trackedReps}
         />
+        {samples && trackedReps.length > 0 && (
+          <PathPlot track={samples} color={color} pixelsPerMetre={pixelsPerMetre} reps={trackedReps} currentTime={currentTime} height={320} />
+        )}
+        </div>
       )}
 
       <div className="rounded-md border p-4">
@@ -1414,6 +1426,13 @@ export default function VideoAnalysis() {
                   pixelsPerMetre={pixelsPerMetre}
                   excluded={excludedReps}
                   onToggle={toggleRep}
+                  onJump={(index) => {
+                    const at = repTops[trackedReps.findIndex((r) => r.index === index)]
+                    const v = videoRef.current
+                    if (at == null || !v) return
+                    v.pause()
+                    v.currentTime = at
+                  }}
                 />
               </div>
             )}

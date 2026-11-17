@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import type { Sample } from 'coachboard-shared/videoAnalysis'
+import { repWindows } from './AnalysisStage'
 
 // ---------------------------------------------------------------------------
 // The bar path on its own, with no video behind it.
@@ -20,14 +21,86 @@ interface Props {
   /** Pixels per metre, to label the plot in real units where it is known. */
   pixelsPerMetre?: number | null
   height?: number
+  /**
+   * Each rep's way up (BP10). With them the reps are laid over each other from
+   * a common start, so one rep that wandered stands out against the rest.
+   */
+  reps?: { startT: number; endT: number }[]
+  /** The playhead, to pick out the rep on screen. */
+  currentTime?: number
 }
 
-export default function PathPlot({ track, color, pixelsPerMetre, height = 260 }: Props) {
+export default function PathPlot({ track, color, pixelsPerMetre, height = 260, reps, currentTime }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const windows = useMemo(() => (reps?.length && track.length > 1 ? repWindows(reps, track[0].t) : null), [reps, track])
+  const currentRep = windows && currentTime != null ? windows.findIndex((w) => currentTime >= w.from && currentTime <= w.to) : -1
+
+  // Reps laid over each other (BP10): each from the top before it, moved so
+  // all of them start at one point.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !windows) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const dpr = window.devicePixelRatio || 1
+    const cssWidth = canvas.clientWidth
+    canvas.width = Math.round(cssWidth * dpr)
+    canvas.height = Math.round(height * dpr)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, cssWidth, height)
+
+    const segs = windows.map((w) => {
+      const pts = track.filter((s) => s.t >= w.from && s.t <= w.to)
+      const o = pts[0]
+      return { w, pts: o ? pts.map((s) => ({ t: s.t, x: s.x - o.x, y: s.y - o.y })) : [] }
+    }).filter((s) => s.pts.length > 1)
+    if (segs.length === 0) return
+    const all = segs.flatMap((s) => s.pts)
+    const minX = Math.min(...all.map((p) => p.x)), maxX = Math.max(...all.map((p) => p.x))
+    const minY = Math.min(...all.map((p) => p.y)), maxY = Math.max(...all.map((p) => p.y))
+    const pad = 20
+    const spanX = Math.max(maxX - minX, 1), spanY = Math.max(maxY - minY, 1)
+    const scale = Math.min((cssWidth - pad * 2) / spanX, (height - pad * 2) / spanY)
+    const ox = (cssWidth - spanX * scale) / 2 - minX * scale
+    const oy = (height - spanY * scale) / 2 - minY * scale
+
+    // The line straight down from the common start.
+    ctx.strokeStyle = 'rgba(128,128,128,0.35)'
+    ctx.setLineDash([4, 4])
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(ox, oy + minY * scale)
+    ctx.lineTo(ox, oy + maxY * scale)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
+    const line = (pts: { t: number; x: number; y: number }[]) => {
+      ctx.beginPath()
+      pts.forEach((p, i) => (i ? ctx.lineTo(ox + p.x * scale, oy + p.y * scale) : ctx.moveTo(ox + p.x * scale, oy + p.y * scale)))
+      ctx.stroke()
+    }
+    // The one on screen last, so it is drawn over the rest.
+    const order = segs.map((_, i) => i).sort((a, b) => (a === currentRep ? 1 : b === currentRep ? -1 : 0))
+    for (const i of order) {
+      const { w, pts } = segs[i]
+      const on = currentRep === -1 || i === currentRep
+      ctx.strokeStyle = color
+      // Down lighter than up, as on the video.
+      ctx.globalAlpha = on ? 0.55 : 0.18
+      ctx.lineWidth = on ? 2 : 1.5
+      line(pts.filter((p) => p.t <= w.bottom))
+      ctx.globalAlpha = on ? 1 : 0.3
+      ctx.lineWidth = on ? 3 : 1.5
+      line(pts.filter((p) => p.t >= w.bottom))
+    }
+    ctx.globalAlpha = 1
+  }, [track, color, height, windows, currentRep])
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || track.length < 2) return
+    if (!canvas || track.length < 2 || windows) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
@@ -91,7 +164,8 @@ export default function PathPlot({ track, color, pixelsPerMetre, height = 260 }:
     ctx.beginPath()
     ctx.arc(end.x, end.y, 4, 0, Math.PI * 2)
     ctx.fill()
-  }, [track, color, height])
+    // windows is in the dependencies only to clear back to this drawing when reps go.
+  }, [track, color, height, windows])
 
   if (track.length < 2) {
     return <p className="text-sm text-muted-foreground">No path was saved with this analysis.</p>
@@ -105,9 +179,9 @@ export default function PathPlot({ track, color, pixelsPerMetre, height = 260 }:
     <div className="space-y-1">
       <canvas ref={canvasRef} style={{ width: '100%', height }} className="rounded-md border" />
       <p className="text-xs text-muted-foreground">
-        Sideways travel {driftCm != null ? `${driftCm.toFixed(1)} cm` : `${Math.round(driftPx)} px`}{' '}
-        against the dashed line through the start. Both axes share one scale, so the drift is not
-        exaggerated.
+        {windows
+          ? `${windows.length} rep${windows.length === 1 ? '' : 's'} laid over each other from one start${currentRep >= 0 ? `, rep ${currentRep + 1} picked out` : ''}; the way down is lighter. Both axes share one scale.`
+          : `Sideways travel ${driftCm != null ? `${driftCm.toFixed(1)} cm` : `${Math.round(driftPx)} px`} against the dashed line through the start. Both axes share one scale, so the drift is not exaggerated.`}
       </p>
     </div>
   )

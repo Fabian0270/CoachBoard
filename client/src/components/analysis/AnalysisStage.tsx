@@ -121,6 +121,17 @@ interface Props {
   keyboard?: boolean
   /** Where each rep starts, in seconds: 1–9 jump to them. */
   repStarts?: number[]
+  /** Each rep's way up (its concentric), to draw the reps apart (BP9). */
+  reps?: { startT: number; endT: number }[]
+}
+
+/**
+ * Each rep as a stretch of the clip: from the top before it (the end of the
+ * rep before, or the start of the path) down to its bottom and back up.
+ */
+export function repWindows(reps: { startT: number; endT: number }[], pathStart: number) {
+  const sorted = [...reps].sort((a, b) => a.startT - b.startT)
+  return sorted.map((r, i) => ({ from: i ? sorted[i - 1].endT : pathStart, bottom: r.startT, to: r.endT }))
 }
 
 /** One step of ← / →. The clip's real frame rate is not knowable from the element; 1/30 s is a frame of a phone clip. */
@@ -155,6 +166,7 @@ export default function AnalysisStage({
   onCorrectLandmark,
   keyboard = false,
   repStarts,
+  reps,
 }: Props) {
   /**
    * The joint under the pointer, and whether it has actually been dragged yet.
@@ -462,23 +474,45 @@ export default function AnalysisStage({
     // The whole path, so a track that wandered off the bar is obvious at a
     // glance. Quality numbers cannot be trusted to reveal that on their own.
     if (path && path.length > 1) {
-      const trace = () => {
+      /** The path between two times (all of it by default). */
+      const trace = (from = -Infinity, to = Infinity) => {
         ctx.beginPath()
-        path.forEach((s, i) =>
-          i ? ctx.lineTo(s.x * scale, s.y * scale) : ctx.moveTo(s.x * scale, s.y * scale),
-        )
+        let started = false
+        for (const s of path) {
+          if (s.t < from || s.t > to) continue
+          if (started) ctx.lineTo(s.x * scale, s.y * scale)
+          else { ctx.moveTo(s.x * scale, s.y * scale); started = true }
+        }
         ctx.stroke()
+      }
+      /** Casing, then the colour: whichever colour the coach picks, gym footage contains something it blends into. */
+      const cased = (width: number, from?: number, to?: number) => {
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
+        ctx.lineWidth = width + 2.5
+        trace(from, to)
+        ctx.strokeStyle = color
+        ctx.lineWidth = width
+        trace(from, to)
       }
       ctx.lineJoin = 'round'
       ctx.lineCap = 'round'
-      // Dark casing under the line: whichever colour the coach picks, gym
-      // footage will contain something it blends into somewhere along the path.
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
-      ctx.lineWidth = 5
-      trace()
-      ctx.strokeStyle = color
-      ctx.lineWidth = 2.5
-      trace()
+      // Reps apart (BP9). Five reps drawn as one line pile into a blob; with
+      // the reps known, the others are dimmed and the rep under the playhead
+      // stands out, its way down lighter than its way up.
+      const windows = samples && reps?.length ? repWindows(reps, path[0].t) : null
+      const current = windows?.find((w) => playhead >= w.from && playhead <= w.to) ?? null
+      if (windows && current) {
+        ctx.globalAlpha = 0.3
+        cased(2)
+        ctx.globalAlpha = 0.6
+        cased(2.5, current.from, current.bottom)
+        ctx.globalAlpha = 1
+        cased(3.5, current.bottom, current.to)
+      } else {
+        // The whole path, so a track that wandered off the bar is obvious at a
+        // glance. Quality numbers cannot be trusted to reveal that on their own.
+        cased(2.5)
+      }
     }
 
     // The dot, riding the bar: whichever sample is nearest the frame ON SCREEN.
@@ -550,7 +584,7 @@ export default function AnalysisStage({
     // poseRef is a ref like livePathRef, so it is not a dependency — its
     // contents change every inference without the identity ever changing, and
     // the loop below redraws every animation frame regardless.
-  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose])
+  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
   // once on any state change so it is right while paused too.

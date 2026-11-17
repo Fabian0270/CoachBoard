@@ -26,7 +26,7 @@ import {
 import { analysePath } from 'coachboard-shared/videoAnalysis'
 import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
-import AnalysisStage, { type StageMode } from '../components/analysis/AnalysisStage'
+import AnalysisStage, { repWindows, type StageMode } from '../components/analysis/AnalysisStage'
 import DrawControls from '../components/analysis/DrawControls'
 import type { Stroke } from '../components/analysis/annotations'
 import RepTable from '../components/analysis/RepTable'
@@ -125,6 +125,8 @@ export default function SavedAnalysis() {
   // talks over a lift, and it had no pen; Compare did.
   const [mode, setMode] = useState<StageMode>('seed')
   const [strokes, setStrokes] = useState<Stroke[]>([])
+  /** The playhead, so the path plot beside the video picks out the rep on screen. */
+  const [currentTime, setCurrentTime] = useState(0)
   // P picks up and puts down the pen (BP15), wherever a video plays.
   useAnalysisKeys(!!(localUrl || analysis?.hasVideo), (e) => {
     if (!plainKey(e, 'p')) return false
@@ -290,6 +292,8 @@ export default function SavedAnalysis() {
   const pixelsPerMetre = analysisPixelsPerMetre(analysis)
 
   const calibrated = analysis.calibration !== null
+  // The top before each rep: 1–9 and a click on a rep's number go there.
+  const repTops = analysis.track?.length && metrics.length ? repWindows(metrics, analysis.track[0].t).map((w) => w.from) : []
   // This set's own anchor, added to the athlete's others the way the live page
   // adds the set it is tracking.
   const ownLastV = calibrated ? lastRepVelocity(metrics, metric) : null
@@ -352,6 +356,9 @@ export default function SavedAnalysis() {
       {/* The path is always available; the video is a bonus when the coach still
           has the file. Nothing was stored to make this work. */}
       {videoSrc ? (
+        // The reps laid over each other beside the video (BP10). It used to
+        // appear only when there was no video.
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
         <AnalysisStage
           src={videoSrc}
           videoRef={videoRef}
@@ -360,7 +367,7 @@ export default function SavedAnalysis() {
           livePathRef={emptyLivePath}
           onPlaceSeed={() => {}}
           onLoadedMetadata={() => {}}
-          onTimeUpdate={() => {}}
+          onTimeUpdate={setCurrentTime}
           disabled
           color={color}
           mode={mode}
@@ -372,10 +379,13 @@ export default function SavedAnalysis() {
           strokes={strokes}
           onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
           keyboard
-          repStarts={metrics.map((r) => r.startT)}
+          repStarts={repTops}
+          reps={metrics}
         />
+        <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} reps={metrics} currentTime={currentTime} height={320} />
+        </div>
       ) : (
-        <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} />
+        <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} reps={metrics} />
       )}
 
       {/* Only offered when there is a skeleton to show. A checkbox for something
@@ -456,6 +466,13 @@ export default function SavedAnalysis() {
             track={analysis.track}
             pixelsPerMetre={pixelsPerMetre}
             onToggle={metrics.length > 1 ? (index) => void strikeRep(index) : undefined}
+            onJump={videoSrc ? (index) => {
+              const at = repTops[metrics.findIndex((r) => r.index === index)]
+              const v = videoRef.current
+              if (at == null || !v) return
+              v.pause()
+              v.currentTime = at
+            } : undefined}
           />
         </div>
 
