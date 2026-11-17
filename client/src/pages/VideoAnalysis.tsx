@@ -47,6 +47,7 @@ import {
 } from 'coachboard-shared/vbt'
 import RepTable from '../components/analysis/RepTable'
 import PathPlot from '../components/analysis/PathPlot'
+import BarSpeedChart from '../components/analysis/BarSpeedChart'
 import { captionFill, type CaptionField } from '../components/analysis/captionFill'
 import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
 import TrackingControls from '../components/analysis/TrackingControls'
@@ -1258,6 +1259,14 @@ export default function VideoAnalysis() {
         {samples && trackedReps.length > 0 && (
           <PathPlot track={samples} color={color} pixelsPerMetre={pixelsPerMetre} reps={trackedReps} currentTime={currentTime} height={320} />
         )}
+        </div>
+      )}
+
+      {/* The bar's speed through the set and each rep's sticking point (BP11). */}
+      {samples && samples.length > 1 && !busy && (
+        <div className="space-y-2 rounded-md border p-4">
+          <h2 className="text-sm font-medium">Bar speed</h2>
+          <BarSpeedChart track={samples} reps={trackedReps} pixelsPerMetre={pixelsPerMetre} currentTime={currentTime} />
         </div>
       )}
 

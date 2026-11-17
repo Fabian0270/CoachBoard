@@ -501,6 +501,76 @@ export function repDrift(track: Sample[], rep: { startT: number; endT: number },
   return { maxPx, netPx, maxM: toM(maxPx), netM: toM(netPx) }
 }
 
+/**
+ * A dip has to be at least this deep, as a fraction of the stretch's top speed,
+ * to be a sticking point rather than tracking noise.
+ */
+const STICKING_MIN_DIP = 0.1
+
+/**
+ * The deepest slow-down in one stretch of upward speeds: the sample furthest
+ * below the fastest point on BOTH sides of it. A stretch that only speeds up and
+ * then slows down has none. Shared by the skeleton chart's sticking point
+ * (`stickingPoint` in pose.ts) and the per-rep one below.
+ */
+export function deepestDip(run: number[]): { index: number; depth: number } | null {
+  if (run.length < 3) return null
+  const top = Math.max(...run)
+  if (!(top > 0)) return null
+  const before: number[] = []
+  for (let k = 0, m = 0; k < run.length; k++) before.push((m = Math.max(m, run[k])))
+  const after: number[] = new Array(run.length)
+  for (let k = run.length - 1, m = 0; k >= 0; k--) after[k] = m = Math.max(m, run[k])
+  let best: { index: number; depth: number } | null = null
+  for (let k = 1; k < run.length - 1; k++) {
+    const depth = Math.min(before[k], after[k]) - run[k]
+    if (depth >= top * STICKING_MIN_DIP && (!best || depth > best.depth)) best = { index: k, depth }
+  }
+  return best
+}
+
+export interface RepStickingPoint {
+  t: number
+  /** Upward bar speed there, px/s. */
+  speedPxS: number
+  /** How far up the rep it happened: 0 at the bottom, 1 at the top. */
+  height: number
+}
+
+/**
+ * Where each rep slowed most on the way up (BP11), or null for a rep that
+ * never did. One per rep, in the order given.
+ *
+ * The rep's whole way up is one stretch here, rather than being split into
+ * runs of upward motion the way the skeleton chart does: a bar that stalls
+ * dead mid-rep has speed 0 at the stall, and splitting there would lose the
+ * one sticking point that matters most. The pause at the bottom and the
+ * slow-down into lockout are never dips — nothing faster comes before or
+ * after them.
+ *
+ * Worked out from the stored track, so sets saved before this exist get it too.
+ */
+export function repStickingPoints(track: Sample[], reps: { startT: number; endT: number }[]): (RepStickingPoint | null)[] {
+  const velocities = verticalVelocity(track)
+  return reps.map((rep) => {
+    const idx: number[] = []
+    track.forEach((s, i) => { if (s.t >= rep.startT - 1e-6 && s.t <= rep.endT + 1e-6) idx.push(i) })
+    if (idx.length < 3) return null
+    const up = idx.map((i) => Math.max(0, -velocities[i].vy))
+    const dip = deepestDip(up)
+    if (!dip) return null
+    const bottom = track[idx[0]].y
+    const range = bottom - track[idx[idx.length - 1]].y
+    if (!(range > 0)) return null
+    const at = idx[dip.index]
+    return {
+      t: track[at].t,
+      speedPxS: up[dip.index],
+      height: Math.min(1, Math.max(0, (bottom - track[at].y) / range)),
+    }
+  })
+}
+
 /** Vertical distance over elapsed time between two samples, px/s. 0 for no time. */
 function displacementRate(samples: Sample[], from: number, to: number): number {
   const dt = samples[to].t - samples[from].t

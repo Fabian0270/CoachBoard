@@ -36,6 +36,7 @@ import LoadError from '../components/LoadError'
 import { ApiError, errorMessage, getJson, sendJson } from '../lib/api'
 import PathPlot from '../components/analysis/PathPlot'
 import JointAngleChart from '../components/analysis/JointAngleChart'
+import BarSpeedChart from '../components/analysis/BarSpeedChart'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
 import { useTrackerColor } from '../components/analysis/trackerColor'
 import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
@@ -386,6 +387,15 @@ export default function SavedAnalysis() {
         </div>
       ) : (
         <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} reps={metrics} />
+      )}
+
+      {/* The bar's speed through the set and each rep's sticking point (BP11),
+          with or without a skeleton. */}
+      {analysis.track && analysis.track.length > 1 && (
+        <div className="space-y-2 rounded-md border p-4">
+          <h2 className="text-sm font-medium">Bar speed</h2>
+          <BarSpeedChart track={analysis.track} reps={metrics} pixelsPerMetre={pixelsPerMetre} currentTime={videoSrc ? currentTime : undefined} />
+        </div>
       )}
 
       {/* Only offered when there is a skeleton to show. A checkbox for something

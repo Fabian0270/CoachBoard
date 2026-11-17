@@ -24,6 +24,8 @@
 // angle is worse than no number, because nothing about it looks wrong.
 // ---------------------------------------------------------------------------
 
+import { deepestDip } from './videoAnalysis.js'
+
 /**
  * The 33 landmarks MediaPipe Pose returns, by index.
  *
@@ -503,12 +505,6 @@ export function anglesAgainstBar(
 }
 
 /**
- * A dip has to be at least this deep, as a fraction of the ascent's top speed,
- * to be a sticking point rather than tracking noise.
- */
-const STICKING_MIN_DIP = 0.1
-
-/**
  * An upward run only counts as an ascent if its top speed reaches this fraction
  * of the fastest ascent in the clip — standing still, the tracked point still
  * jitters up and down by a pixel.
@@ -541,7 +537,7 @@ export function stickingPoint(series: AngleVsBar[]): number | null {
   const fastest = Math.max(0, ...up)
   if (fastest === 0) return null
 
-  let best: { index: number; depth: number } | null = null
+  let best: ReturnType<typeof deepestDip> = null
   let i = 0
   while (i < up.length) {
     if (up[i] === 0) {
@@ -552,18 +548,9 @@ export function stickingPoint(series: AngleVsBar[]): number | null {
     while (end + 1 < up.length && up[end + 1] > 0) end++
 
     const run = up.slice(i, end + 1)
-    const top = Math.max(...run)
-    if (top >= fastest * ASCENT_MIN_SPEED && run.length >= 3) {
-      const before: number[] = []
-      for (let k = 0, m = 0; k < run.length; k++) before.push((m = Math.max(m, run[k])))
-      const after: number[] = new Array(run.length)
-      for (let k = run.length - 1, m = 0; k >= 0; k--) after[k] = m = Math.max(m, run[k])
-      for (let k = 1; k < run.length - 1; k++) {
-        const depth = Math.min(before[k], after[k]) - run[k]
-        if (depth >= top * STICKING_MIN_DIP && (!best || depth > best.depth)) {
-          best = { index: i + k, depth }
-        }
-      }
+    if (Math.max(...run) >= fastest * ASCENT_MIN_SPEED) {
+      const dip = deepestDip(run)
+      if (dip && (!best || dip.depth > best.depth)) best = { index: i + dip.index, depth: dip.depth }
     }
     i = end + 1
   }

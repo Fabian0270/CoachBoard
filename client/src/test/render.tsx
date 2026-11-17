@@ -19,6 +19,17 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+// jsdom has no ResizeObserver, which the charts' container needs; the app's
+// Chromium does. Charts draw nothing at jsdom's zero size, which is fine: the
+// tests read the words around them.
+if (typeof window !== 'undefined') {
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver
+}
+
 /** What a fake route answers: a status and JSON body, or a network failure. */
 export type FakeResponse = { status?: number; body?: unknown } | 'network-error'
 // A handler may answer later (a promise), so a test can hold a save "in flight"
