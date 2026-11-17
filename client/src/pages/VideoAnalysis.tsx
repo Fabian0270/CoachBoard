@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
+  ArrowRight,
   Check,
   Columns2,
   Loader2,
@@ -190,6 +191,11 @@ export default function VideoAnalysis() {
   const [savedId, setSavedId] = useState<string | null>(null)
   /** contextNow() as of the last save or update — see contextNow. */
   const [savedContext, setSavedContext] = useState<string | null>(null)
+  /**
+   * The scale as of the last save. A scale changed after saving is not saved
+   * (D50) — the page says so instead, since every number here moves with it.
+   */
+  const [savedScale, setSavedScale] = useState<string | null>(null)
   const [updatingSaved, setUpdatingSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   // Saving a local clip uploads it in chunks; closing midway loses the save.
@@ -247,6 +253,8 @@ export default function VideoAnalysis() {
     // clip; the lift is kept, because a coach reviews a whole inbox of squats.
     setSetContext((c) => ({ ...c, loadText: '', calledRpe: null, repsText: '', metric: null }))
     setAthleteChoice(null)
+    forgetSave()
+    setNote('')
     // Leaving the deep link entirely (back to /analysis) means no video at all,
     // so the picker takes over. A locally-imported file has no id and must
     // survive this, hence only clearing when the param is genuinely absent.
@@ -471,6 +479,16 @@ export default function VideoAnalysis() {
    * the fields stay editable, and a load typed after saving used to go nowhere
    * while the page still said "Saved."
    */
+  /** A save belongs to one clip: none of it may show on the next one. */
+  const forgetSave = () => {
+    setSavedId(null)
+    setSavedContext(null)
+    setSavedScale(null)
+    setOfferSave(false)
+  }
+
+  const scaleNow = () => JSON.stringify(calibration ? { ...calibration, plateMm } : null)
+
   const contextNow = () =>
     JSON.stringify({
       athleteId,
@@ -762,6 +780,7 @@ export default function VideoAnalysis() {
       })
       setSavedId(saved.id)
       setSavedContext(contextNow())
+      setSavedScale(scaleNow())
       setOfferSave(false)
       setSavedCount((n) => n + 1)
       toast.success('Analysis saved')
@@ -890,7 +909,40 @@ export default function VideoAnalysis() {
     setNotFound(false)
     setLinkError(null)
     setNote('')
+    forgetSave()
     if (mediaId) navigate('/analysis', { replace: true })
+  }
+
+  /**
+   * "Next clip" after saving (BP19, D48): the next one down the picker's list
+   * — older — that has no saved analysis yet, so an inbox can be worked
+   * through without going back to the picker each time.
+   */
+  const [findingNext, setFindingNext] = useState(false)
+  const openNextClip = async () => {
+    if (source?.kind !== 'discord') return
+    const currentId = source.item.id
+    setFindingNext(true)
+    try {
+      let seen = false
+      for (let offset = 0; ; ) {
+        const page = await getJson<{ items: DiscordMediaItem[]; total: number }>(`/api/discord/media?filter=all&limit=200&offset=${offset}`)
+        for (const m of page.items) {
+          if (seen && m.isVideo && m.playable && m.analysisCount === 0) {
+            navigate(`/analysis/${m.id}`)
+            return
+          }
+          if (m.id === currentId) seen = true
+        }
+        offset += page.items.length
+        if (page.items.length === 0 || offset >= page.total) break
+      }
+      toast.info('No older clip is waiting for an analysis.')
+    } catch (err) {
+      toast.error(`Could not find the next clip. ${errorMessage(err)}`)
+    } finally {
+      setFindingNext(false)
+    }
   }
 
   // ------------------------------------------------------------------
@@ -1461,10 +1513,22 @@ export default function VideoAnalysis() {
                   </Button>
                 </div>
               ) : (
-                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <Check className="h-4 w-4 text-success" /> Saved.
-                </p>
+                  {source?.kind === 'discord' && (
+                    <Button size="sm" variant="outline" onClick={openNextClip} disabled={findingNext}>
+                      {findingNext ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                      Next clip
+                    </Button>
+                  )}
+                </div>
               ))}
+            {savedId && savedScale !== null && savedScale !== scaleNow() && (
+              <p className="text-sm text-warning">
+                The scale changed since you saved. The saved set keeps the scale it was saved with; the
+                numbers on this page use the new one.
+              </p>
+            )}
 
             {samples && trackedReps.length > 0 && (
               <div className="space-y-2">
