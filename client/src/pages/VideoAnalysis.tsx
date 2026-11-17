@@ -6,6 +6,7 @@ import {
   Columns2,
   Loader2,
   Save,
+  Smartphone,
   UserRound,
 } from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
@@ -1212,6 +1213,19 @@ export default function VideoAnalysis() {
           <p className="text-sm text-muted-foreground">Loading video…</p>
         ) : (
           <>
+            {/* Before a clip is picked, not after tracking (BP27): every number
+                on the page assumes this, and it is the moment the coach can
+                still pass it on to the athlete. */}
+            <section className="rounded-md border bg-muted/40 p-3 text-sm" aria-label="Filming tips">
+              <p className="flex items-center gap-2 font-medium">
+                <Smartphone className="h-4 w-4 text-muted-foreground" /> For numbers you can trust, the clip needs
+              </p>
+              <ul className="mt-1.5 list-disc space-y-0.5 pl-9 text-muted-foreground">
+                <li>the camera side-on to the bar, level with it — the plate a circle, not an oval</li>
+                <li>the whole plate in frame for the whole set, with nothing passing in front of it</li>
+                <li>the phone held still, on a stand or something solid — a moving camera moves the path</li>
+              </ul>
+            </section>
             <VideoPicker onPick={setSource} />
             <div className="space-y-2">
               <h2 className="text-sm font-medium">Saved analyses</h2>
