@@ -25,7 +25,6 @@ import VideoPicker, { type AnalysisSource } from '../components/analysis/VideoPi
 import type { Stroke } from '../components/analysis/annotations'
 import { useTracker, type TrackStream } from '../components/analysis/useTracker'
 import { captureInto } from '../components/analysis/captureFrames'
-import { DecodeUnavailable, decodeInto } from '../components/analysis/decodeFrames'
 import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
 import { usePlateMm, useShowAngles, useShowMidFoot, useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
 import { midFootByRep } from '../components/analysis/midFoot'
@@ -635,17 +634,10 @@ export default function VideoAnalysis() {
     }
 
     try {
-      // Every frame decoded from the file (BP21), faster than real time; the
-      // playing video only when this clip cannot be decoded here.
-      const decodeSource = source?.kind === 'local' ? source.file : source?.kind === 'discord' ? `/api/discord/media/${source.item.id}/file` : null
-      const readFrames: typeof captureInto = (el, push, opts) =>
-        decodeSource
-          ? decodeInto(decodeSource, el, push, opts).catch((err) => {
-              if (err instanceof DecodeUnavailable && !stale()) return captureInto(el, push, opts)
-              throw err
-            })
-          : captureInto(el, push, opts)
-      const handle = await readFrames(
+      // Frames are read off the playing video, so the coach watches the lift
+      // with the dot on the bar. An every-frame decoder was tried (BP21) and
+      // taken back out (D62): it made the video lag behind the dot.
+      const handle = await captureInto(
         video,
         async (frame, isFirst) => {
           if (isFirst) {

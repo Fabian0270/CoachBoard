@@ -220,7 +220,7 @@ export default function TrackingControls(p: TrackingControlsProps) {
 
       {p.busy && (
         <p className="text-xs text-muted-foreground">
-          Every frame of the range is read and tracked — usually faster than the clip plays. The path draws as it goes.
+          Frames are read while the clip plays, so this takes about as long as the range itself. The path draws as it goes.
         </p>
       )}
 
