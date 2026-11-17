@@ -48,7 +48,7 @@ import {
   markConversationRead,
   listUnreadThreads,
 } from '../services/discordMediaService.js'
-import { replyToMedia, dmAthlete, listSentForMedia, DiscordSendError } from '../services/discordSendService.js'
+import { replyToMedia, dmAthlete, dmRecordingToAthlete, listSentForMedia, DiscordSendError } from '../services/discordSendService.js'
 import { resolveMediaAbsPath } from '../services/mediaStore.js'
 import { getDb } from '../db.js'
 import type { ConfiguredChannelDto } from 'coachboard-shared/discord'
@@ -638,6 +638,37 @@ router.get('/media/:id/sent', async (req, res) => {
 })
 
 const dmSchema = z.object({ content: z.string().trim().min(1, 'Write a message first').max(2000) })
+
+/**
+ * DM an athlete a picture with a message (BP36, D61): the bar path image and
+ * the feedback written from the set's numbers. The PNG is the body; the
+ * message rides in the query, which keeps the body a plain upload.
+ */
+router.post('/athletes/:athleteId/dm-image', express.raw({ type: 'image/png', limit: '8mb' }), async (req, res) => {
+  const message = typeof req.query.message === 'string' ? req.query.message : ''
+  if (message.length > 2000) {
+    res.status(400).json({ error: 'The message is longer than Discord allows (2000 characters).' })
+    return
+  }
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    res.status(400).json({ error: 'No image was sent' })
+    return
+  }
+  try {
+    const sent = await dmRecordingToAthlete(req.params.athleteId, message, { filename: 'bar-path.png', contentType: 'image/png', data: req.body })
+    if (sent.status === 'failed') {
+      res.status(502).json({ error: sent.error ?? 'Discord rejected the message' })
+      return
+    }
+    res.json(sent)
+  } catch (err) {
+    if (err instanceof DiscordSendError) {
+      res.status(400).json({ error: err.message })
+      return
+    }
+    res.status(500).json({ error: 'Could not send the message' })
+  }
+})
 
 router.post('/athletes/:athleteId/dm', async (req, res) => {
   const parsed = dmSchema.safeParse(req.body)

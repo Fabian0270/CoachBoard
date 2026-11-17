@@ -32,7 +32,10 @@ import PathPlot from '../components/analysis/PathPlot'
 import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleChart'
 import BarSpeedChart from '../components/analysis/BarSpeedChart'
 import PathClipButton from '../components/analysis/PathClipButton'
-import PathImageButtons from '../components/analysis/PathImageButtons'
+import PathImageButtons, { repSpeeds } from '../components/analysis/PathImageButtons'
+import FeedbackPanel from '../components/analysis/FeedbackPanel'
+import { feedbackMessage } from '../components/analysis/feedbackMessage'
+import { buildPathImage } from '../components/analysis/pathImage'
 import { downloadCsv, repCsv } from '../components/analysis/repCsv'
 import { lastTimeAtLoad, velocityPr } from '../components/analysis/setHistory'
 import { useReferenceRep } from '../components/analysis/referenceRep'
@@ -663,6 +666,29 @@ export default function SavedAnalysis() {
           </p>
         </div>
       </div>
+
+      {/* The message for the athlete (BP36, D61): written from these numbers
+          and the note, editable, copied or sent as a Discord DM with the image. */}
+      {analysis.athleteId && (
+        <FeedbackPanel
+          draft={feedbackMessage({
+            lift: analysis.lift, loadKg: analysis.loadKg, reps: metrics, metric,
+            rpe: reading ? effectiveRpe(reading, analysis.calledRpe) : null,
+            track: analysis.track, pixelsPerMetre, note: analysis.notes,
+          })}
+          athleteId={analysis.athleteId}
+          athleteName={analysis.athleteName}
+          makeImage={videoSrc && analysis.track.length > 1 ? () => {
+            const video = videoRef.current
+            if (!video) return Promise.reject(new Error('The video is not ready.'))
+            return buildPathImage({
+              video, track: analysis.track, reps: metrics, strokes, color,
+              title: [isVbtLift(analysis.lift) ? liftLabel(lift) : 'Bar path', analysis.loadKg != null ? `${analysis.loadKg} kg` : null, analysis.athleteName, analysis.createdAt.slice(0, 10)].filter(Boolean).join(' · '),
+              repSpeeds: repSpeeds(metrics, metric), note: analysis.notes,
+            })
+          } : null}
+        />
+      )}
     </div>
   )
 }
