@@ -62,7 +62,9 @@ export default function TrackingControls(p: TrackingControlsProps) {
         <span className="flex items-center gap-2 text-sm">
           <Crosshair className="h-4 w-4 text-muted-foreground" />
           {p.mode === 'calibrate'
-            ? 'Click both edges of a plate to set the scale'
+            // Top and bottom, not left and right (D52): filmed at an angle the
+            // plate is an ellipse, and only its height is still the diameter.
+            ? 'Click the top and bottom edge of a plate to set the scale'
             : p.hasSamples
               ? 'Tracked — play the clip to watch the dot follow the bar'
               : p.hasSeed
@@ -148,7 +150,7 @@ export default function TrackingControls(p: TrackingControlsProps) {
         </select>
         <Button size="sm" variant={p.mode === 'calibrate' ? 'default' : 'outline'} disabled={p.busy} onClick={p.onToggleCalibrate}>
           {p.mode === 'calibrate'
-            ? p.awaitingSecondPoint ? 'Now click the far edge' : 'Click one edge of the plate'
+            ? p.awaitingSecondPoint ? 'Now click its bottom edge' : 'Click the top edge of the plate'
             : p.pixelsPerMetre ? 'Redo scale' : 'Set scale'}
         </Button>
         {p.pixelsPerMetre ? (

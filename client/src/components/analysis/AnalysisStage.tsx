@@ -490,6 +490,20 @@ export default function AnalysisStage({
     // The scale reference, drawn distinctly from the tracking overlay so the
     // two are never confused — this one is a measurement, not a result.
     const line = calibDragRef.current?.line ?? calibration
+    // The first point placed and the second not yet (D52): a faint line
+    // straight down through it, so the bottom edge is found directly below
+    // and not off to one side.
+    if (line && mode === 'calibrate' && line.a.x === line.b.x && line.a.y === line.b.y) {
+      ctx.save()
+      ctx.setLineDash([4, 6])
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.6)'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.moveTo(line.a.x * scale, line.a.y * scale - 12)
+      ctx.lineTo(line.a.x * scale, video.videoHeight * scale)
+      ctx.stroke()
+      ctx.restore()
+    }
     if (line) {
       const ax = line.a.x * scale
       const ay = line.a.y * scale
