@@ -27,10 +27,12 @@ import { useTracker, type TrackStream } from '../components/analysis/useTracker'
 import { captureInto } from '../components/analysis/captureFrames'
 import { DecodeUnavailable, decodeInto } from '../components/analysis/decodeFrames'
 import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
-import { usePlateMm, useShowAngles, useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
+import { usePlateMm, useShowAngles, useShowMidFoot, useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
+import { midFootByRep } from '../components/analysis/midFoot'
 import { usePose, type PoseStream } from '../components/analysis/usePose'
 import { savePose, putCorrection } from '../components/analysis/poseApi'
 import {
+  MID_FOOT_LIFTS,
   applyCorrections,
   correctionsAtTimes,
   smooth,
@@ -181,6 +183,7 @@ export default function VideoAnalysis() {
   const [color, setColor] = useTrackerColor()
   const [showPose, setShowPose] = useShowPose()
   const [showAngles, setShowAngles] = useShowAngles()
+  const [showMidFoot, setShowMidFoot] = useShowMidFoot()
   const [plateMm, setPlateMm] = usePlateMm()
   const [mode, setMode] = useState<StageMode>('seed')
   /**
@@ -1383,6 +1386,7 @@ export default function VideoAnalysis() {
           poseRef={poseRef}
           showPose={showPose}
           showAngles={showAngles}
+          showMidFoot={showMidFoot && MID_FOOT_LIFTS.includes(setContext.lift)}
           ghost={reference.shape && pixelsPerMetre ? { path: reference.shape.path, pixelsPerMetre } : null}
           onCorrectLandmark={correctPoseLandmark}
           onPlaceSeed={placeSeed}
@@ -1458,6 +1462,9 @@ export default function VideoAnalysis() {
               correctionsCount={poseCorrections.length}
               showAngles={showAngles}
               onShowAngles={setShowAngles}
+              midFootLift={MID_FOOT_LIFTS.includes(setContext.lift)}
+              showMidFoot={showMidFoot}
+              onShowMidFoot={setShowMidFoot}
               color={color}
               onColor={setColor}
               range={range}
@@ -1618,6 +1625,7 @@ export default function VideoAnalysis() {
                   pixelsPerMetre={pixelsPerMetre}
                   excluded={excludedReps}
                   onToggle={toggleRep}
+                  midFoot={busy ? null : midFootByRep(setContext.lift, poseRef.current, samples, trackedReps, pixelsPerMetre)}
                   onJump={(index) => {
                     const at = repTops[trackedReps.findIndex((r) => r.index === index)]
                     const v = videoRef.current

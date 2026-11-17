@@ -17,7 +17,7 @@ import {
   type VbtLift,
 } from 'coachboard-shared/vbt'
 import type { RepMetrics } from 'coachboard-shared/videoAnalysis'
-import { applyCorrections, type PoseFrame } from 'coachboard-shared/pose'
+import { MID_FOOT_LIFTS, applyCorrections, type PoseFrame } from 'coachboard-shared/pose'
 import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
 import AnalysisStage, { repWindows, type StageMode } from '../components/analysis/AnalysisStage'
@@ -38,7 +38,8 @@ import { lastTimeAtLoad, velocityPr } from '../components/analysis/setHistory'
 import { useReferenceRep } from '../components/analysis/referenceRep'
 import ReferencePanel from '../components/analysis/ReferencePanel'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
-import { useShowAngles, useTrackerColor } from '../components/analysis/trackerColor'
+import { useShowAngles, useShowMidFoot, useTrackerColor } from '../components/analysis/trackerColor'
+import { midFootByRep } from '../components/analysis/midFoot'
 import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
 
 // ---------------------------------------------------------------------------
@@ -142,6 +143,7 @@ export default function SavedAnalysis() {
   const poseRef = useRef<PoseFrame[]>([])
   const [showPose, setShowPose] = useState(true)
   const [showAngles, setShowAngles] = useShowAngles()
+  const [showMidFoot, setShowMidFoot] = useShowMidFoot()
 
   useEffect(() => {
     if (!id) return
@@ -417,6 +419,7 @@ export default function SavedAnalysis() {
           showPose={showPose}
           showAngles={showAngles}
           ghost={ghost}
+          showMidFoot={showMidFoot && MID_FOOT_LIFTS.includes(lift)}
           onCorrectLandmark={correctLandmark}
           strokes={strokes}
           onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
@@ -464,6 +467,19 @@ export default function SavedAnalysis() {
             />
             Angles
           </label>
+          {/* The line straight up from mid-foot (BP31, D58), on squats and deadlifts. */}
+          {MID_FOOT_LIFTS.includes(lift) && (
+            <label className={`flex items-center gap-1.5 ${showPose ? '' : 'opacity-50'}`} title="A line straight up from the middle of the near foot, where the bar should stack">
+              <input
+                type="checkbox"
+                checked={showMidFoot}
+                disabled={!showPose}
+                onChange={(e) => setShowMidFoot(e.target.checked)}
+                className="h-3.5 w-3.5 accent-cyan-400"
+              />
+              Mid-foot
+            </label>
+          )}
           {showPose && videoSrc && (
             <span className="text-xs text-muted-foreground">
               Drag a joint to correct it — the model&rsquo;s own reading is kept underneath.
@@ -549,6 +565,7 @@ export default function SavedAnalysis() {
               v.pause()
               v.currentTime = at
             } : undefined}
+            midFoot={midFootByRep(analysis.lift, pose?.frames, analysis.track, metrics, pixelsPerMetre)}
             referenceIndex={isReferenceSet ? reference.pointer!.repIndex : null}
             onReference={athleteId && lift !== 'other' && calibrated ? (index) => {
               const clearing = isReferenceSet && reference.pointer!.repIndex === index

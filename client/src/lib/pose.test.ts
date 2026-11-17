@@ -17,6 +17,8 @@ import {
   applyCorrections,
   anglesAgainstBar,
   stickingPoint,
+  midFootAt,
+  repMidFoot,
   insertFrame,
   correctionsAtTimes,
   FLOATS_PER_LANDMARK,
@@ -171,6 +173,22 @@ describe('cameraSide', () => {
   it('is deterministic when nothing is visible at all', () => {
     expect(cameraSide([frame(0, {})])).toBe('left')
     expect(cameraSide([])).toBe('left')
+  })
+})
+
+describe('bar over mid-foot (BP31)', () => {
+  // Facing right: heel at 100, toe at 160, so mid-foot is x = 130.
+  const foot = (t: number) => frame(t, { [LM.LEFT_HEEL]: at(100, 400), [LM.LEFT_FOOT_INDEX]: at(160, 400) })
+  it('mid-foot is between heel and toe, facing the toes', () => {
+    expect(midFootAt(foot(0), 'left')).toEqual({ x: 130, y: 400, toes: 1 })
+  })
+  it('per rep, how far the bar went in front of and behind the line', () => {
+    const frames = [foot(0), foot(0.5), foot(1)]
+    const track = [{ t: 0, x: 130, y: 0 }, { t: 0.4, x: 150, y: 50 }, { t: 0.8, x: 120, y: 0 }]
+    expect(repMidFoot(frames, track, [{ from: 0, to: 1 }], 200, 'left')).toEqual([{ frontPx: 20, behindPx: 10, frontM: 0.1, behindM: 0.05 }])
+  })
+  it('nothing for a rep where the foot was never seen', () => {
+    expect(repMidFoot([foot(0)], [{ t: 5, x: 0, y: 0 }], [{ from: 4, to: 6 }], null, 'left')).toEqual([null])
   })
 })
 

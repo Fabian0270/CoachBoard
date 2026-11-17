@@ -36,6 +36,10 @@ export interface TrackingControlsProps {
   correctionsCount: number
   showAngles: boolean
   onShowAngles: (next: boolean) => void
+  /** The lift is a squat or deadlift kind, so the mid-foot switch is offered. */
+  midFootLift: boolean
+  showMidFoot: boolean
+  onShowMidFoot: (next: boolean) => void
   color: string
   onColor: (color: string) => void
   range: { from: number; to: number } | null
@@ -109,6 +113,19 @@ export default function TrackingControls(p: TrackingControlsProps) {
           />
           Angles
         </label>
+        {/* The line straight up from mid-foot (BP31, D58), on squats and deadlifts. */}
+        {p.midFootLift && (
+          <label className={`flex items-center gap-1.5 text-sm ${p.showPose ? '' : 'opacity-50'}`} title="A line straight up from the middle of the near foot, where the bar should stack">
+            <input
+              type="checkbox"
+              checked={p.showMidFoot}
+              disabled={!p.showPose}
+              onChange={(e) => p.onShowMidFoot(e.target.checked)}
+              className="h-3.5 w-3.5 accent-cyan-400"
+            />
+            Mid-foot
+          </label>
+        )}
         {p.poseStatus === 'loading' && (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading the pose model…

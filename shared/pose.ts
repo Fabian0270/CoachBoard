@@ -259,6 +259,7 @@ export function sideJoints(side: Side) {
         hip: LM.LEFT_HIP,
         knee: LM.LEFT_KNEE,
         ankle: LM.LEFT_ANKLE,
+        heel: LM.LEFT_HEEL,
         foot: LM.LEFT_FOOT_INDEX,
       }
     : {
@@ -268,6 +269,7 @@ export function sideJoints(side: Side) {
         hip: LM.RIGHT_HIP,
         knee: LM.RIGHT_KNEE,
         ankle: LM.RIGHT_ANKLE,
+        heel: LM.RIGHT_HEEL,
         foot: LM.RIGHT_FOOT_INDEX,
       }
 }
@@ -907,4 +909,66 @@ export function frameIndexAt(frames: PoseFrame[], t: number): number {
   // `lo` is the first frame at or after t; the one before it can be nearer.
   if (lo > 0 && Math.abs(frames[lo - 1].t - t) <= Math.abs(frames[lo].t - t)) return lo - 1
   return lo
+}
+
+// ---------------------------------------------------------------------------
+// Bar over mid-foot (BP31, D58).
+// ---------------------------------------------------------------------------
+
+/** The lifts where the bar stacking over mid-foot is the cue: squats and deadlifts. */
+export const MID_FOOT_LIFTS: readonly string[] = ['back-squat', 'front-squat', 'deadlift-conventional', 'deadlift-sumo', 'deadlift-trapbar']
+
+/**
+ * Mid-foot in one frame, in image pixels: halfway between the near side's heel
+ * and toe, and which way the toes point (+1 right in the picture, -1 left).
+ * Null unless the model saw both.
+ */
+export function midFootAt(frame: PoseFrame, side: Side): { x: number; y: number; toes: 1 | -1 } | null {
+  const j = sideJoints(side)
+  const heel = frame.landmarks[j.heel]
+  const toe = frame.landmarks[j.foot]
+  if (!heel || !toe || !isVisible(heel) || !isVisible(toe) || heel.x === toe.x) return null
+  return { x: (heel.x + toe.x) / 2, y: (heel.y + toe.y) / 2, toes: toe.x > heel.x ? 1 : -1 }
+}
+
+export interface RepMidFoot {
+  /** Furthest the bar went in front of mid-foot (towards the toes), px and metres. */
+  frontPx: number
+  behindPx: number
+  frontM: number | null
+  behindM: number | null
+}
+
+/**
+ * Per rep, how far the bar strayed in front of and behind the line straight up
+ * from mid-foot, over the whole rep (from the top before it to the top after).
+ *
+ * The line is the MEDIAN mid-foot across the rep — the feet stay planted, and a
+ * median shrugs off the odd frame where the model put the heel somewhere else.
+ * Null for a rep with no frame where the near foot was seen.
+ */
+export function repMidFoot(
+  frames: PoseFrame[],
+  track: { t: number; x: number; y: number }[],
+  windows: { from: number; to: number }[],
+  pixelsPerMetre: number | null,
+  side: Side = cameraSide(frames),
+): (RepMidFoot | null)[] {
+  const toM = (px: number) => (pixelsPerMetre && pixelsPerMetre > 0 ? px / pixelsPerMetre : null)
+  return windows.map((w) => {
+    const feet = frames.filter((f) => f.t >= w.from && f.t <= w.to).map((f) => midFootAt(f, side)).filter((m): m is NonNullable<typeof m> => m != null)
+    if (feet.length === 0) return null
+    const xs = feet.map((m) => m.x).sort((a, b) => a - b)
+    const x = xs[Math.floor(xs.length / 2)]
+    const toes = feet.filter((m) => m.toes === 1).length * 2 >= feet.length ? 1 : -1
+    let front = 0
+    let behind = 0
+    for (const s of track) {
+      if (s.t < w.from || s.t > w.to) continue
+      const ahead = (s.x - x) * toes
+      if (ahead > front) front = ahead
+      if (-ahead > behind) behind = -ahead
+    }
+    return { frontPx: front, behindPx: behind, frontM: toM(front), behindM: toM(behind) }
+  })
 }

@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { Star, Undo2, X } from 'lucide-react'
 import { looksMistracked, repDrift, repTempos, type RepDrift, type RepMetrics, type Sample } from 'coachboard-shared/videoAnalysis'
+import type { RepMidFoot } from 'coachboard-shared/pose'
 import {
   readRep,
   rpeFromLastRepVelocity,
@@ -39,6 +40,15 @@ interface RepTableProps {
   referenceIndex?: number | null
   /** Make a rep the reference, or clear it when it already is. Absent: no star. */
   onReference?: (index: number) => void
+  /** Bar over mid-foot per rep, by rep index (BP31). Absent: no column. */
+  midFoot?: Map<number, RepMidFoot | null> | null
+}
+
+/** "4 cm front · 1 cm behind": the furthest the bar went either side of mid-foot. */
+function fmtMidFoot(m: RepMidFoot): string {
+  const unit = m.frontM != null ? 'cm' : 'px'
+  const v = (px: number, metres: number | null) => Math.round(metres != null ? metres * 100 : px)
+  return `${v(m.frontPx, m.frontM)} ${unit} front · ${v(m.behindPx, m.behindM)} ${unit} behind`
 }
 
 /** "4 cm, ends 2 cm →": the furthest it strayed, and where the top ended up against the bottom. */
@@ -50,7 +60,7 @@ export function fmtDrift(d: RepDrift): string {
   return `${val(d.maxPx, d.maxM)} ${unit}, ends ${ends}`
 }
 
-export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump, referenceIndex = null, onReference }: RepTableProps) {
+export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump, referenceIndex = null, onReference, midFoot = null }: RepTableProps) {
   // The way down and the pause at the bottom (BP12), from the path like the drift.
   const tempos = useMemo(() => (track ? repTempos(track, reps) : null), [track, reps])
   const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
@@ -72,6 +82,11 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
             {track && (
               <th className="py-1 pr-4 font-medium" title="Furthest the bar strayed sideways from the line straight up from the bottom, and where the top ended up (arrows: left or right in the picture)">
                 Sideways
+              </th>
+            )}
+            {midFoot && (
+              <th className="py-1 pr-4 font-medium" title="Furthest the bar went in front of (towards the toes) and behind the line straight up from mid-foot, over the whole rep">
+                Over mid-foot
               </th>
             )}
             {track && (
@@ -141,6 +156,9 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
                 </td>
                 <td className="py-1 pr-4">{r.romM !== null ? `${(r.romM * 100).toFixed(0)} cm` : `${Math.round(r.romPx)} px`}</td>
                 {track && <td className="num whitespace-nowrap py-1 pr-4">{drift ? fmtDrift(drift) : '—'}</td>}
+                {midFoot && (
+                  <td className="num whitespace-nowrap py-1 pr-4">{midFoot.get(r.index) ? fmtMidFoot(midFoot.get(r.index)!) : '—'}</td>
+                )}
                 {track && (
                   <>
                     <td className="py-1 pr-4">{tempo ? secs(tempo.descentMs) : '—'}</td>

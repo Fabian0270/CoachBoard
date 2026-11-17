@@ -98,9 +98,19 @@ const ANGLES_STORAGE_KEY = 'coachboard-show-angles'
  * the picture stays clean until wanted; remembered like the skeleton switch.
  */
 export function useShowAngles(): [boolean, (next: boolean) => void] {
+  return useRememberedSwitch(ANGLES_STORAGE_KEY)
+}
+
+/** The line straight up from mid-foot (BP31, D58). Off by default, remembered. */
+export function useShowMidFoot(): [boolean, (next: boolean) => void] {
+  return useRememberedSwitch('coachboard-show-midfoot')
+}
+
+/** An on/off switch kept across sessions, off until turned on. */
+function useRememberedSwitch(key: string): [boolean, (next: boolean) => void] {
   const [show, setShowState] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(ANGLES_STORAGE_KEY) === 'true'
+      return localStorage.getItem(key) === 'true'
     } catch {
       return false
     }
@@ -108,11 +118,11 @@ export function useShowAngles(): [boolean, (next: boolean) => void] {
   const setShow = useCallback((next: boolean) => {
     setShowState(next)
     try {
-      localStorage.setItem(ANGLES_STORAGE_KEY, String(next))
+      localStorage.setItem(key, String(next))
     } catch {
       /* not worth surfacing */
     }
-  }, [])
+  }, [key])
   return [show, setShow]
 }
 

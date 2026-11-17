@@ -7,6 +7,7 @@ import {
   frameAngles,
   frameIndexAt,
   isVisible,
+  midFootAt,
   sideJoints,
   type PoseFrame,
   type Side,
@@ -147,6 +148,8 @@ interface Props {
    * it, and this clip's scale to draw it at. Absent without a scale on both.
    */
   ghost?: { path: { x: number; y: number }[]; pixelsPerMetre: number } | null
+  /** The line straight up from mid-foot (BP31). Only drawn with the skeleton on. */
+  showMidFoot?: boolean
 }
 
 // Kept importable from here, where the pages have always found it.
@@ -193,6 +196,7 @@ export default function AnalysisStage({
   trackRange,
   showAngles = false,
   ghost = null,
+  showMidFoot = false,
 }: Props) {
   /** Which side the camera sees, worked out once per skeleton rather than every frame. */
   const sideCacheRef = useRef<{ frames: PoseFrame[]; side: Side } | null>(null)
@@ -486,11 +490,29 @@ export default function AnalysisStage({
           ctx.fill()
         }
 
+        if ((showAngles || showMidFoot) && sideCacheRef.current?.frames !== poseFrames) {
+          sideCacheRef.current = { frames: poseFrames, side: cameraSide(poseFrames) }
+        }
+
+        // The line straight up from mid-foot (BP31, D58): where the bar should
+        // stack on a squat or a deadlift. Only where the model saw the foot.
+        const mf = showMidFoot ? midFootAt(pose, sideCacheRef.current!.side) : null
+        if (mf) {
+          ctx.save()
+          ctx.setLineDash([6, 5])
+          ctx.lineWidth = 2
+          ctx.strokeStyle = 'rgba(34, 211, 238, 0.8)'
+          ctx.beginPath()
+          ctx.moveTo(mf.x * scale, mf.y * scale)
+          ctx.lineTo(mf.x * scale, 0)
+          ctx.stroke()
+          ctx.restore()
+        }
+
         // The joints' degrees (D56), on the side nearest the camera — the same
         // reading the joint-angle chart uses. Only joints the model could see.
         if (showAngles && poseFrames) {
-          if (sideCacheRef.current?.frames !== poseFrames) sideCacheRef.current = { frames: poseFrames, side: cameraSide(poseFrames) }
-          const side = sideCacheRef.current.side
+          const side = sideCacheRef.current!.side
           const [a] = frameAngles([pose], side)
           const j = sideJoints(side)
           const label = (text: string, p: { x: number; y: number } | undefined) => {
@@ -664,7 +686,7 @@ export default function AnalysisStage({
     // poseRef is a ref like livePathRef, so it is not a dependency — its
     // contents change every inference without the identity ever changing, and
     // the loop below redraws every animation frame regardless.
-  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps, mode, disabled, showAngles, ghost])
+  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps, mode, disabled, showAngles, ghost, showMidFoot])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
   // once on any state change so it is right while paused too.
