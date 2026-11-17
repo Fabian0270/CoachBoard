@@ -32,6 +32,7 @@ import PathPlot from '../components/analysis/PathPlot'
 import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleChart'
 import BarSpeedChart from '../components/analysis/BarSpeedChart'
 import PathClipButton from '../components/analysis/PathClipButton'
+import PathImageButtons from '../components/analysis/PathImageButtons'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
 import { useTrackerColor } from '../components/analysis/trackerColor'
 import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
@@ -301,6 +302,25 @@ export default function SavedAnalysis() {
         {/* The same pen as the tracking page and Compare (BP7), wherever a video plays. */}
         {videoSrc && (
           <div className="ml-auto flex items-center gap-2">
+            {/* The frame on screen as an image for the athlete (BP24). */}
+            {analysis.track.length > 1 && (
+              <PathImageButtons
+                videoRef={videoRef}
+                track={analysis.track}
+                reps={metrics}
+                metric={metric}
+                strokes={strokes}
+                color={color}
+                title={[
+                  isVbtLift(analysis.lift) ? liftLabel(lift) : 'Bar path',
+                  analysis.loadKg != null ? `${analysis.loadKg} kg` : null,
+                  analysis.athleteName,
+                  analysis.createdAt.slice(0, 10),
+                ].filter(Boolean).join(' · ')}
+                note={analysis.notes}
+                name={analysis.sourceLabel || 'lift'}
+              />
+            )}
             {/* The clip with the path drawn in (BP25), from the stored copy. */}
             {analysis.hasVideo && analysis.track.length > 1 && (
               <PathClipButton

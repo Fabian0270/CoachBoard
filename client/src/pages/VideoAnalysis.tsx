@@ -50,6 +50,7 @@ import RepTable from '../components/analysis/RepTable'
 import PathPlot from '../components/analysis/PathPlot'
 import BarSpeedChart from '../components/analysis/BarSpeedChart'
 import PathClipButton from '../components/analysis/PathClipButton'
+import PathImageButtons from '../components/analysis/PathImageButtons'
 import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleChart'
 import { captionFill, type CaptionField } from '../components/analysis/captionFill'
 import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
@@ -1305,6 +1306,25 @@ export default function VideoAnalysis() {
           <p className="truncate text-sm text-muted-foreground">{sourceLabel}</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {/* The frame on screen as an image for the athlete (BP24). */}
+          {samples && samples.length > 1 && !busy && source && (
+            <PathImageButtons
+              videoRef={videoRef}
+              track={samples}
+              reps={reps}
+              metric={metric}
+              strokes={strokes}
+              color={color}
+              title={[
+                reps.length > 0 ? liftLabel(setContext.lift) : 'Bar path',
+                loadKg != null ? `${loadKg} kg` : null,
+                roster.find((a) => a.id === athleteId)?.name ?? (source.kind === 'discord' ? source.item.athleteName : null),
+                source.kind === 'discord' ? source.item.postedAt.slice(0, 10) : null,
+              ].filter(Boolean).join(' · ')}
+              note={note.trim() || null}
+              name={source.kind === 'local' ? source.name : sourceLabel}
+            />
+          )}
           {/* The clip with the path drawn in (BP25), once there is a path. */}
           {samples && samples.length > 1 && !busy && source && (
             <PathClipButton
