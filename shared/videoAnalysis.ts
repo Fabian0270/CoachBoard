@@ -715,6 +715,13 @@ export const PLATE_DIAMETERS_MM = [
   { label: '325 mm — training plate', value: 325 },
 ] as const
 
+/** A saved analysis's scale, from its stored line across the plate; null without one. */
+export function analysisPixelsPerMetre(analysis: { calibration: CalibrationDto | null }): number | null {
+  const c = analysis.calibration
+  if (!c) return null
+  return pixelsPerMetreFromPlate(Math.hypot(c.b.x - c.a.x, c.b.y - c.a.y), c.plateDiameterMm)
+}
+
 /** Where the picture actually sits inside a video element's box, in CSS pixels. */
 export interface PictureRect {
   left: number

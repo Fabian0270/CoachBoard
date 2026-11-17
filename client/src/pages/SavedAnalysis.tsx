@@ -4,7 +4,7 @@ import { ArrowLeft, FileVideo, LineChart, Pencil, PersonStanding } from 'lucide-
 import { RPE_VALUES } from 'coachboard-shared/rpe'
 import { num } from '../lib/num'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
-import { pixelsPerMetreFromPlate } from 'coachboard-shared/videoAnalysis'
+import { analysisPixelsPerMetre } from 'coachboard-shared/videoAnalysis'
 import {
   VBT_LIFTS,
   defaultVelocityMetric,
@@ -44,18 +44,6 @@ import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/ana
 // straight away; the re-pick input below is what rescues the rows saved before
 // that, and any whose file has since gone missing.
 // ---------------------------------------------------------------------------
-
-/** Pixels per metre for a saved analysis, or null when it was never calibrated. */
-function analysisPixelsPerMetre(analysis: VideoAnalysisDto): number | null {
-  if (!analysis.calibration) return null
-  return pixelsPerMetreFromPlate(
-    Math.hypot(
-      analysis.calibration.b.x - analysis.calibration.a.x,
-      analysis.calibration.b.y - analysis.calibration.a.y,
-    ),
-    analysis.calibration.plateDiameterMm,
-  )
-}
 
 export default function SavedAnalysis() {
   const { id } = useParams()
