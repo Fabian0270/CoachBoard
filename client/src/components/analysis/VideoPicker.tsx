@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Film, FolderOpen, Search, Upload } from 'lucide-react'
+import { Check, Film, FolderOpen, Search, Upload } from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -17,6 +17,9 @@ import { errorMessage, getJson } from '../../lib/api'
 export type AnalysisSource =
   | { kind: 'discord'; item: DiscordMediaItem }
   | { kind: 'local'; name: string; url: string; file: File }
+
+/** Media rows read from the inbox at a time. */
+const PAGE = 200
 
 function fmtDuration(ms: number): string {
   const total = Math.round(ms / 1000)
@@ -40,13 +43,24 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
   /** Why the synced videos could not be read. Never shown as "no videos yet" (BP6). */
   const [loadError, setLoadError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  /**
+   * How far into the inbox has been read, and how much there is (BP19). The
+   * list used to stop at the newest 200 with no hint that there was more.
+   * Counted in media rows, images included, since that is what the server pages.
+   */
+  const [read, setRead] = useState(0)
+  const [total, setTotal] = useState(0)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setLoadError(null)
-    getJson<{ items: DiscordMediaItem[] }>('/api/discord/media?filter=all&limit=200')
+    getJson<{ items: DiscordMediaItem[]; total: number }>(`/api/discord/media?filter=all&limit=${PAGE}`)
       .then((data) => {
-        if (!cancelled) setItems(data.items.filter((m) => m.isVideo && m.playable))
+        if (cancelled) return
+        setItems(data.items.filter((m) => m.isVideo && m.playable))
+        setRead(data.items.length)
+        setTotal(data.total ?? data.items.length)
       })
       .catch((err) => {
         if (cancelled) return
@@ -57,6 +71,20 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
       cancelled = true
     }
   }, [attempt])
+
+  const showMore = async () => {
+    setLoadingMore(true)
+    try {
+      const data = await getJson<{ items: DiscordMediaItem[]; total: number }>(`/api/discord/media?filter=all&limit=${PAGE}&offset=${read}`)
+      setItems((prev) => [...(prev ?? []), ...data.items.filter((m) => m.isVideo && m.playable)])
+      setRead((n) => n + data.items.length)
+      setTotal((t) => data.total ?? t)
+    } catch (err) {
+      setLoadError(errorMessage(err))
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   const takeFile = (file: File | undefined) => {
     if (!file) return
@@ -162,6 +190,16 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
                   ) : (
                     <Film className="h-6 w-6 text-muted-foreground" />
                   )}
+                  {/* Already analysed (BP19): working through an inbox means
+                      knowing which clips are done. */}
+                  {item.analysisCount > 0 && (
+                    <span
+                      className="absolute left-1 top-1 flex items-center gap-0.5 rounded bg-primary px-1 text-[10px] font-medium text-primary-foreground"
+                      title={item.analysisCount === 1 ? 'A saved analysis uses this clip' : `${item.analysisCount} saved analyses use this clip`}
+                    >
+                      <Check className="h-3 w-3" /> Done
+                    </span>
+                  )}
                   {item.durationMs != null && item.durationMs > 0 && (
                     <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[10px] font-medium text-white">
                       {fmtDuration(item.durationMs)}
@@ -183,6 +221,15 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
 
         {items !== null && items.length > 0 && filtered.length === 0 && (
           <p className="text-sm text-muted-foreground">Nothing matches that search.</p>
+        )}
+
+        {items !== null && read < total && (
+          <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <span>The newest {read} of {total} synced files{query.trim() ? ' — the search only looks through these' : ''}.</span>
+            <Button size="sm" variant="outline" onClick={showMore} disabled={loadingMore}>
+              {loadingMore ? 'Loading…' : 'Show older ones'}
+            </Button>
+          </div>
         )}
       </div>
     </div>

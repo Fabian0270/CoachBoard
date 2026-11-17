@@ -114,6 +114,8 @@ export interface DiscordMediaItem {
   thumbStatus: 'ok' | 'unsupported' | 'failed' | null
   /** Video length, captured in the same pass as the thumbnail. */
   durationMs: number | null
+  /** Saved bar path analyses of this clip (BP19): the picker marks the ones already done. */
+  analysisCount: number
 }
 
 export interface DiscordUserItem {

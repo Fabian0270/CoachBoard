@@ -40,6 +40,7 @@ type MediaJoinRow = DiscordMediaTable & {
   program_name: string | null
   suggested_name: string | null
   suggested_date: string | null
+  analysis_count: number | null
 }
 
 function toItem(row: MediaJoinRow): DiscordMediaItem {
@@ -85,6 +86,7 @@ function toItem(row: MediaJoinRow): DiscordMediaItem {
     thumbUrl: row.thumb_path ? `/api/discord/media/${row.id}/thumb` : null,
     thumbStatus: row.thumb_status as DiscordMediaItem['thumbStatus'],
     durationMs: row.duration_ms,
+    analysisCount: Number(row.analysis_count ?? 0),
   }
 }
 
@@ -108,6 +110,13 @@ function baseMediaQuery() {
       'confirmed_p.name as program_name',
       'suggested_w.name as suggested_name',
       'suggested_w.scheduled_date as suggested_date',
+      // How many saved bar path analyses use the clip (BP19). Indexed on media_id.
+      (eb) =>
+        eb
+          .selectFrom('video_analyses')
+          .select((e) => e.fn.countAll<number>().as('n'))
+          .whereRef('video_analyses.media_id', '=', 'discord_media.id')
+          .as('analysis_count'),
     ])
 }
 
