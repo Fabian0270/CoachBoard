@@ -1324,15 +1324,16 @@ export default function VideoAnalysis() {
 
   return (
     <div className="space-y-4 p-6">
-      <div className="flex items-center gap-3">
+      {/* Wraps, like the saved page's: the actions outgrow one line on a narrow window. */}
+      <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="sm" onClick={chooseAnother} title="Choose another video">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-[1_1_16rem]">
           <h1 className="text-lg font-semibold">Bar path analysis</h1>
           <p className="truncate text-sm text-muted-foreground">{sourceLabel}</p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           {/* The frame on screen as an image for the athlete (BP24). */}
           {samples && samples.length > 1 && !busy && source && (
             <PathImageButtons

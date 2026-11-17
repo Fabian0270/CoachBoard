@@ -302,11 +302,13 @@ export default function SavedAnalysis() {
 
   return (
     <div className="space-y-4 p-6">
-      <div className="flex items-center gap-3">
+      {/* Wraps: the actions (image, clip, pen, compare, re-track) outgrow one
+          line on a narrow window, and the title must keep its room. */}
+      <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="sm" onClick={() => navigate('/analysis')} title="Back">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-[1_1_16rem]">
           <h1 className="text-lg font-semibold">
             {isVbtLift(analysis.lift) ? liftLabel(lift) : 'Bar path analysis'}
             {analysis.loadKg != null && ` — ${analysis.loadKg} kg`}
@@ -327,7 +329,7 @@ export default function SavedAnalysis() {
         </div>
         {/* The same pen as the tracking page and Compare (BP7), wherever a video plays. */}
         {videoSrc && (
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             {/* The frame on screen as an image for the athlete (BP24). */}
             {analysis.track.length > 1 && (
               <PathImageButtons
@@ -509,8 +511,11 @@ export default function SavedAnalysis() {
         </label>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <div className="space-y-2">
+      {/* minmax(0, …): a grid column otherwise never shrinks below its content,
+          so the rep table's minimum width pushed the readouts off the page
+          instead of scrolling inside its own box. */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-2">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-sm font-medium">
               Concentric velocity — {metrics.length} {metrics.length === 1 ? 'rep' : 'reps'}
