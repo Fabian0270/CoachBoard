@@ -123,6 +123,8 @@ interface Props {
   maxes: { lift_name: string; weight: number }[]
   value: SetContextState
   onChange: (next: SetContextState) => void
+  /** Fields filled in from the Discord caption and not changed since (BP14). */
+  fromCaption?: ReadonlySet<'lift' | 'load' | 'reps' | 'rpe'>
   /** Puts the page into calibrate mode. The scale is the one thing standing
    *  between a coach and every reading here, so the fix belongs where they
    *  notice the problem, not only in the toolbar above the video. */
@@ -142,6 +144,7 @@ export default function VelocityPanel({
   maxes,
   value,
   onChange,
+  fromCaption,
   onSetScale,
 }: Props) {
   const [mvtText, setMvtText] = useState('')
@@ -287,7 +290,7 @@ export default function VelocityPanel({
       {/* 1. What the set was — none of the rest means anything without this. */}
       <div className="flex flex-wrap items-end gap-3 text-sm">
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">Lift</span>
+          <span className="text-xs text-muted-foreground">Lift<FromCaption on={fromCaption?.has('lift')} /></span>
           <select
             value={lift}
             onChange={(e) => setLift(e.target.value as VbtLift)}
@@ -302,7 +305,7 @@ export default function VelocityPanel({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">Load</span>
+          <span className="text-xs text-muted-foreground">Load<FromCaption on={fromCaption?.has('load')} /></span>
           <input
             value={value.loadText}
             onChange={(e) => onChange({ ...value, loadText: e.target.value })}
@@ -317,7 +320,7 @@ export default function VelocityPanel({
             skews everything below it; a number that disagrees is impossible to
             miss. */}
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">Reps in set</span>
+          <span className="text-xs text-muted-foreground">Reps in set<FromCaption on={fromCaption?.has('reps')} /></span>
           <input
             value={value.repsText}
             onChange={(e) => onChange({ ...value, repsText: e.target.value })}
@@ -328,7 +331,7 @@ export default function VelocityPanel({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">RPE called</span>
+          <span className="text-xs text-muted-foreground">RPE called<FromCaption on={fromCaption?.has('rpe')} /></span>
           <select
             value={value.calledRpe ?? ''}
             onChange={(e) =>
@@ -731,6 +734,15 @@ function agreementNote(estimated: number, recorded: number): string {
   return estimated > recorded
     ? ` — the bar reads about ${Math.round(gap * 100)}% ahead of that`
     : ` — the bar reads ${Math.round(-gap * 100)}% under it, so either today is a down day or the max is stale`
+}
+
+/** The mark on a field the Discord caption filled in. */
+function FromCaption({ on }: { on?: boolean }) {
+  return on ? (
+    <span className="ml-1 text-primary" title="Read from the clip's Discord caption. Change it if it is wrong.">
+      · from caption
+    </span>
+  ) : null
 }
 
 /** What to do about it, in one sentence. */

@@ -45,6 +45,7 @@ import {
   measuredMvt,
 } from 'coachboard-shared/vbt'
 import RepTable from '../components/analysis/RepTable'
+import { captionFill, type CaptionField } from '../components/analysis/captionFill'
 import TrackingControls from '../components/analysis/TrackingControls'
 import LoadError from '../components/LoadError'
 import VelocityPanel, {
@@ -245,6 +246,36 @@ export default function VideoAnalysis() {
     // survive this, hence only clearing when the param is genuinely absent.
     if (!mediaId) setSource(null)
   }, [mediaId])
+
+  // The Discord caption ("180 kg for 2 @8, bänk") fills in what the set was
+  // (BP14). Every field started empty although the clip carried the answer.
+  // Marked "from caption" until the coach changes it.
+  const [fromCaption, setFromCaption] = useState<ReadonlySet<CaptionField>>(new Set())
+  useEffect(() => {
+    const cap = source?.kind === 'discord' ? source.item.parsedCaption : null
+    const fill = captionFill(cap)
+    setFromCaption(new Set(Object.keys(fill) as CaptionField[]))
+    if (Object.keys(fill).length === 0) return
+    setSetContext((c) => ({
+      ...c,
+      ...(fill.lift ? { lift: fill.lift, metric: null } : {}),
+      ...(fill.load != null ? { loadText: String(fill.load) } : {}),
+      ...(fill.reps != null ? { repsText: String(fill.reps) } : {}),
+      ...(fill.rpe != null ? { calledRpe: fill.rpe } : {}),
+    }))
+  }, [source])
+  /** The panel's changes, dropping the "from caption" mark from whatever the coach changed. */
+  const changeSetContext = (next: SetContextState) => {
+    setFromCaption((marks) => {
+      const kept = new Set(marks)
+      if (next.lift !== setContext.lift) kept.delete('lift')
+      if (next.loadText !== setContext.loadText) kept.delete('load')
+      if (next.repsText !== setContext.repsText) kept.delete('reps')
+      if (next.calledRpe !== setContext.calledRpe) kept.delete('rpe')
+      return kept.size === marks.size ? marks : kept
+    })
+    setSetContext(next)
+  }
 
   // The roster, for attaching a local clip to whoever is in it.
   useEffect(() => {
@@ -1368,7 +1399,8 @@ export default function VideoAnalysis() {
                 savedPoints={savedPoints}
                 maxes={athleteMaxes}
                 value={setContext}
-                onChange={setSetContext}
+                onChange={changeSetContext}
+                fromCaption={fromCaption}
                 onSetScale={startCalibration}
               />
             )}
