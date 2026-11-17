@@ -8,6 +8,7 @@ import {
   type PoseFrame,
 } from 'coachboard-shared/pose'
 import { isDrawable, simplify, type Point, type Stroke } from './annotations'
+import { paintDot, paintPath, paintStrokes, repWindows, sampleAt } from './pathPaint'
 import { useAnalysisKeys } from './analysisKeys'
 import type { Sample } from './tracker.core'
 
@@ -136,14 +137,8 @@ interface Props {
   trackRange?: { from: number; to: number } | null
 }
 
-/**
- * Each rep as a stretch of the clip: from the top before it (the end of the
- * rep before, or the start of the path) down to its bottom and back up.
- */
-export function repWindows(reps: { startT: number; endT: number }[], pathStart: number) {
-  const sorted = [...reps].sort((a, b) => a.startT - b.startT)
-  return sorted.map((r, i) => ({ from: i ? sorted[i - 1].endT : pathStart, bottom: r.startT, to: r.endT }))
-}
+// Kept importable from here, where the pages have always found it.
+export { repWindows }
 
 /** One step of ← / →. The clip's real frame rate is not knowable from the element; 1/30 s is a frame of a phone clip. */
 const FRAME_S = 1 / 30
@@ -410,26 +405,7 @@ export default function AnalysisStage({
     const penStrokes = drawingRef.current
       ? [...(strokes ?? []), { color, points: drawingRef.current }]
       : (strokes ?? [])
-    for (const stroke of penStrokes) {
-      if (stroke.points.length < 2) continue
-      const trace = () => {
-        ctx.beginPath()
-        stroke.points.forEach((p, i) =>
-          i ? ctx.lineTo(p.x * scale, p.y * scale) : ctx.moveTo(p.x * scale, p.y * scale),
-        )
-        ctx.stroke()
-      }
-      ctx.lineJoin = 'round'
-      ctx.lineCap = 'round'
-      // Same dark casing as the bar path: gym footage contains something every
-      // colour disappears into somewhere.
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
-      ctx.lineWidth = 6
-      trace()
-      ctx.strokeStyle = stroke.color
-      ctx.lineWidth = 3.5
-      trace()
-    }
+    paintStrokes(ctx, penStrokes, scale)
 
     // Which frame the compositor has actually PRESENTED, not where the playback
     // clock has got to. The clock runs ahead, which made the bar-path dot lead
@@ -497,80 +473,17 @@ export default function AnalysisStage({
     // so far — so the line grows as the clip plays.
     const path = samples ?? livePathRef?.current ?? null
 
-    // The whole path, so a track that wandered off the bar is obvious at a
-    // glance. Quality numbers cannot be trusted to reveal that on their own.
-    if (path && path.length > 1) {
-      /** The path between two times (all of it by default). */
-      const trace = (from = -Infinity, to = Infinity) => {
-        ctx.beginPath()
-        let started = false
-        for (const s of path) {
-          if (s.t < from || s.t > to) continue
-          if (started) ctx.lineTo(s.x * scale, s.y * scale)
-          else { ctx.moveTo(s.x * scale, s.y * scale); started = true }
-        }
-        ctx.stroke()
-      }
-      /** Casing, then the colour: whichever colour the coach picks, gym footage contains something it blends into. */
-      const cased = (width: number, from?: number, to?: number) => {
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
-        ctx.lineWidth = width + 2.5
-        trace(from, to)
-        ctx.strokeStyle = color
-        ctx.lineWidth = width
-        trace(from, to)
-      }
-      ctx.lineJoin = 'round'
-      ctx.lineCap = 'round'
-      // Reps apart (BP9). Five reps drawn as one line pile into a blob; with
-      // the reps known, the others are dimmed and the rep under the playhead
-      // stands out, its way down lighter than its way up.
-      const windows = samples && reps?.length ? repWindows(reps, path[0].t) : null
-      const current = windows?.find((w) => playhead >= w.from && playhead <= w.to) ?? null
-      if (windows && current) {
-        ctx.globalAlpha = 0.3
-        cased(2)
-        ctx.globalAlpha = 0.6
-        cased(2.5, current.from, current.bottom)
-        ctx.globalAlpha = 1
-        cased(3.5, current.bottom, current.to)
-      } else {
-        // The whole path, so a track that wandered off the bar is obvious at a
-        // glance. Quality numbers cannot be trusted to reveal that on their own.
-        cased(2.5)
-      }
-    }
+    // The whole path, reps apart once it is finished (BP9) — see paintPath.
+    if (path) paintPath(ctx, { path, reps: samples ? reps : null, playhead, color, scale })
 
     // The dot, riding the bar: whichever sample is nearest the frame ON SCREEN.
     // `playhead` above is requestVideoFrameCallback's presented mediaTime rather
     // than video.currentTime, because the playback clock runs ahead of what the
     // compositor has drawn — the dot led the bar by a frame or two and looked
     // like it was lagging the lift on the way up.
-    const marker = samples?.length
-      ? samples.reduce((best, s) =>
-          Math.abs(s.t - playhead) < Math.abs(best.t - playhead) ? s : best,
-        )
-      : (path?.[path.length - 1] ?? null)
+    const marker = samples?.length ? sampleAt(samples, playhead) : (path?.[path.length - 1] ?? null)
     const point = marker ?? seed
-
-    if (point) {
-      const cx = point.x * scale
-      const cy = point.y * scale
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
-      ctx.lineWidth = 4
-      ctx.beginPath()
-      ctx.arc(cx, cy, 9, 0, Math.PI * 2)
-      ctx.stroke()
-      ctx.strokeStyle = color
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.arc(cx, cy, 9, 0, Math.PI * 2)
-      ctx.stroke()
-      ctx.fillStyle = color
-      ctx.beginPath()
-      ctx.arc(cx, cy, 3, 0, Math.PI * 2)
-      ctx.fill()
-    }
+    if (point) paintDot(ctx, point, color, scale)
 
     // The search box, shown only before tracking: it is what the coach is
     // really choosing when they click, so its size should not be a mystery.
