@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, FileVideo, LineChart, Pencil, PersonStanding } from 'lucide-react'
+import { ArrowLeft, FileDown, FileVideo, LineChart, Pencil, PersonStanding } from 'lucide-react'
 import { RPE_VALUES } from 'coachboard-shared/rpe'
 import { num } from '../lib/num'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
@@ -33,6 +33,7 @@ import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleC
 import BarSpeedChart from '../components/analysis/BarSpeedChart'
 import PathClipButton from '../components/analysis/PathClipButton'
 import PathImageButtons from '../components/analysis/PathImageButtons'
+import { downloadCsv, repCsv } from '../components/analysis/repCsv'
 import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
 import { useTrackerColor } from '../components/analysis/trackerColor'
 import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
@@ -461,9 +462,20 @@ export default function SavedAnalysis() {
 
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <div className="space-y-2">
-          <h2 className="text-sm font-medium">
-            Concentric velocity — {metrics.length} {metrics.length === 1 ? 'rep' : 'reps'}
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-medium">
+              Concentric velocity — {metrics.length} {metrics.length === 1 ? 'rep' : 'reps'}
+            </h2>
+            {/* The rep table as a file (BP42). */}
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Save the rep table as a CSV file, for your own sheets"
+              onClick={() => downloadCsv(repCsv(metrics, { track: analysis.track, pixelsPerMetre }), analysis.sourceLabel || 'lift')}
+            >
+              <FileDown className="h-4 w-4" /> CSV
+            </Button>
+          </div>
           {/* The live page's table (BP1, BP2, BP4): every speed, the one the set
               is read from marked, the ⚠ flag, and a rep can be struck off — at
               once, with Undo. The last rep stays: a set needs one. */}

@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Check,
   Columns2,
+  FileDown,
   Loader2,
   Save,
   Smartphone,
@@ -52,6 +53,7 @@ import PathPlot from '../components/analysis/PathPlot'
 import BarSpeedChart from '../components/analysis/BarSpeedChart'
 import PathClipButton from '../components/analysis/PathClipButton'
 import PathImageButtons from '../components/analysis/PathImageButtons'
+import { downloadCsv, repCsv } from '../components/analysis/repCsv'
 import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleChart'
 import { captionFill, type CaptionField } from '../components/analysis/captionFill'
 import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
@@ -1563,14 +1565,25 @@ export default function VideoAnalysis() {
 
             {samples && trackedReps.length > 0 && (
               <div className="space-y-2">
-                <h2 className="text-sm font-medium">
-                  Concentric velocity — {reps.length} {reps.length === 1 ? 'rep' : 'reps'}
-                  {excludedReps.size > 0 && (
-                    <span className="ml-1 font-normal text-muted-foreground">
-                      ({excludedReps.size} struck off)
-                    </span>
-                  )}
-                </h2>
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-medium">
+                    Concentric velocity — {reps.length} {reps.length === 1 ? 'rep' : 'reps'}
+                    {excludedReps.size > 0 && (
+                      <span className="ml-1 font-normal text-muted-foreground">
+                        ({excludedReps.size} struck off)
+                      </span>
+                    )}
+                  </h2>
+                  {/* The rep table as a file (BP42). */}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title="Save the rep table as a CSV file, for your own sheets"
+                    onClick={() => downloadCsv(repCsv(trackedReps, { track: samples, pixelsPerMetre, excluded: excludedReps }), sourceLabel || 'lift')}
+                  >
+                    <FileDown className="h-4 w-4" /> CSV
+                  </Button>
+                </div>
                 <p className="text-xs text-muted-foreground">
                   A cycle that was not a rep — a re-rack, a failed attempt, a bounce in the walkout —
                   skews everything measured from the set. Strike it off and every number below is
