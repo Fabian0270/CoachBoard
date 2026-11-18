@@ -694,6 +694,8 @@ export interface AnalysisLink {
   /** Null: linked to the day only, or the row has since been deleted. */
   exerciseId: string | null
   exerciseName: string | null
+  /** The row's velocity target as typed (BP39); null without a row or a target. */
+  exerciseVelocity: string | null
 }
 
 /** A row of a day a set could be linked to. */
@@ -705,6 +707,8 @@ export interface AnalysisLinkRow {
   /** The planned load (Load Cap). */
   weight: number | null
   loadUsed: string | null
+  /** The row's velocity target as typed (BP39). */
+  velocity: string | null
   /** The lift matches the set's, and the load agrees when there is one. */
   fits: boolean
 }

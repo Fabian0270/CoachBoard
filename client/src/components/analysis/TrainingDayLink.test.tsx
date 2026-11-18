@@ -14,14 +14,14 @@ const days: AnalysisLinkDay[] = [
     workoutId: 'w1', date: '2026-11-17', workoutName: 'Heavy day', programId: 'p1', programName: 'Block',
     suggestedExerciseId: 'e1',
     rows: [
-      { exerciseId: 'e1', name: 'Squat', sets: '1', reps: '3', weight: 180, loadUsed: null, fits: true },
-      { exerciseId: 'e2', name: 'Bench', sets: '3', reps: '5', weight: 100, loadUsed: null, fits: false },
+      { exerciseId: 'e1', name: 'Squat', sets: '1', reps: '3', weight: 180, loadUsed: null, velocity: null, fits: true },
+      { exerciseId: 'e2', name: 'Bench', sets: '3', reps: '5', weight: 100, loadUsed: null, velocity: null, fits: false },
     ],
   },
   {
     workoutId: 'w2', date: '2026-11-19', workoutName: 'Light day', programId: 'p1', programName: 'Block',
     suggestedExerciseId: null,
-    rows: [{ exerciseId: 'e3', name: 'Squat', sets: '3', reps: '5', weight: 140, loadUsed: null, fits: true }],
+    rows: [{ exerciseId: 'e3', name: 'Squat', sets: '3', reps: '5', weight: 140, loadUsed: null, velocity: null, fits: true }],
   },
 ]
 
@@ -40,7 +40,7 @@ describe('TrainingDayLink', () => {
   it("picks the clip's day and the one row that fits", async () => {
     const server = serve({ '/api/analysis/link-candidates': { body: days } })
     renderScreen(<Harness preferred="w1" />)
-    await waitFor(() => expect(resolved).toEqual({ workoutId: 'w1', exerciseId: 'e1' }))
+    await waitFor(() => expect(resolved).toMatchObject({ workoutId: 'w1', exerciseId: 'e1', exerciseName: 'Squat' }))
     expect((screen.getByLabelText('Training day') as HTMLSelectElement).value).toBe('w1')
     expect((screen.getByLabelText('Exercise') as HTMLSelectElement).value).toBe('e1')
     expect(server.calls[0]).toContain('lift=back-squat')
@@ -51,12 +51,12 @@ describe('TrainingDayLink', () => {
     serve({ '/api/analysis/link-candidates': { body: days } })
     renderScreen(<Harness preferred={null} />)
     const daySelect = await screen.findByLabelText('Training day')
-    expect(resolved).toEqual(NO_LINK)
+    expect(resolved).toMatchObject(NO_LINK)
     await userEvent.selectOptions(daySelect, 'w2')
     // No single fit on that day: the day only, until a row is picked.
-    await waitFor(() => expect(resolved).toEqual({ workoutId: 'w2', exerciseId: null }))
+    await waitFor(() => expect(resolved).toMatchObject({ workoutId: 'w2', exerciseId: null }))
     await userEvent.selectOptions(screen.getByLabelText('Exercise'), 'e3')
-    await waitFor(() => expect(resolved).toEqual({ workoutId: 'w2', exerciseId: 'e3' }))
+    await waitFor(() => expect(resolved).toMatchObject({ workoutId: 'w2', exerciseId: 'e3' }))
   })
 
   it('says so when there is no day near the set', async () => {

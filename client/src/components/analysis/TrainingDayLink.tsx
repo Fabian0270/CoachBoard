@@ -15,6 +15,9 @@ import type { AnalysisLinkDay } from 'coachboard-shared/videoAnalysis'
 export interface DayLink {
   workoutId: string | null
   exerciseId: string | null
+  /** The chosen row's name and velocity target (BP39), filled in when resolved. */
+  exerciseName?: string | null
+  velocity?: string | null
 }
 
 export const NO_LINK: DayLink = { workoutId: null, exerciseId: null }
@@ -78,7 +81,11 @@ export default function TrainingDayLink({
   }, [days, preferredWorkoutId])
   const link = choice ?? auto
 
-  useEffect(() => { onResolved(link) }, [link.workoutId, link.exerciseId]) // eslint-disable-line react-hooks/exhaustive-deps
+  // With the row's name and target, which the page judges the set against (BP39).
+  const row = days?.find((d) => d.workoutId === link.workoutId)?.rows.find((r) => r.exerciseId === link.exerciseId) ?? null
+  useEffect(() => {
+    onResolved({ workoutId: link.workoutId, exerciseId: link.exerciseId, exerciseName: row?.name ?? null, velocity: row?.velocity ?? null })
+  }, [link.workoutId, link.exerciseId, row?.name, row?.velocity]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!athleteId) return null
   const chosenDay = days?.find((d) => d.workoutId === link.workoutId) ?? null

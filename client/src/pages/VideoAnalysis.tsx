@@ -74,6 +74,7 @@ import {
   useAthleteMvt,
 } from '../components/analysis/useVbtHistory'
 import TrainingDayLink, { NO_LINK, type DayLink } from '../components/analysis/TrainingDayLink'
+import VelocityTargetLine, { tableTarget, useSetTarget } from '../components/analysis/VelocityTarget'
 import { localDay } from 'coachboard-shared/vbtSession'
 import { useConfirm } from '../components/ui/confirm-dialog'
 import SavedAnalyses from '../components/analysis/SavedAnalyses'
@@ -582,6 +583,8 @@ export default function VideoAnalysis() {
   useEffect(() => { setLinkChoice(null) }, [athleteId, source])
   const liftedDay = source?.kind === 'discord' ? localDay(source.item.postedAt) : localDay(new Date().toISOString())
   const metric = setContext.metric ?? defaultVelocityMetric(setContext.lift)
+  // The linked row's velocity target, and the set against it (BP39, D74).
+  const setTarget = useSetTarget(dayLink.velocity, reps, metric, pixelsPerMetre !== null)
   const { anchors: savedAnchors, points: savedPoints, rows: historyRows } = useVbtHistory(
     athleteId,
     setContext.lift,
@@ -1691,6 +1694,7 @@ export default function VideoAnalysis() {
                   pixelsPerMetre={pixelsPerMetre}
                   excluded={excludedReps}
                   onToggle={toggleRep}
+                  target={tableTarget(setTarget)}
                   midFoot={busy ? null : midFootByRep(setContext.lift, poseRef.current, samples, trackedReps, pixelsPerMetre)}
                   onJump={(index) => {
                     const at = repTops[trackedReps.findIndex((r) => r.index === index)]
@@ -1717,6 +1721,9 @@ export default function VideoAnalysis() {
             {/* Velocity-based readouts live in their own panel: they need the
                 lift and load, which the tracker cannot know, and they are
                 interpretation rather than measurement. */}
+            {samples && reps.length > 0 && (
+              <VelocityTargetLine setTarget={setTarget} rowName={dayLink.exerciseName ?? null} calibrated={pixelsPerMetre !== null} />
+            )}
             {samples && reps.length > 0 && (
               <VelocityPanel
                 reps={reps}

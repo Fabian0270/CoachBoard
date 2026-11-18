@@ -35,6 +35,10 @@ import PathClipButton from '../components/analysis/PathClipButton'
 import PathImageButtons, { repSpeeds } from '../components/analysis/PathImageButtons'
 import FeedbackPanel from '../components/analysis/FeedbackPanel'
 import SavedDayLink from '../components/analysis/SavedDayLink'
+import VelocityTargetLine, { tableTarget, useSetTarget } from '../components/analysis/VelocityTarget'
+import type { RepMetrics as SavedRepMetrics } from 'coachboard-shared/videoAnalysis'
+
+const NO_REPS: SavedRepMetrics[] = []
 import { feedbackMessage } from '../components/analysis/feedbackMessage'
 import { buildPathImage } from '../components/analysis/pathImage'
 import { downloadCsv, repCsv } from '../components/analysis/repCsv'
@@ -203,6 +207,10 @@ export default function SavedAnalysis() {
     if (!analysis || !pose || pose.frames.length === 0) return null
     return angleSeries(pose.frames, analysis.track ?? [], analysisPixelsPerMetre(analysis))
   }, [analysis, pose])
+
+  // The linked row's velocity target, and the set against it (BP39, D74).
+  // Above the early returns: hooks cannot run after one.
+  const setTarget = useSetTarget(analysis?.link?.exerciseVelocity, analysis?.metrics ?? NO_REPS, metric, !!analysis?.calibration)
 
   /**
    * Correcting what the set was — lift, load, called RPE — after it was saved.
@@ -588,6 +596,7 @@ export default function SavedAnalysis() {
               v.currentTime = at
             } : undefined}
             midFoot={midFootByRep(analysis.lift, pose?.frames, analysis.track, metrics, pixelsPerMetre)}
+            target={tableTarget(setTarget)}
             referenceIndex={isReferenceSet ? reference.pointer!.repIndex : null}
             onReference={athleteId && lift !== 'other' && calibrated ? (index) => {
               const clearing = isReferenceSet && reference.pointer!.repIndex === index
@@ -596,6 +605,7 @@ export default function SavedAnalysis() {
                 .catch((err) => toast.error(`Could not set the reference rep. ${errorMessage(err)}`))
             } : undefined}
           />
+          <VelocityTargetLine setTarget={setTarget} rowName={analysis.link?.exerciseName ?? null} calibrated={calibrated} />
           {reference.shape && !isReferenceSet && (
             <ReferencePanel
               shape={reference.shape}

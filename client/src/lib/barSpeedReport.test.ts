@@ -17,7 +17,7 @@ const program = {
 
 const link = (over: Partial<AnalysisLink> = {}): AnalysisLink => ({
   workoutId: 'w1', date: '2026-11-17', workoutName: 'Heavy day', programId: 'p1', programName: 'Block',
-  exerciseId: 'e1', exerciseName: 'Squat', ...over,
+  exerciseId: 'e1', exerciseName: 'Squat', exerciseVelocity: null, ...over,
 })
 
 let n = 0

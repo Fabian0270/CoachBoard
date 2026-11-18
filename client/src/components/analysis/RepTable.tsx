@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { Star, Undo2, X } from 'lucide-react'
 import { looksMistracked, repDrift, repTempos, type RepDrift, type RepMetrics, type Sample } from 'coachboard-shared/videoAnalysis'
 import type { RepMidFoot } from 'coachboard-shared/pose'
+import type { RepMark, TargetVerdict } from 'coachboard-shared/velocityTarget'
 import {
   readRep,
   rpeFromLastRepVelocity,
@@ -42,6 +43,30 @@ interface RepTableProps {
   onReference?: (index: number) => void
   /** Bar over mid-foot per rep, by rep index (BP31). Absent: no column. */
   midFoot?: Map<number, RepMidFoot | null> | null
+  /** The set against its row's velocity target (BP39, D74). Absent: no column. */
+  target?: { verdict: TargetVerdict; hasSpeed: boolean; hasLoss: boolean } | null
+}
+
+const MARK_LABEL: Record<RepMark, { label: string; tone: string }> = {
+  slow: { label: 'under target', tone: 'text-destructive' },
+  fast: { label: 'over range', tone: 'text-warning' },
+  cutoff: { label: 'cut-off reached', tone: 'text-warning' },
+  'past-cutoff': { label: 'past cut-off', tone: 'text-destructive' },
+}
+
+/** One rep against the target: its loss when there is a cut-off, and what it missed. */
+function TargetCell({ index, target }: { index: number; target: NonNullable<RepTableProps['target']> }) {
+  const marks = target.verdict.marks.get(index) ?? []
+  const loss = target.hasLoss ? target.verdict.losses.get(index) : undefined
+  return (
+    <td className="whitespace-nowrap py-1 pr-4">
+      {loss !== undefined && <span className="num text-muted-foreground">−{Math.round(loss)} %</span>}
+      {marks.map((m) => (
+        <span key={m} className={`ml-1.5 text-xs first:ml-0 ${MARK_LABEL[m].tone}`}>{MARK_LABEL[m].label}</span>
+      ))}
+      {marks.length === 0 && target.hasSpeed && <span className="ml-1.5 text-xs text-success first:ml-0">on target</span>}
+    </td>
+  )
 }
 
 /**
@@ -72,7 +97,7 @@ export function fmtDrift(d: RepDrift): string {
   return `${val(d.maxPx, d.maxM)} ${unit}, ends ${ends}`
 }
 
-export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump, referenceIndex = null, onReference, midFoot = null }: RepTableProps) {
+export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump, referenceIndex = null, onReference, midFoot = null, target = null }: RepTableProps) {
   // The way down and the pause at the bottom (BP12), from the path like the drift.
   const tempos = useMemo(() => (track ? repTempos(track, reps) : null), [track, reps])
   const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
@@ -115,6 +140,11 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
                 <th className="py-1 pr-4 font-medium">≈ RPE</th>
                 <th className="py-1 font-medium">Quality</th>
               </>
+            )}
+            {target && (
+              <th className="py-1 pr-4 font-medium" title="Each rep against the row's velocity target: its loss from the fastest rep before it, and whether it was under the speed or past the cut-off">
+                Target
+              </th>
             )}
             {onReference && <th className="py-1 pl-4 font-medium"><span className="sr-only">Reference rep</span></th>}
             {onToggle && <th className="py-1 pl-4 font-medium"><span className="sr-only">Strike off</span></th>}
@@ -195,6 +225,7 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
                     <td className="py-1 text-muted-foreground">{zone ? zone.label : '—'}</td>
                   </>
                 )}
+                {target && (out ? <td className="py-1 pr-4" /> : <TargetCell index={r.index} target={target} />)}
                 {onReference && (
                   <td className="py-1 pl-4 text-right">
                     <button

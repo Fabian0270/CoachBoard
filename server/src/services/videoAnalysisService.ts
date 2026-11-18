@@ -45,6 +45,7 @@ interface AnalysisRow {
   link_exercise_id?: string | null
   link_exercise_name?: string | null
   link_exercise_workout_id?: string | null
+  link_exercise_velocity?: string | null
 }
 
 /**
@@ -95,6 +96,7 @@ function toDto(row: AnalysisRow): VideoAnalysisDto {
           programName: row.link_program_name ?? '',
           exerciseId: row.link_exercise_id && row.link_exercise_workout_id === row.link_workout_id ? row.link_exercise_id : null,
           exerciseName: row.link_exercise_id && row.link_exercise_workout_id === row.link_workout_id ? row.link_exercise_name ?? null : null,
+          exerciseVelocity: row.link_exercise_id && row.link_exercise_workout_id === row.link_workout_id ? row.link_exercise_velocity ?? null : null,
         }
       : null,
   }
@@ -119,6 +121,7 @@ function baseQuery(withTrack = true) {
       'lw.id as link_workout_id', 'lw.scheduled_date as link_date', 'lw.name as link_workout_name',
       'lp.id as link_program_id', 'lp.name as link_program_name',
       'le.id as link_exercise_id', 'le.name as link_exercise_name', 'le.workout_id as link_exercise_workout_id',
+      'le.velocity as link_exercise_velocity',
     ])
     .select(
       withTrack

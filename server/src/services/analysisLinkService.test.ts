@@ -149,12 +149,22 @@ describe('the link on a saved analysis', () => {
     const saved = await saveAnalysis(input({ athleteId: a, workoutId: d.workoutId, exerciseId: d.ids[0] }))
     expect(saved.link).toEqual({
       workoutId: d.workoutId, date: '2026-11-17', workoutName: 'Heavy day', programId: d.programId, programName: 'Block',
-      exerciseId: d.ids[0], exerciseName: 'Squat',
+      exerciseId: d.ids[0], exerciseName: 'Squat', exerciseVelocity: null,
     })
     await getDb().deleteFrom('exercises').where('id', '=', d.ids[0]).execute()
     expect((await getAnalysis(saved.id))!.link).toMatchObject({ workoutId: d.workoutId, exerciseId: null, exerciseName: null })
     await getDb().deleteFrom('workouts').where('id', '=', d.workoutId).execute()
     expect((await getAnalysis(saved.id))!.link).toBeNull()
+  })
+
+  it("carries the row's velocity target (BP39), in the link and the candidates", async () => {
+    const a = await athlete()
+    const d = await day(a, '2026-11-17', [{ name: 'Squat', weight: 180 }])
+    await getDb().updateTable('exercises').set({ velocity: '0.50 · VL 20%' }).where('id', '=', d.ids[0]).execute()
+    const saved = await saveAnalysis(input({ athleteId: a, workoutId: d.workoutId, exerciseId: d.ids[0] }))
+    expect(saved.link?.exerciseVelocity).toBe('0.50 · VL 20%')
+    const days = await linkCandidates(a, '2026-11-17', 'back-squat', 180)
+    expect(days[0].rows[0].velocity).toBe('0.50 · VL 20%')
   })
 
   it('a different athlete clears it; changing the day without a row clears the row', async () => {

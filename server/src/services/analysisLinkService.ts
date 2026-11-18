@@ -82,7 +82,7 @@ export async function linkCandidates(
       const fits = new Set(rowsFittingSet(own, lift, loadKg))
       const rows: AnalysisLinkRow[] = own.map((e) => ({
         exerciseId: e.id, name: e.name, sets: e.sets, reps: e.reps, weight: e.weight,
-        loadUsed: e.load_used, fits: fits.has(e),
+        loadUsed: e.load_used, velocity: e.velocity, fits: fits.has(e),
       }))
       return {
         workoutId: w.id, date: w.date, workoutName: w.name, programId: w.programId, programName: w.programName,
