@@ -88,7 +88,11 @@ export async function commitExternalProgram(
   // with the cue column on, so they show in the day editor and go back out on
   // export. A sheet without any keeps the columns a program always had.
   const hasCues = exercises.some((ex) => !!ex.notes?.trim())
-  const enabledColumns = hasCues ? JSON.stringify([...DEFAULT_ENABLED_COLUMNS, 'notes']) : null
+  // The same for velocity targets (BP39).
+  const hasVelocity = exercises.some((ex) => !!ex.velocity?.trim())
+  const enabledColumns = hasCues || hasVelocity
+    ? JSON.stringify([...DEFAULT_ENABLED_COLUMNS, ...(hasCues ? ['notes'] : []), ...(hasVelocity ? ['velocity'] : [])])
+    : null
 
   const db = getDb()
   await db.transaction().execute(async (trx) => {
@@ -162,6 +166,7 @@ export async function commitExternalProgram(
             intensity: row.intensity ?? null,
             load_used: row.load,
             rpe: row.rpe,
+            velocity: row.velocity?.trim() || null,
             group_id: groupId,
             suggestion_note: null,
           })

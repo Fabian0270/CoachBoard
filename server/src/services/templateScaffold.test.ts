@@ -341,3 +341,44 @@ describe('renderScaffold — the cue column', () => {
     }
   })
 })
+
+describe('renderScaffold — the Velocity column (BP39, D73)', () => {
+  const workouts = [{ id: 'd1', scheduled_date: '2026-01-05' }]
+  const exercises = [
+    { name: 'Front Squat', sets: '4', reps: '6', weight: 150, intensity: null, load_used: null, rest_time: null, group_id: null, rpe: '7', order_index: 0, workout_id: 'd1', velocity: '0.50' },
+    { name: 'Pull-ups', sets: '3', reps: '10', weight: null, intensity: null, load_used: null, rest_time: null, group_id: null, rpe: null, order_index: 1, workout_id: 'd1', velocity: null },
+  ]
+  const on = { ...program, enabled_columns: JSON.stringify(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'velocity']) }
+
+  it('with no velocity or intensity column, the target follows the RPE target', async () => {
+    const ws = await load((await renderScaffold(await buildTemplate(), on, workouts, exercises))!)
+    expect(ws.getCell(6, 6).value).toBe('@7 · 0.50')
+    expect(ws.getCell(6, 2).value).toBe('Front Squat')
+    expect(ws.getCell(7, 6).value ?? null).toBeNull()
+  })
+
+  it("into the sheet's own velocity column when it has one", async () => {
+    const wb = new ExcelJS.Workbook()
+    const sheet = wb.addWorksheet('Block 1')
+    sheet.getCell(4, 2).value = 'DAY 1'; sheet.getCell(4, 3).value = 'Week 1'
+    sheet.getCell(4, 10).value = 'DAY 1'; sheet.getCell(4, 11).value = 'Week 2'
+    const cols = ['Movement', 'SETS', 'REPS', 'LOAD', 'RPE', 'eRPE', 'Velocity']
+    cols.forEach((t, i) => { sheet.getCell(5, 2 + i).value = t; sheet.getCell(5, 10 + i).value = t })
+    ;['Squat', 1, 3, 180, '@6', 6, '0.3'].forEach((v, i) => { sheet.getCell(6, 2 + i).value = v; sheet.getCell(6, 10 + i).value = v })
+    ;['Bench', 3, 8, 110, '@6', 6, '0.4'].forEach((v, i) => { sheet.getCell(7, 2 + i).value = v; sheet.getCell(7, 10 + i).value = v })
+    const template = Buffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer).toString('base64')
+    const ws = await load((await renderScaffold(template, on, workouts, exercises))!)
+    expect(ws.getCell(6, 8).value).toBe('0.50')
+    expect(ws.getCell(6, 6).value).toBe('@7')
+    expect(ws.getCell(7, 8).value ?? null).toBeNull()
+    // Off: the column is cleared, the template's old targets gone.
+    const off = await load((await renderScaffold(template, program, workouts, exercises))!)
+    expect(off.getCell(6, 8).value ?? null).toBeNull()
+    expect(off.getCell(6, 6).value).toBe('@7')
+  })
+
+  it('off, nothing of it is written', async () => {
+    const ws = await load((await renderScaffold(await buildTemplate(), program, workouts, exercises))!)
+    expect(ws.getCell(6, 6).value).toBe('@7')
+  })
+})

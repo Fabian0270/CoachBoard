@@ -243,7 +243,7 @@ export interface ImportPreview {
 // CoachBoard's own export. Parser discovers structure rather than replaying it.
 // ---------------------------------------------------------------------------
 
-export type ExternalColumnKey = 'exercise' | 'sets' | 'reps' | 'load' | 'rpe' | 'notes'
+export type ExternalColumnKey = 'exercise' | 'sets' | 'reps' | 'load' | 'rpe' | 'notes' | 'velocity'
 
 export interface ExternalColumnMapping {
   // 1-based worksheet column index detected for each key, or null if not found
@@ -254,6 +254,8 @@ export interface ExternalColumnMapping {
   rpe: number | null
   /** The coach's own notes / comments / cues column, read into the cue column. */
   notes: number | null
+  /** The coach's velocity target column (BP39, D73). */
+  velocity?: number | null
   rpeFromRir: boolean   // true when the RPE column was actually an RIR column (converted)
 }
 
@@ -284,6 +286,8 @@ export interface ExternalExerciseRow {
   restTime?: string | null   // "Rest Time"
   /** The coach's cue from a notes / comments column. Turns the program's cue column on. */
   notes?: string | null
+  /** The velocity target from a velocity / speed column (BP39). Turns the Velocity column on. */
+  velocity?: string | null
   // Server-internal: absolute 1-based worksheet columns for each writable field
   // on this row (sheetRow). Used only by the scaffold export engine to locate and
   // rewrite the original file's cells; ignored by capture/commit and the client.
@@ -300,6 +304,7 @@ export interface ExternalExerciseRow {
     rpe: number | null
     erpe: number | null
     notes?: number | null     // the sheet's own notes / comments column
+    velocity?: number | null  // the sheet's own velocity target column (BP39)
   }
 }
 
@@ -317,6 +322,7 @@ export interface ExternalParseOverrides {
   load?: number | null
   rpe?: number | null
   notes?: number | null
+  velocity?: number | null
   rpeFromRir?: boolean            // treat the RPE column as RIR (convert to RPE)
 }
 

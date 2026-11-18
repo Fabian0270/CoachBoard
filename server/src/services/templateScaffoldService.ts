@@ -3,7 +3,7 @@ import { parseExternalFile } from './externalImportService.js'
 import { WEEK_BANNER, isWeekdayLabel, weekdayOffset } from './external-import/valueNormalizers.js'
 import { MAX_SHEET_COLS, sheetBounds, valueAt } from '../lib/sheetBounds.js'
 import type { ExternalExerciseRow } from 'coachboard-shared'
-import { nameWithCue } from 'coachboard-shared/exportLayout'
+import { intensityWithVelocity, nameWithCue } from 'coachboard-shared/exportLayout'
 
 // ---------------------------------------------------------------------------
 // Scaffold export (Feature: export style templates v2) — LAYOUT-AGNOSTIC.
@@ -34,6 +34,11 @@ type ExerciseRow = {
   rpe: string | null
   /** The coach's cue; written after the name when the program's cue column is on. */
   notes?: string | null
+  /** The velocity target (BP39); written only when the program's Velocity column is on. */
+  velocity?: string | null
+  /** Set by renderScaffold when the sheet has neither a velocity nor an intensity
+   *  column: the target then follows the RPE target in its cell (D73). */
+  velocityAfterRpe?: string | null
   group_id: string | null
   order_index: number
   workout_id: string
@@ -41,14 +46,38 @@ type ExerciseRow = {
 type WorkoutRow = { id: string; scheduled_date: string | null }
 type ProgramRow = { start_date: string | null; enabled_columns?: string | null }
 
-/** Whether the program's cue column is switched on. */
-function cuesOn(program: ProgramRow): boolean {
+/** Whether one of the program's optional columns is switched on. */
+function columnOn(program: ProgramRow, column: 'notes' | 'velocity'): boolean {
   try {
     const parsed = JSON.parse(program.enabled_columns ?? 'null')
-    return Array.isArray(parsed) && parsed.includes('notes')
+    return Array.isArray(parsed) && parsed.includes(column)
   } catch {
     return false
   }
+}
+/** Whether the program's cue column is switched on. */
+const cuesOn = (program: ProgramRow) => columnOn(program, 'notes')
+
+/** "@8 · 0.50": the RPE target, then the velocity target when it has nowhere else to go. */
+function withRpeVelocity(rpe: string | null, ex: ExerciseRow): string | null {
+  const v = (ex.velocityAfterRpe ?? '').trim()
+  if (!v) return rpe
+  return rpe ? `${rpe} · ${v}` : v
+}
+
+/**
+ * Where the velocity target goes in the coach's own sheet (BP39, D73): its own
+ * column when the sheet has one, else after the Intensity text, else after the
+ * RPE target — the column a captured coach sheet keeps its prescription in.
+ * Off: never written.
+ */
+function placeVelocity(program: ProgramRow, tEx: ExternalExerciseRow[], rows: ExerciseRow[]): ExerciseRow[] {
+  if (!columnOn(program, 'velocity')) return rows.map((ex) => ({ ...ex, velocity: null }))
+  if (tEx.some((e) => e.refillCols?.velocity != null)) return rows
+  if (tEx.some((e) => e.refillCols?.intensity != null)) {
+    return rows.map((ex) => ({ ...ex, intensity: intensityWithVelocity(ex.intensity, ex.velocity) || null, velocity: null }))
+  }
+  return rows.map((ex) => ({ ...ex, velocityAfterRpe: ex.velocity ?? null, velocity: null }))
 }
 
 // WEEK_BANNER and isWeekdayLabel are shared with the importer, so both read the
@@ -249,7 +278,7 @@ function copyRowPrefix(src: ExcelJS.Worksheet, lastRow: number, lastCol: number)
   return dst
 }
 
-interface RelCols { name: number | null; sets: number | null; reps: number | null; load: number | null; loadCap: number | null; intensity: number | null; restTime: number | null; rpe: number | null; erpe: number | null; notes: number | null }
+interface RelCols { name: number | null; sets: number | null; reps: number | null; load: number | null; loadCap: number | null; intensity: number | null; restTime: number | null; rpe: number | null; erpe: number | null; notes: number | null; velocity: number | null }
 
 // ---------------------------------------------------------------------------
 // Row axis (vertical layout): weeks stacked top-to-bottom, sharing columns.
@@ -294,7 +323,7 @@ function deriveRowGeometry(tEx: ExternalExerciseRow[], ws: ExcelJS.Worksheet): R
   const days: RowDay[] = []
   for (const e of week0) {
     const c = e.refillCols!
-    const slot: RowSlot = { relRow: e.sheetRow - top, cols: { name: c.name, sets: c.sets, reps: c.reps, load: c.load, loadCap: c.loadCap ?? null, intensity: c.intensity ?? null, restTime: c.restTime ?? null, rpe: c.rpe, erpe: c.erpe, notes: c.notes ?? null } }
+    const slot: RowSlot = { relRow: e.sheetRow - top, cols: { name: c.name, sets: c.sets, reps: c.reps, load: c.load, loadCap: c.loadCap ?? null, intensity: c.intensity ?? null, restTime: c.restTime ?? null, rpe: c.rpe, erpe: c.erpe, notes: c.notes ?? null, velocity: c.velocity ?? null } }
     let d = days.find((x) => x.dayIndex === e.dayIndex)
     if (!d) { d = { dayIndex: e.dayIndex, slots: [] }; days.push(d) }
     d.slots.push(slot)
@@ -390,9 +419,10 @@ async function renderRowAxis(
         } else {
           set(slot.cols.load, ex ? (loadValue(ex, slot.cols.intensity === null) ?? null) : null)
         }
-        set(slot.cols.rpe, ex ? fmtRpe(rpeValue(ex)) : null)
+        set(slot.cols.rpe, ex ? withRpeVelocity(fmtRpe(rpeValue(ex)), ex) : null)
         set(slot.cols.erpe, null)
         set(slot.cols.notes, ex ? ex.notes ?? null : null)
+        set(slot.cols.velocity, ex ? ex.velocity ?? null : null)
       })
     })
     // Renumber the week banner in this block.
@@ -478,6 +508,7 @@ function deriveColumnGeometry(tEx: ExternalExerciseRow[]): ColumnGeometry | null
       rpe: c.rpe !== null ? c.rpe - start0 : null,
       erpe: c.erpe !== null ? c.erpe - start0 : null,
       notes: c.notes !== null && c.notes !== undefined ? c.notes - start0 : null,
+      velocity: c.velocity !== null && c.velocity !== undefined ? c.velocity - start0 : null,
     }
     let day = days.find((d) => d.dayIndex === e.dayIndex)
     if (!day) { day = { dayIndex: e.dayIndex, slots: [] }; days.push(day) }
@@ -606,9 +637,10 @@ export async function renderScaffold(
   // and a notes column the sheet has is left empty rather than keeping the
   // template's old text.
   const sheetHasNotes = tEx.some((e) => e.refillCols?.notes != null)
-  const exercises = !cuesOn(program)
+  const withCues = !cuesOn(program)
     ? rows.map((ex) => ({ ...ex, notes: null }))
     : sheetHasNotes ? rows : rows.map((ex) => ({ ...ex, name: nameWithCue(ex.name, ex.notes), notes: null }))
+  const exercises = placeVelocity(program, tEx, withCues)
 
   const prog = buildProgramContent(program, workouts, exercises)
   if (!prog || prog.weekCount === 0) return null
@@ -845,9 +877,10 @@ export async function renderScaffold(
         } else {
           set(slot.rel.load, ex ? (loadValue(ex, slot.rel.intensity === null) ?? null) : null)
         }
-        set(slot.rel.rpe, ex ? fmtRpe(rpeValue(ex)) : null)
+        set(slot.rel.rpe, ex ? withRpeVelocity(fmtRpe(rpeValue(ex)), ex) : null)
         set(slot.rel.erpe, null) // executed RPE always blank in a fresh block
         set(slot.rel.notes, ex ? ex.notes ?? null : null)
+        set(slot.rel.velocity, ex ? ex.velocity ?? null : null)
       })
     })
 

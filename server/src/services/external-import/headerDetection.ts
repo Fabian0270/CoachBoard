@@ -19,6 +19,8 @@ export const ALIASES: Record<ExternalColumnKey, string[]> = {
     'kommentar', 'kommentarer', 'anteckning', 'anteckningar', 'notering', 'noteringar',
     'instruktion', 'instruktioner',
   ],
+  // The coach's velocity target (BP39, D73): "Velocity", "Target speed", "VBT", "VL".
+  velocity: ['velocity', 'speed', 'vbt', 'vl', 'hastighet', 'fart', 'stånghastighet'],
 }
 const RIR_ALIASES = ['rir']
 
@@ -55,11 +57,22 @@ export function isCueHeader(text: string): boolean {
     !tokens.some((t) => RESULT_WORDS.includes(t) || ATHLETE_WORDS.includes(t))
 }
 
+/**
+ * Whether a header is the coach's velocity target column (BP39). A column of
+ * what the bar did ("Actual speed", "Velocity achieved") is a result, not a
+ * target, and is left alone.
+ */
+export function isVelocityHeader(text: string): boolean {
+  const tokens = tokenize(text)
+  return tokens.some((t) => ALIASES.velocity.includes(t)) &&
+    !tokens.some((t) => RESULT_WORDS.includes(t) || ATHLETE_WORDS.includes(t))
+}
+
 // Keys resolved in this order so a more specific header wins a shared token.
 // e.g. "Last Set RPE" tokenises to [last, set, rpe]; resolving rpe before sets
 // claims that column for rpe, leaving a plain "Sets" column free for sets.
 // Notes go last, so a header naming a field ("Load notes") stays that field.
-const RESOLVE_ORDER: ExternalColumnKey[] = ['exercise', 'rpe', 'reps', 'sets', 'load', 'notes']
+const RESOLVE_ORDER: ExternalColumnKey[] = ['exercise', 'rpe', 'reps', 'sets', 'load', 'velocity', 'notes']
 
 export interface ResolvedHeader {
   mapping: ExternalColumnMapping
@@ -71,7 +84,7 @@ export function resolveHeaderRow(cellTexts: string[]): ResolvedHeader {
   const tokensByCol = cellTexts.map(tokenize)
   const claimed = new Set<number>()
   const mapping: ExternalColumnMapping = {
-    exercise: null, sets: null, reps: null, load: null, rpe: null, notes: null, rpeFromRir: false,
+    exercise: null, sets: null, reps: null, load: null, rpe: null, notes: null, velocity: null, rpeFromRir: false,
   }
 
   for (const key of RESOLVE_ORDER) {
@@ -79,6 +92,7 @@ export function resolveHeaderRow(cellTexts: string[]): ResolvedHeader {
     for (let c = 0; c < tokensByCol.length; c++) {
       if (claimed.has(c)) continue
       if (key === 'notes' && !isCueHeader(cellTexts[c] ?? '')) continue
+      if (key === 'velocity' && !isVelocityHeader(cellTexts[c] ?? '')) continue
       const tokens = tokensByCol[c]
       const hit = tokens.find((t) => aliases.includes(t))
       if (hit) {
@@ -90,8 +104,8 @@ export function resolveHeaderRow(cellTexts: string[]): ResolvedHeader {
     }
   }
 
-  // Notes never count toward picking the header row: a row of free text that
-  // says "Notes" must not outrank the real Exercise/Sets/Reps row.
+  // Notes and velocity never count toward picking the header row: a row of free
+  // text that says "Notes" must not outrank the real Exercise/Sets/Reps row.
   const matchCount = (['exercise', 'sets', 'reps', 'load', 'rpe'] as const)
     .filter((k) => mapping[k] !== null).length
   return { mapping, matchCount }

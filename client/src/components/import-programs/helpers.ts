@@ -41,11 +41,12 @@ export function overrideParams(o: ExternalParseOverrides): URLSearchParams {
   return p
 }
 
-export const MAP_FIELDS: { key: 'exercise' | 'sets' | 'reps' | 'load' | 'rpe' | 'notes'; label: string; required?: boolean }[] = [
+export const MAP_FIELDS: { key: 'exercise' | 'sets' | 'reps' | 'load' | 'rpe' | 'notes' | 'velocity'; label: string; required?: boolean }[] = [
   { key: 'exercise', label: 'Exercise', required: true },
   { key: 'sets', label: 'Sets', required: true },
   { key: 'reps', label: 'Reps', required: true },
   { key: 'load', label: 'Load' },
   { key: 'rpe', label: 'RPE / RIR' },
   { key: 'notes', label: 'Notes / cues' },
+  { key: 'velocity', label: 'Velocity target' },
 ]

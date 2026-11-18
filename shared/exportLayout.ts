@@ -29,6 +29,7 @@ export const COLUMN_LABELS = {
   load_used: 'Load Used',
   rpe: 'Last Set RPE',
   notes: 'Notes',
+  velocity: 'Velocity',
 } as const
 
 export type ExportColumnKey = keyof typeof COLUMN_LABELS
@@ -51,6 +52,8 @@ export const FULL_COLUMN_ORDER: ExportColumnKey[] = [
   'rpe',
   // Last, so switching the cue column on moves no other column in a week block.
   'notes',
+  // After it, for the same reason (BP39, D71).
+  'velocity',
 ]
 
 const ALWAYS_ON = new Set<ExportColumnKey>(['name', 'sets', 'reps'])
@@ -91,8 +94,13 @@ export function exportColumnKeysFor(
     // CoachBoard's own Minimalistic look gets a Notes column when cues are on.
     // A coach's captured style keeps its own columns; the cue goes after the
     // exercise name instead (see cueAfterName).
-    if (template === MINIMAL_DESCRIPTOR && enabledColumns.includes('notes') && !keys.includes('notes')) {
-      return [...keys, 'notes']
+    // So does the Velocity column (BP39, D73); a captured style takes the target
+    // after its Intensity text instead (see velocityInIntensity in the exporter).
+    if (template === MINIMAL_DESCRIPTOR) {
+      const extra: ExportColumnKey[] = []
+      if (enabledColumns.includes('notes') && !keys.includes('notes')) extra.push('notes')
+      if (enabledColumns.includes('velocity') && !keys.includes('velocity')) extra.push('velocity')
+      return [...keys, ...extra]
     }
     return keys
   }
@@ -103,6 +111,11 @@ export function exportColumnKeysFor(
 export function nameWithCue(name: string, cue: string | null | undefined): string {
   const c = (cue ?? '').trim()
   return c ? `${name} - ${c}` : name
+}
+
+/** "RPE 8 · 0.50 · VL 20%": a velocity target after the Intensity text, for a sheet with no velocity column (BP39, D73). */
+export function intensityWithVelocity(intensity: string | null | undefined, velocity: string | null | undefined): string {
+  return [(intensity ?? '').trim(), (velocity ?? '').trim()].filter(Boolean).join(' · ')
 }
 
 /**
