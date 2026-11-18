@@ -17,6 +17,7 @@
     "./vbt": "./vbt.ts",
     "./pose": "./pose.ts",
     "./vbtSession": "./vbtSession.ts",
-    "./velocityTarget": "./velocityTarget.ts"
+    "./velocityTarget": "./velocityTarget.ts",
+    "./units": "./units.ts"
   }
 }

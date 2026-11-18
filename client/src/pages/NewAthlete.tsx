@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -11,12 +11,19 @@ import {
 import { useToast } from '../components/ui/toast'
 import PageHeader, { BackLink } from '../components/PageHeader'
 import { WEIGHT_CLASSES, isPowerlifting } from 'coachboard-shared'
+import { LOAD_UNITS, type LoadUnit } from 'coachboard-shared/units'
+import { getJson } from '../lib/api'
 
 export default function NewAthlete() {
   const navigate = useNavigate()
   const toast = useToast()
   const [form, setForm] = useState({ name: '', email: '', sport: '', weight_class: '', date_of_birth: '', notes: '' })
   const [saving, setSaving] = useState(false)
+  // kg or lb (S3, D78): starts on the Settings default.
+  const [unit, setUnit] = useState<LoadUnit>('kg')
+  useEffect(() => {
+    getJson<{ defaultUnit: LoadUnit }>('/api/settings/units').then((r) => setUnit(r.defaultUnit)).catch(() => { /* kg */ })
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -25,7 +32,7 @@ export default function NewAthlete() {
       const res = await fetch('/api/athletes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, unit }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
@@ -73,6 +80,18 @@ export default function NewAthlete() {
                 </Select>
               </div>
             )}
+            <div className="space-y-1">
+              <Label>Unit</Label>
+              <div role="radiogroup" aria-label="Unit" className="flex gap-2">
+                {LOAD_UNITS.map((u) => (
+                  <label key={u} className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-sm ${unit === u ? 'border-primary bg-primary/10' : ''}`}>
+                    <input type="radio" name="unit" className="accent-primary" checked={unit === u} onChange={() => setUnit(u)} />
+                    {u}
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">Their loads, maxes and sheets are in this unit.</p>
+            </div>
             <div className="space-y-1">
               <Label htmlFor="date_of_birth">Date of Birth</Label>
               <Input id="date_of_birth" type="date" value={form.date_of_birth} onChange={(e) => setForm({ ...form, date_of_birth: e.target.value })} />

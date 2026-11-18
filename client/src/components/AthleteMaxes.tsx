@@ -11,6 +11,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { localToday } from '../lib/dates'
 import { ApiError, errorMessage, getList, sendJson } from '../lib/api'
 import LoadError from './LoadError'
+import { plateStep, unitOf, type LoadUnit } from 'coachboard-shared/units'
 
 const SUGGESTED_LIFTS = ['Squat', 'Bench Press', 'Deadlift']
 
@@ -21,7 +22,12 @@ function formatWeight(w: number): string {
   return Number.isInteger(w) ? String(w) : w.toFixed(1)
 }
 
-export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
+/**
+ * `unit` is the athlete's (S3, D76): new PRs are logged in it. A max recorded in
+ * another unit (kept when the coach switched without converting) still shows
+ * and rounds in its own.
+ */
+export default function AthleteMaxes({ athleteId, unit = 'kg' }: { athleteId: string; unit?: LoadUnit }) {
   const toast = useToast()
   const confirm = useConfirm()
   const [maxes, setMaxes] = useState<AthleteMax[]>([])
@@ -70,6 +76,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
         body: JSON.stringify({
           lift_name: form.lift_name.trim(),
           weight: Number(form.weight),
+          unit,
           recorded_at: form.recorded_at,
         }),
       })
@@ -139,7 +146,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
               </datalist>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="pr-weight">Weight (kg)</Label>
+              <Label htmlFor="pr-weight">Weight ({unit})</Label>
               <Input
                 id="pr-weight"
                 required
@@ -197,7 +204,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
                 <>
                   <p className="text-sm text-muted-foreground">
                     Weights for {activeMax.lift_name} based on a {formatWeight(activeMax.weight)} {activeMax.unit} max
-                    (Tuchscherer RPE chart, rounded to 2.5 kg).
+                    (Tuchscherer RPE chart, rounded to {plateStep(unitOf(activeMax.unit))} {unitOf(activeMax.unit)}).
                   </p>
                   <div className="overflow-x-auto rounded-md border border-border">
                     <table className="w-full min-w-[600px] border-collapse text-sm">
@@ -216,7 +223,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
                           <tr key={r} className="even:bg-muted/20">
                             <td className="border-b border-r border-border px-2 py-1 font-medium">{r}</td>
                             {RPE_VALUES.map((rpe) => {
-                              const w = targetWeight(activeMax.weight, r, rpe)
+                              const w = targetWeight(activeMax.weight, r, rpe, plateStep(unitOf(activeMax.unit)))
                               return (
                                 <td key={rpe} className="border-b border-r border-border px-2 py-1 text-right tabular-nums">
                                   {w === null ? '—' : formatWeight(w)}

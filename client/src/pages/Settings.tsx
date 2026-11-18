@@ -8,14 +8,15 @@ import {
 } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
-import { Mail, Send, ExternalLink, AlertTriangle, Lock, MessageSquare, Database, Keyboard } from 'lucide-react'
+import { Mail, Send, ExternalLink, AlertTriangle, Lock, MessageSquare, Database, Keyboard, Scale } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import DiscordSettingsCard from '../components/discord/DiscordSettingsCard'
 import DataSettingsCard from '../components/DataSettingsCard'
 import HelpSettingsCard from '../components/HelpSettingsCard'
+import UnitSettingsCard from '../components/UnitSettingsCard'
 import { useSearchParams } from 'react-router-dom'
 
-const TABS = ['email', 'discord', 'data', 'help']
+const TABS = ['email', 'discord', 'units', 'data', 'help']
 import { errorMessage, getJson } from '../lib/api'
 
 type Provider = 'gmail' | 'outlook' | 'custom'
@@ -177,6 +178,7 @@ export default function Settings() {
         <TabsList>
           <TabsTrigger value="email"><Mail className="h-4 w-4 mr-2" />Email delivery</TabsTrigger>
           <TabsTrigger value="discord"><MessageSquare className="h-4 w-4 mr-2" />Discord</TabsTrigger>
+          <TabsTrigger value="units"><Scale className="h-4 w-4 mr-2" />Units</TabsTrigger>
           <TabsTrigger value="data"><Database className="h-4 w-4 mr-2" />Your data</TabsTrigger>
           <TabsTrigger value="help"><Keyboard className="h-4 w-4 mr-2" />Help</TabsTrigger>
         </TabsList>
@@ -310,6 +312,9 @@ export default function Settings() {
         </TabsContent>
         <TabsContent value="discord">
           <DiscordSettingsCard />
+        </TabsContent>
+        <TabsContent value="units">
+          <UnitSettingsCard />
         </TabsContent>
         <TabsContent value="data">
           <DataSettingsCard />

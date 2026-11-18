@@ -18,8 +18,16 @@ export interface AthleteTable {
   date_of_birth: string | null
   notes: string | null
   archived: number   // 0/1 — archived athletes are hidden from the active roster
+  /** 'kg' | 'lb' (S3, D76): the unit every load of this athlete is stored and shown in. */
+  unit: Generated<string>
   created_at: string
   updated_at: string
+}
+
+/** Small app-wide preferences, kept in the database so a backup carries them (S3, D78). */
+export interface AppSettingTable {
+  key: string
+  value: string
 }
 
 export interface ProgramTable {
@@ -340,6 +348,7 @@ export interface PoseCorrectionTable {
 
 export interface DB {
   athletes: AthleteTable
+  app_settings: AppSettingTable
   programs: ProgramTable
   workouts: WorkoutTable
   exercises: ExerciseTable
@@ -534,6 +543,14 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   // scale, and nothing checked it. Height gives an independent expectation for
   // how far the bar should travel, which is checkable in a way velocity is not.
   await addColumnIfMissing('athletes', 'height_cm', 'INTEGER')
+  // S3 (D76): kg or lb per athlete. Everyone so far was kg.
+  await addColumnIfMissing('athletes', 'unit', "TEXT NOT NULL DEFAULT 'kg'")
+  await sql`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `.execute(_db)
   await addColumnIfMissing('programs', 'enabled_columns', 'TEXT')
   await addColumnIfMissing('programs', 'focus', 'TEXT')
   await addColumnIfMissing('programs', 'export_layout', 'TEXT')

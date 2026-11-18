@@ -15,6 +15,8 @@ export interface Athlete {
   date_of_birth: string | null
   notes: string | null
   archived: number   // 0/1 — archived athletes (e.g. historical back-catalogue imports) are hidden from the active roster
+  /** 'kg' | 'lb' (S3): every load of this athlete is stored and shown in it. Optional for older fixtures; missing = kg. */
+  unit?: string
   created_at: string
   updated_at: string
 }

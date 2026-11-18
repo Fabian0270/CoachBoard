@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db.js'
+import { getDefaultUnit } from './unitService.js'
+import { unitOf, type LoadUnit } from 'coachboard-shared/units'
 
 export async function findAllAthletes(opts: { includeArchived?: boolean } = {}) {
   let query = getDb().selectFrom('athletes').selectAll()
@@ -22,11 +24,15 @@ export async function createAthlete(data: {
   date_of_birth?: string | null
   notes?: string | null
   archived?: boolean
+  /** kg or lb; the Settings default when not given (S3, D78). */
+  unit?: LoadUnit
 }) {
   const now = new Date().toISOString()
+  const unit = data.unit ?? await getDefaultUnit()
   return getDb()
     .insertInto('athletes')
     .values({
+      unit,
       id: uuidv4(),
       name: data.name,
       email: data.email ?? null,
@@ -128,6 +134,10 @@ export async function createAthleteMax(data: {
   /** A bar path estimate the coach confirmed (BP34), not a lifted max. */
   estimated?: boolean
 }) {
+  // A max is in the athlete's unit unless the caller says otherwise (S3, D76):
+  // the report's "Set PR", the bar path's estimated max and this tab all post
+  // a number without one.
+  const athlete = data.unit ? null : await getDb().selectFrom('athletes').select('unit').where('id', '=', data.athlete_id).executeTakeFirst()
   return getDb()
     .insertInto('athlete_maxes')
     .values({
@@ -135,7 +145,7 @@ export async function createAthleteMax(data: {
       athlete_id: data.athlete_id,
       lift_name: data.lift_name,
       weight: data.weight,
-      unit: data.unit ?? 'kg',
+      unit: data.unit ?? unitOf(athlete?.unit),
       recorded_at: data.recorded_at ?? new Date().toISOString().slice(0, 10),
       notes: data.notes ?? null,
       estimated: data.estimated ? 1 : 0,

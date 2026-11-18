@@ -15,6 +15,8 @@ import { getAthleteMvts, setAthleteMvt } from '../services/athleteMvtService.js'
 import { getReferenceReps, ReferenceRepRefused, setReferenceRep } from '../services/referenceRepService.js'
 import { getAthleteProgress } from '../services/athleteProgressService.js'
 import { fail } from '../lib/httpError.js'
+import { z } from 'zod'
+import { switchAthleteUnit, unitImpact } from '../services/unitService.js'
 
 const router = Router()
 
@@ -105,6 +107,31 @@ router.put('/:id/mvt', async (req: Request, res: Response): Promise<void> => {
   } catch (err) {
     // A rejected value is the coach's typo, not a server fault.
     res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid velocity' })
+  }
+})
+
+// kg / lb (S3, D77): what switching would convert, and the switch itself.
+router.get('/:id/unit-impact', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const athlete = await findAthleteById(String(req.params.id))
+    if (!athlete) { res.status(404).json({ error: 'Athlete not found' }); return }
+    res.json(await unitImpact(athlete.id))
+  } catch (err) {
+    fail(res, 'Failed to count the loads', err)
+  }
+})
+
+const unitSwitchSchema = z.object({ unit: z.enum(['kg', 'lb']), convert: z.boolean() })
+
+router.post('/:id/unit', async (req: Request, res: Response): Promise<void> => {
+  const parsed = unitSwitchSchema.safeParse(req.body)
+  if (!parsed.success) { res.status(400).json({ error: 'kg or lb, and whether to convert' }); return }
+  try {
+    const done = await switchAthleteUnit(String(req.params.id), parsed.data.unit, parsed.data.convert)
+    if (!done) { res.status(404).json({ error: 'Athlete not found' }); return }
+    res.json(await findAthleteById(String(req.params.id)))
+  } catch (err) {
+    fail(res, 'Failed to change the unit', err)
   }
 })
 

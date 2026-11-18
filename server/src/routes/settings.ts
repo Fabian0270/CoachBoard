@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { getSettings, saveSettings, EmailSettingsError } from '../services/emailSettingsService.js'
 import { sendTestEmail } from '../services/emailService.js'
+import { getDefaultUnit, setDefaultUnit } from '../services/unitService.js'
 
 const router = Router()
 
@@ -38,6 +39,21 @@ router.put('/email', async (req, res) => {
     }
     res.status(500).json({ error: 'Failed to save email settings' })
   }
+})
+
+// The unit new athletes start with (S3, D78).
+router.get('/units', async (_req, res) => {
+  res.json({ defaultUnit: await getDefaultUnit() })
+})
+
+router.put('/units', async (req, res) => {
+  const parsed = z.object({ defaultUnit: z.enum(['kg', 'lb']) }).safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'kg or lb' })
+    return
+  }
+  await setDefaultUnit(parsed.data.defaultUnit)
+  res.json({ defaultUnit: await getDefaultUnit() })
 })
 
 router.post('/email/test', async (_req, res) => {

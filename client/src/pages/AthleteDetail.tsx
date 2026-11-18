@@ -40,6 +40,8 @@ import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgr
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
 import NewProgramChooser from '../components/NewProgramChooser'
 import LoadError from '../components/LoadError'
+import AthleteUnitSwitch from '../components/AthleteUnitSwitch'
+import { unitOf } from 'coachboard-shared/units'
 import { ApiError, errorMessage, getJson, getList } from '../lib/api'
 
 interface Athlete {
@@ -48,6 +50,7 @@ interface Athlete {
   sport: string | null
   weight_class: string | null
   height_cm: number | null
+  unit?: string
   email: string | null
   date_of_birth: string | null
   notes: string | null
@@ -80,6 +83,7 @@ export default function AthleteDetail() {
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [unitEpoch, setUnitEpoch] = useState(0)
 
   // Any failure used to read as "Athlete not found — they may have been
   // deleted" (or a page stuck on Loading), and a failed program list as "No
@@ -224,6 +228,8 @@ export default function AthleteDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* kg or lb (S3, D77): switching can convert their numbers. */}
+          <AthleteUnitSwitch athlete={athlete} onChanged={(a) => { setAthlete(a); setUnitEpoch((n) => n + 1) }} />
           <Button variant="outline" size="sm" onClick={startEdit}><Pencil className="h-3.5 w-3.5" />Edit</Button>
           <Button
             variant="ghost"
@@ -236,7 +242,8 @@ export default function AthleteDetail() {
           </Button>
         </div>
       </section>
-      <Tabs defaultValue={initialTab}>
+      {/* Remounted after a unit switch, so every tab reads the numbers again. */}
+      <Tabs key={unitEpoch} defaultValue={initialTab}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="programs">Programs ({programs.length})</TabsTrigger>
@@ -389,7 +396,7 @@ export default function AthleteDetail() {
           <SlideIn>{id && <AthleteProgress athleteId={id} />}</SlideIn>
         </TabsContent>
         <TabsContent value="maxes">
-          <SlideIn>{id && <AthleteMaxes athleteId={id} />}</SlideIn>
+          <SlideIn>{id && <AthleteMaxes athleteId={id} unit={unitOf(athlete.unit)} />}</SlideIn>
         </TabsContent>
         <TabsContent value="barpath">
           <SlideIn>
