@@ -83,7 +83,7 @@ describe('Data settings — restores', () => {
   it('offers no undo when there is nothing to go back to', async () => {
     serve({ ...paths, '/api/backup/info': { body: info() } })
     renderScreen(<DataSettingsCard />)
-    expect(await screen.findByText(/C:\/data\/backups|backups/)).toBeTruthy()
+    expect(await screen.findByText('Automatic backups')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Undo last restore/ })).toBeNull()
   })
 })

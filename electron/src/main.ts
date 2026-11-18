@@ -66,6 +66,10 @@ interface ServerBundle {
   configureUpdates?(opts: { install: () => void }): void
   setUpdateState?(state: { status: string; version?: string | null; message?: string | null }): void
   runStartupBackup?(): Promise<string | null>
+  /** A backup a day while the app stays open (N4). Returns a stop function. */
+  startDailyBackups?(): () => void
+  /** The system folder dialog, for choosing the second backup folder (N4). */
+  configureBackupMirror?(opts: { pickFolder: () => Promise<string | null> }): void
   /** The settings half of a staged restore. Needs the keychain, so it runs
    *  after configureSecureStore rather than inside initializeDatabase. */
   applyPendingSettingsRestore?(dbPath: string): Promise<{
@@ -257,6 +261,22 @@ async function startServer(): Promise<void> {
   // Best-effort inside the service — a backup failure must never block startup.
   const backup = await bundle.runStartupBackup?.()
   if (backup) log(`Startup backup: ${backup}`)
+  // And one a day for as long as the app stays open (N4, D92).
+  bundle.startDailyBackups?.()
+  // The second backup folder is chosen with the system's own folder dialog, so
+  // the page never hands the server a path (N4).
+  bundle.configureBackupMirror?.({
+    pickFolder: async () => {
+      const options: Electron.OpenDialogOptions = {
+        title: 'Choose a second folder for your backups',
+        buttonLabel: 'Use this folder',
+        properties: ['openDirectory', 'createDirectory'],
+      }
+      const parent = ownWindow && !ownWindow.isDestroyed() ? ownWindow : null
+      const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
+      return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+    },
+  })
 
   const staticDir = resolveServerPath('client/dist')
   log(`Static dir: ${staticDir} (exists: ${fs.existsSync(staticDir)})`)

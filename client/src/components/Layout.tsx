@@ -8,6 +8,7 @@ import QuickSearch from './QuickSearch'
 import { useDiscordInboxCounts } from '../hooks/useDiscordInboxCounts'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
 import { useRecorder } from './recorder/RecorderProvider'
+import { useBackupMirrorAlert } from '../hooks/useBackupMirrorAlert'
 
 interface NavItem {
   to: string
@@ -51,6 +52,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { configured: discordConfigured } = useDiscordConfigured()
   const { startRecording, isRecording } = useRecorder()
   const inboxBadge = inboxCounts.unmatched + inboxCounts.unreviewed + inboxCounts.unreadMessages
+  useBackupMirrorAlert()
 
   /**
    * Whether a nav entry owns the current screen.

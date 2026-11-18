@@ -6,10 +6,19 @@ import {
   cancelPendingRestore,
   dismissRestoreFailure,
   exportToBuffer,
+  mirrorCopyDone,
+  newestBackupPath,
   runStartupBackup,
   stageRestore,
   stageUndoRestore,
 } from '../services/backupService.js'
+import {
+  MirrorError,
+  clearMirrorDir,
+  mirrorStatus,
+  pickMirrorFolder,
+  setMirrorDir,
+} from '../services/backupMirrorService.js'
 
 const router = Router()
 
@@ -45,9 +54,51 @@ router.post('/now', async (_req: Request, res: Response): Promise<void> => {
       res.status(503).json({ error: 'Backups are not available in this environment' })
       return
     }
-    res.json({ path: dest })
+    // Pressed by the coach, so wait for the second folder too and say how it went.
+    await mirrorCopyDone()
+    res.json({ path: dest, mirror: mirrorStatus() })
   } catch (err) {
     fail(res, 'Failed to write a backup', err)
+  }
+})
+
+// ── The second backup folder (N4) ────────────────────────────────────────
+// No route takes a path from the page: the folder comes from the system's own
+// "choose a folder" dialog, so the page cannot point CoachBoard at any path.
+
+// GET /api/backup/mirror — the folder, when it last worked, and why not if not.
+router.get('/mirror', (_req: Request, res: Response): void => {
+  try {
+    res.json(mirrorStatus())
+  } catch (err) {
+    fail(res, 'Failed to read the second backup folder', err)
+  }
+})
+
+// POST /api/backup/mirror/pick — open the folder dialog; start copying there.
+router.post('/mirror/pick', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const dir = await pickMirrorFolder()
+    if (!dir) {
+      res.json({ cancelled: true, status: mirrorStatus() })
+      return
+    }
+    res.json({ cancelled: false, status: await setMirrorDir(dir, newestBackupPath()) })
+  } catch (err) {
+    if (err instanceof MirrorError) {
+      res.status(400).json({ error: err.message })
+      return
+    }
+    fail(res, 'Failed to set the second backup folder', err)
+  }
+})
+
+// DELETE /api/backup/mirror — stop copying; what is already there stays.
+router.delete('/mirror', (_req: Request, res: Response): void => {
+  try {
+    res.json(clearMirrorDir())
+  } catch (err) {
+    fail(res, 'Failed to stop the second backup folder', err)
   }
 })
 
