@@ -19,7 +19,7 @@ import type { LoadVelocityProfile } from 'coachboard-shared/vbt'
  * shows the coach how much of the estimate is measurement and how much is
  * extrapolation — which a bare "1RM: 205 kg" never could.
  */
-export default function LoadVelocityChart({ profile }: { profile: LoadVelocityProfile }) {
+export default function LoadVelocityChart({ profile, unit = 'kg' }: { profile: LoadVelocityProfile; unit?: string }) {
   const { line, dots, domain } = useMemo(() => {
     const loads = profile.points.map((p) => p.load)
     const minLoad = Math.min(...loads)
@@ -64,7 +64,7 @@ export default function LoadVelocityChart({ profile }: { profile: LoadVelocityPr
             dataKey="load"
             domain={domain}
             tick={{ fontSize: 12 }}
-            unit=" kg"
+            unit={` ${unit}`}
             allowDecimals={false}
           />
           <YAxis
@@ -86,7 +86,7 @@ export default function LoadVelocityChart({ profile }: { profile: LoadVelocityPr
               `${value.toFixed(2)} m/s`,
               name === 'fitted' ? 'Profile' : 'Tracked set',
             ]}
-            labelFormatter={(load: number) => `${Math.round(load)} kg`}
+            labelFormatter={(load: number) => `${Math.round(load)} ${unit}`}
           />
           {/* The fitted line is data, not a reference marker, so it carries the
               MVT crossing with it when the profile is refitted. */}

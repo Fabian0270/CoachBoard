@@ -284,6 +284,8 @@ export default function SavedAnalysis() {
   // `lift` is declared above the early returns now — the pose hooks need it, and
   // hooks cannot run after a conditional return.
   const pixelsPerMetre = analysisPixelsPerMetre(analysis)
+  // The unit the set's load is in (S3): the athlete's.
+  const unit = analysis.athleteUnit ?? 'kg'
 
   const calibrated = analysis.calibration !== null
   // The top before each rep: 1–9 and a click on a rep's number go there.
@@ -330,7 +332,7 @@ export default function SavedAnalysis() {
         <div className="min-w-0 flex-[1_1_16rem]">
           <h1 className="text-lg font-semibold">
             {isVbtLift(analysis.lift) ? liftLabel(lift) : 'Bar path analysis'}
-            {analysis.loadKg != null && ` — ${analysis.loadKg} kg`}
+            {analysis.loadKg != null && ` — ${analysis.loadKg} ${unit}`}
           </h1>
           <p className="truncate text-sm text-muted-foreground">
             {analysis.athleteName ?? 'Unassigned'} · {analysis.createdAt.slice(0, 10)} ·{' '}
@@ -340,11 +342,11 @@ export default function SavedAnalysis() {
           {pr?.kind === 'pr' && (
             <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
               <Trophy className="h-3.5 w-3.5" />
-              Velocity PR — fastest {analysis.loadKg} kg {liftLabel(lift).toLowerCase()} so far: {pr.best.toFixed(2)} m/s (was {pr.previous.toFixed(2)})
+              Velocity PR — fastest {analysis.loadKg} {unit} {liftLabel(lift).toLowerCase()} so far: {pr.best.toFixed(2)} m/s (was {pr.previous.toFixed(2)})
             </p>
           )}
           {pr?.kind === 'first' && (
-            <p className="mt-1 text-xs text-muted-foreground">The first {analysis.loadKg} kg {liftLabel(lift).toLowerCase()} tracked for this athlete.</p>
+            <p className="mt-1 text-xs text-muted-foreground">The first {analysis.loadKg} {unit} {liftLabel(lift).toLowerCase()} tracked for this athlete.</p>
           )}
         </div>
         {/* The same pen as the tracking page and Compare (BP7), wherever a video plays. */}
@@ -361,7 +363,7 @@ export default function SavedAnalysis() {
                 color={color}
                 title={[
                   isVbtLift(analysis.lift) ? liftLabel(lift) : 'Bar path',
-                  analysis.loadKg != null ? `${analysis.loadKg} kg` : null,
+                  analysis.loadKg != null ? `${analysis.loadKg} ${unit}` : null,
                   analysis.athleteName,
                   analysis.createdAt.slice(0, 10),
                 ].filter(Boolean).join(' · ')}
@@ -388,7 +390,7 @@ export default function SavedAnalysis() {
             variant="outline"
             size="sm"
             className={videoSrc ? '' : 'ml-auto'}
-            title={`Side by side with the ${analysis.loadKg} kg set from ${lastTime.createdAt.slice(0, 10)}`}
+            title={`Side by side with the ${analysis.loadKg} ${unit} set from ${lastTime.createdAt.slice(0, 10)}`}
             onClick={() => navigate(`/analysis/compare?left=${encodeURIComponent(lastTime.id)}&right=${encodeURIComponent(analysis.id)}`)}
           >
             <Columns2 className="h-4 w-4" /> Compare with last time
@@ -615,6 +617,7 @@ export default function SavedAnalysis() {
               loadKg={analysis.loadKg}
               metric={metric}
               athleteName={analysis.athleteName}
+              unit={unit}
             />
           )}
         </div>
@@ -634,13 +637,14 @@ export default function SavedAnalysis() {
               saving={savingContext}
               onCancel={() => setEditing(false)}
               onSave={saveContext}
+              unit={unit}
             />
           ) : (
             <>
               <Row label="Lift" value={isVbtLift(analysis.lift) ? liftLabel(lift) : 'not recorded'} />
               <Row
                 label="Load"
-                value={analysis.loadKg != null ? `${analysis.loadKg} kg` : 'not recorded'}
+                value={analysis.loadKg != null ? `${analysis.loadKg} ${unit}` : 'not recorded'}
               />
               <Row label="RPE called" value={analysis.calledRpe != null ? `${analysis.calledRpe}` : '—'} />
             </>
@@ -656,7 +660,7 @@ export default function SavedAnalysis() {
           />
           <Row
             label="Estimated 1RM"
-            value={estimate ? `${Math.round(estimate.e1rm * 2) / 2} kg` : '—'}
+            value={estimate ? `${Math.round(estimate.e1rm * 2) / 2} ${unit}` : '—'}
           />
           <Row label="Quality" value={lastV != null ? (zoneFor(lastV)?.label ?? '—') : '—'} />
           {/* The day this set belongs to (BP33, D59): that day's sets of the
@@ -666,10 +670,10 @@ export default function SavedAnalysis() {
               <p className="text-xs font-medium">This session — {session.sets} set{session.sets === 1 ? '' : 's'} of {liftLabel(lift).toLowerCase()}</p>
               {session.todayMax != null ? (
                 <p className="text-sm">
-                  Today&rsquo;s max ≈ <span className="num font-medium">{Math.round(session.todayMax * 2) / 2} kg</span>
+                  Today&rsquo;s max ≈ <span className="num font-medium">{Math.round(session.todayMax * 2) / 2} {unit}</span>
                   {session.vsUsual != null && (
                     <span className={session.vsUsual <= -SLOW_SESSION ? 'text-warning' : 'text-muted-foreground'}>
-                      {' '}— about {Math.abs(Math.round(session.vsUsual * 100))} % {session.vsUsual < 0 ? 'under' : 'over'} the usual {Math.round(session.usualMax! * 2) / 2} kg
+                      {' '}— about {Math.abs(Math.round(session.vsUsual * 100))} % {session.vsUsual < 0 ? 'under' : 'over'} the usual {Math.round(session.usualMax! * 2) / 2} {unit}
                     </span>
                   )}
                   {session.vsUsual == null && <span className="text-muted-foreground"> — no other day to compare with yet</span>}
@@ -696,7 +700,7 @@ export default function SavedAnalysis() {
       {analysis.athleteId && (
         <FeedbackPanel
           draft={feedbackMessage({
-            lift: analysis.lift, loadKg: analysis.loadKg, reps: metrics, metric,
+            lift: analysis.lift, loadKg: analysis.loadKg, unit, reps: metrics, metric,
             rpe: reading ? effectiveRpe(reading, analysis.calledRpe) : null,
             track: analysis.track, pixelsPerMetre, note: analysis.notes,
           })}
@@ -707,7 +711,7 @@ export default function SavedAnalysis() {
             if (!video) return Promise.reject(new Error('The video is not ready.'))
             return buildPathImage({
               video, track: analysis.track, reps: metrics, strokes, color,
-              title: [isVbtLift(analysis.lift) ? liftLabel(lift) : 'Bar path', analysis.loadKg != null ? `${analysis.loadKg} kg` : null, analysis.athleteName, analysis.createdAt.slice(0, 10)].filter(Boolean).join(' · '),
+              title: [isVbtLift(analysis.lift) ? liftLabel(lift) : 'Bar path', analysis.loadKg != null ? `${analysis.loadKg} ${unit}` : null, analysis.athleteName, analysis.createdAt.slice(0, 10)].filter(Boolean).join(' · '),
               repSpeeds: repSpeeds(metrics, metric), note: analysis.notes,
             })
           } : null}
@@ -722,9 +726,11 @@ function SetContextEditor({
   saving,
   onCancel,
   onSave,
+  unit = 'kg',
 }: {
   initial: { lift: string | null; loadKg: number | null; calledRpe: number | null; notes: string | null }
   saving: boolean
+  unit?: string
   onCancel: () => void
   onSave: (change: { lift: string | null; loadKg: number | null; calledRpe: number | null; notes: string | null }) => void
 }) {
@@ -747,7 +753,7 @@ function SetContextEditor({
         </select>
       </label>
       <label className="flex items-center justify-between gap-2">
-        <span className="text-muted-foreground">Load (kg)</span>
+        <span className="text-muted-foreground">Load ({unit})</span>
         <input
           value={loadText}
           onChange={(e) => setLoadText(e.target.value)}

@@ -378,11 +378,11 @@ function Numbers({ a, b }: { a: VideoAnalysisDto; b: VideoAnalysisDto }) {
           : null
       return {
         lift: liftLabel(lift),
-        load: x.loadKg != null ? `${x.loadKg} kg` : '—',
+        load: x.loadKg != null ? `${x.loadKg} ${x.athleteUnit ?? 'kg'}` : '—',
         reps: String(x.metrics.length),
         last: fmt(lastRepVelocity(x.metrics, metric)),
         best: best > 0 ? `${best.toFixed(2)} m/s` : '—',
-        e1rm: estimate ? `${Math.round(estimate.e1rm)} kg` : '—',
+        e1rm: estimate ? `${Math.round(estimate.e1rm)} ${x.athleteUnit ?? 'kg'}` : '—',
       }
     }
     const ra = read(a, ctxA, historyA.anchors, mvtA.byLift)
@@ -475,7 +475,7 @@ const fmt = (v: number | null) => (v == null ? '—' : `${v.toFixed(2)} m/s`)
 
 function describe(a: VideoAnalysisDto): string {
   const lift = isVbtLift(a.lift) ? liftLabel(a.lift) : a.sourceLabel
-  const load = a.loadKg != null ? ` ${a.loadKg} kg` : ''
+  const load = a.loadKg != null ? ` ${a.loadKg} ${a.athleteUnit ?? 'kg'}` : ''
   const who = a.athleteName ? ` — ${a.athleteName}` : ''
   return `${lift}${load}${who} · ${a.createdAt.slice(0, 10)}`
 }

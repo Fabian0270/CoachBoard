@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
@@ -8,14 +8,16 @@ import { Calculator, Flame } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import type { Sex, Equipment, MeetEvent } from 'coachboard-shared/scoring'
 import { allScores } from 'coachboard-shared/scoring'
-import { warmupPlan, platesPerSide } from 'coachboard-shared/warmup'
+import { warmupPlan, platesPerSide, KG_PLATES, LB_PLATES } from 'coachboard-shared/warmup'
+import { LOAD_UNITS, plateStep, toKg, type LoadUnit } from 'coachboard-shared/units'
+import { getJson } from '../lib/api'
 import { num } from '../lib/num'
 
 function fmtScore(value: number | null): string {
   return value == null ? '—' : value.toFixed(2)
 }
 
-function ScoringCalculator() {
+function ScoringCalculator({ unit }: { unit: LoadUnit }) {
   const [sex, setSex] = useState<Sex>('male')
   const [equipment, setEquipment] = useState<Equipment>('classic')
   const [event, setEvent] = useState<MeetEvent>('full')
@@ -23,8 +25,9 @@ function ScoringCalculator() {
   const [total, setTotal] = useState('')
 
   const scores = useMemo(
-    () => allScores({ total: num(total), bodyweight: num(bodyweight), sex, equipment, event }),
-    [total, bodyweight, sex, equipment, event],
+    // The formulas are published in kg; pounds are converted first (S3).
+    () => allScores({ total: toKg(num(total), unit), bodyweight: toKg(num(bodyweight), unit), sex, equipment, event }),
+    [total, bodyweight, sex, equipment, event, unit],
   )
 
   return (
@@ -63,12 +66,12 @@ function ScoringCalculator() {
             </Select>
           </div>
           <div className="space-y-1">
-            <Label>Bodyweight (kg)</Label>
-            <Input type="text" inputMode="decimal" value={bodyweight} onChange={(e) => setBodyweight(e.target.value)} placeholder="e.g. 82.5" />
+            <Label>Bodyweight ({unit})</Label>
+            <Input type="text" inputMode="decimal" value={bodyweight} onChange={(e) => setBodyweight(e.target.value)} placeholder={unit === 'lb' ? 'e.g. 182' : 'e.g. 82.5'} />
           </div>
           <div className="space-y-1">
-            <Label>Total (kg)</Label>
-            <Input type="text" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} placeholder="e.g. 600" />
+            <Label>Total ({unit})</Label>
+            <Input type="text" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} placeholder={unit === 'lb' ? 'e.g. 1320' : 'e.g. 600'} />
           </div>
         </CardContent>
       </Card>
@@ -103,16 +106,20 @@ function ScoringCalculator() {
   )
 }
 
-function WarmupCalculator() {
+const BAR: Record<LoadUnit, number> = { kg: 20, lb: 45 }
+
+function WarmupCalculator({ unit }: { unit: LoadUnit }) {
   const [oneRM, setOneRM] = useState('')
-  const [bar, setBar] = useState('20')
-  const [rounding, setRounding] = useState('2.5')
+  const [bar, setBar] = useState(String(BAR[unit]))
+  const [rounding, setRounding] = useState(String(plateStep(unit)))
+  // A switch of unit starts the bar and the rounding on that unit's (S3).
+  useEffect(() => { setBar(String(BAR[unit])); setRounding(String(plateStep(unit))) }, [unit])
 
   const sets = useMemo(
-    () => warmupPlan(num(oneRM), { barWeight: num(bar) || 20, rounding: num(rounding) || 2.5 }),
-    [oneRM, bar, rounding],
+    () => warmupPlan(num(oneRM), { barWeight: num(bar) || BAR[unit], rounding: num(rounding) || plateStep(unit) }),
+    [oneRM, bar, rounding, unit],
   )
-  const barWeight = num(bar) || 20
+  const barWeight = num(bar) || BAR[unit]
 
   return (
     <div className="space-y-4">
@@ -120,15 +127,15 @@ function WarmupCalculator() {
         <CardHeader><CardTitle>Target</CardTitle></CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-1">
-            <Label>Target 1RM (kg)</Label>
-            <Input type="text" inputMode="decimal" value={oneRM} onChange={(e) => setOneRM(e.target.value)} placeholder="e.g. 200" />
+            <Label>Target 1RM ({unit})</Label>
+            <Input type="text" inputMode="decimal" value={oneRM} onChange={(e) => setOneRM(e.target.value)} placeholder={unit === 'lb' ? 'e.g. 440' : 'e.g. 200'} />
           </div>
           <div className="space-y-1">
-            <Label>Bar weight (kg)</Label>
+            <Label>Bar weight ({unit})</Label>
             <Input type="text" inputMode="decimal" value={bar} onChange={(e) => setBar(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <Label>Round to (kg)</Label>
+            <Label>Round to ({unit})</Label>
             <Input type="text" inputMode="decimal" value={rounding} onChange={(e) => setRounding(e.target.value)} />
           </div>
         </CardContent>
@@ -151,12 +158,12 @@ function WarmupCalculator() {
               </thead>
               <tbody>
                 {sets.map((set, i) => {
-                  const plates = platesPerSide(set.weight, barWeight)
+                  const plates = platesPerSide(set.weight, barWeight, unit === 'lb' ? LB_PLATES : KG_PLATES)
                   return (
                     <tr key={i} className={set.isMax ? 'border-b bg-accent/40 font-semibold' : 'border-b'}>
                       <td className="px-4 py-2">{set.isMax ? 'Max' : i + 1}</td>
                       <td className="px-4 py-2">{set.pct}%</td>
-                      <td className="px-4 py-2">{set.weight} kg</td>
+                      <td className="px-4 py-2">{set.weight} {unit}</td>
                       <td className="px-4 py-2">{set.reps}</td>
                       <td className="px-4 py-2 text-muted-foreground">{plates.length ? plates.join(' + ') : '—'}</td>
                       <td className="px-4 py-2 text-muted-foreground">{set.restMinutes == null ? '—' : `${set.restMinutes} min`}</td>
@@ -176,16 +183,36 @@ function WarmupCalculator() {
 }
 
 export default function Calculators() {
+  // kg or lb (S3, D79), starting on the unit new athletes get.
+  const [unit, setUnit] = useState<LoadUnit>('kg')
+  useEffect(() => {
+    getJson<{ defaultUnit: LoadUnit }>('/api/settings/units').then((r) => setUnit(r.defaultUnit)).catch(() => { /* kg */ })
+  }, [])
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <PageHeader title="Calculators" description="Meet scoring and warm-up ladders." />
+      <PageHeader
+        title="Calculators"
+        description="Meet scoring and warm-up ladders."
+        actions={
+          <div role="radiogroup" aria-label="Unit" className="inline-flex rounded-md border p-0.5 text-xs">
+            {LOAD_UNITS.map((u) => (
+              <button
+                key={u} type="button" role="radio" aria-checked={unit === u} onClick={() => setUnit(u)}
+                className={`rounded px-2 py-0.5 font-medium ${unit === u ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {u}
+              </button>
+            ))}
+          </div>
+        }
+      />
       <Tabs defaultValue="scoring">
         <TabsList>
           <TabsTrigger value="scoring"><Calculator className="h-4 w-4 mr-2" />Scoring</TabsTrigger>
           <TabsTrigger value="warmup"><Flame className="h-4 w-4 mr-2" />Warm-up</TabsTrigger>
         </TabsList>
-        <TabsContent value="scoring"><ScoringCalculator /></TabsContent>
-        <TabsContent value="warmup"><WarmupCalculator /></TabsContent>
+        <TabsContent value="scoring"><ScoringCalculator unit={unit} /></TabsContent>
+        <TabsContent value="warmup"><WarmupCalculator unit={unit} /></TabsContent>
       </Tabs>
     </div>
   )

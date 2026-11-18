@@ -86,7 +86,7 @@ const saveSchema = z.object({
   // What the set was. Optional rather than nullable-and-required so an older
   // client — or the retention fixture in the tests — keeps posting successfully.
   lift: z.enum(VBT_LIFT_IDS).nullable().optional(),
-  loadKg: z.number().positive().max(1000).nullable().optional(),
+  loadKg: z.number().positive().max(1500).nullable().optional(),
   // Half steps on the 5-10 scale, matching RPE_VALUES in shared/rpe.ts.
   calledRpe: z
     .number()
@@ -360,7 +360,7 @@ const contextSchema = z
   .object({
     athleteId: z.string().nullable().optional(),
     lift: z.enum(VBT_LIFT_IDS).nullable().optional(),
-    loadKg: z.number().positive().max(1000).nullable().optional(),
+    loadKg: z.number().positive().max(1500).nullable().optional(),
     calledRpe: z
       .number()
       .min(5)

@@ -77,6 +77,9 @@ export function epley1RM(weight: number, reps: number): number | null {
 /** Standard kg plates, heaviest first. */
 export const KG_PLATES = [25, 20, 15, 10, 5, 2.5, 1.25] as const
 
+/** Standard lb plates, heaviest first (S3). */
+export const LB_PLATES = [45, 35, 25, 10, 5, 2.5] as const
+
 /**
  * Greedy plate breakdown for one side of the bar. Any remainder that can't be
  * made from the available plates is ignored (the rounded warm-up weights are

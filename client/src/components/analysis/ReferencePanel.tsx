@@ -16,7 +16,7 @@ const diff = (v: number | null, ref: number | null, unit: string, digits = 0) =>
   return Math.abs(d) < (digits ? 0.005 : 0.5) ? null : s
 }
 
-export default function ReferencePanel({ shape, reps, track, pixelsPerMetre, loadKg, metric, athleteName }: {
+export default function ReferencePanel({ shape, reps, track, pixelsPerMetre, loadKg, metric, athleteName, unit = 'kg' }: {
   shape: ReferenceShape
   reps: RepMetrics[]
   track: Sample[]
@@ -24,6 +24,8 @@ export default function ReferencePanel({ shape, reps, track, pixelsPerMetre, loa
   loadKg: number | null
   metric: VelocityMetric
   athleteName: string | null
+  /** The athlete's unit (S3). */
+  unit?: string
 }) {
   const ref = shape.analysis
   if (!pixelsPerMetre) {
@@ -40,9 +42,9 @@ export default function ReferencePanel({ shape, reps, track, pixelsPerMetre, loa
       <h2 className="text-sm font-medium">Against the reference rep</h2>
       <p className="text-xs text-muted-foreground">
         {athleteName ? `${athleteName}'s` : 'The'} reference {lift}: rep {shape.rep.index + 1} of the
-        {ref.loadKg != null ? ` ${ref.loadKg} kg` : ''} set on {ref.createdAt.slice(0, 10)}. Drawn dashed over
+        {ref.loadKg != null ? ` ${ref.loadKg} ${unit}` : ''} set on {ref.createdAt.slice(0, 10)}. Drawn dashed over
         the video from the top of each rep.
-        {!sameLoad && ` Speed is only compared at the same load${ref.loadKg != null ? ` (${ref.loadKg} kg)` : ''}.`}
+        {!sameLoad && ` Speed is only compared at the same load${ref.loadKg != null ? ` (${ref.loadKg} ${unit})` : ''}.`}
       </p>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[22rem] text-sm" aria-label="Against the reference rep">

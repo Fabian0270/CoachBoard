@@ -76,6 +76,7 @@ import {
 import TrainingDayLink, { NO_LINK, type DayLink } from '../components/analysis/TrainingDayLink'
 import VelocityTargetLine, { tableTarget, useSetTarget } from '../components/analysis/VelocityTarget'
 import { localDay } from 'coachboard-shared/vbtSession'
+import { unitOf } from 'coachboard-shared/units'
 import { useConfirm } from '../components/ui/confirm-dialog'
 import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import { num } from '../lib/num'
@@ -238,7 +239,7 @@ export default function VideoAnalysis() {
    * 'none' is the coach explicitly saying this is a throwaway look.
    */
   const [athleteChoice, setAthleteChoice] = useState<string | null>(null)
-  const [roster, setRoster] = useState<{ id: string; name: string; height_cm: number | null }[]>([])
+  const [roster, setRoster] = useState<{ id: string; name: string; height_cm: number | null; unit?: string }[]>([])
   const [savedCount, setSavedCount] = useState(0)
   /** The coach's note on the set (BP23): the cue they would give, kept with the analysis. */
   const [note, setNote] = useState('')
@@ -323,13 +324,13 @@ export default function VideoAnalysis() {
   // The roster, for attaching a local clip to whoever is in it.
   useEffect(() => {
     let cancelled = false
-    getList<{ id: string; name: string; height_cm: number | null; archived?: number }>('/api/athletes')
+    getList<{ id: string; name: string; height_cm: number | null; unit?: string; archived?: number }>('/api/athletes')
       .then((data) => {
         if (cancelled) return
         setRoster(
           data
             .filter((a) => !a.archived)
-            .map((a) => ({ id: a.id, name: a.name, height_cm: a.height_cm ?? null })),
+            .map((a) => ({ id: a.id, name: a.name, height_cm: a.height_cm ?? null, unit: a.unit })),
         )
       })
       // An empty athlete picker with no reason looked like having no athletes.
@@ -531,7 +532,7 @@ export default function VideoAnalysis() {
         notes: `Estimated from bar speed (${sourceLabel || 'a saved set'})`,
       })
       setMaxOffer('done')
-      toast.success(`Recorded ${estimateKg} kg as an estimated ${liftLabel(setContext.lift).toLowerCase()} max. It is used for load hints, not counted as a PR.`)
+      toast.success(`Recorded ${estimateKg} ${loadUnit} as an estimated ${liftLabel(setContext.lift).toLowerCase()} max. It is used for load hints, not counted as a PR.`)
     } catch (err) {
       setMaxOffer('open')
       toast.error(`Could not record the max. ${errorMessage(err)}`)
@@ -576,6 +577,8 @@ export default function VideoAnalysis() {
   // Lets the panel judge the plate scale against how far this lifter's bar
   // should actually travel, instead of a band wide enough to cover everyone.
   const athleteHeightCm = roster.find((a) => a.id === athleteId)?.height_cm ?? null
+  // The athlete's unit (S3, D79): the load, the estimate and the offer use it.
+  const loadUnit = unitOf(roster.find((a) => a.id === athleteId)?.unit)
   // The training day and row the set was (L2, D67). Follows the clip until the
   // coach picks; a new clip or another athlete starts over.
   const [linkChoice, setLinkChoice] = useState<DayLink | null>(null)
@@ -855,7 +858,7 @@ export default function VideoAnalysis() {
       if (athleteId && reps.length > 0 && loadKg != null) {
         const pr = velocityPr(historyRows, { id: saved.id, lift: setContext.lift, loadKg, createdAt: new Date().toISOString(), metrics: reps }, metric)
         if (pr?.kind === 'pr') {
-          toast.success(`Velocity PR — the fastest ${loadKg} kg ${liftLabel(setContext.lift).toLowerCase()} so far: ${pr.best.toFixed(2)} m/s (was ${pr.previous.toFixed(2)}).`)
+          toast.success(`Velocity PR — the fastest ${loadKg} ${loadUnit} ${liftLabel(setContext.lift).toLowerCase()} so far: ${pr.best.toFixed(2)} m/s (was ${pr.previous.toFixed(2)}).`)
         }
       }
 
@@ -1391,7 +1394,7 @@ export default function VideoAnalysis() {
               color={color}
               title={[
                 reps.length > 0 ? liftLabel(setContext.lift) : 'Bar path',
-                loadKg != null ? `${loadKg} kg` : null,
+                loadKg != null ? `${loadKg} ${loadUnit}` : null,
                 roster.find((a) => a.id === athleteId)?.name ?? (source.kind === 'discord' ? source.item.athleteName : null),
                 source.kind === 'discord' ? source.item.postedAt.slice(0, 10) : null,
               ].filter(Boolean).join(' · ')}
@@ -1559,7 +1562,7 @@ export default function VideoAnalysis() {
                         ? `${reps.length} ${reps.length === 1 ? 'rep' : 'reps'}, bar path and scale are kept.`
                         : 'The bar path is kept.'}
                       {loadKg != null &&
-                        ` The lift and ${loadKg} kg go with it, so the athlete's velocity profile builds up.`}
+                        ` The lift and ${loadKg} ${loadUnit} go with it, so the athlete's velocity profile builds up.`}
                       {source?.kind === 'local' &&
                         ' The video is copied into CoachBoard too, so you can watch it back later.'}
                     </span>
@@ -1642,7 +1645,7 @@ export default function VideoAnalysis() {
             {savedId && athleteId && estimateKg != null && maxOffer !== 'done' && maxOffer !== 'declined' && reps.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-sm">
                 <span>
-                  Record <span className="num font-medium">{estimateKg} kg</span> as an estimated {liftLabel(setContext.lift).toLowerCase()} max
+                  Record <span className="num font-medium">{estimateKg} {loadUnit}</span> as an estimated {liftLabel(setContext.lift).toLowerCase()} max
                   {athleteName ? ` for ${athleteName}` : ''}?
                 </span>
                 <Button size="sm" variant="outline" onClick={recordEstimatedMax} disabled={maxOffer === 'saving'}>
@@ -1713,6 +1716,7 @@ export default function VideoAnalysis() {
                     loadKg={loadKg}
                     metric={metric}
                     athleteName={roster.find((a) => a.id === athleteId)?.name ?? null}
+                    unit={loadUnit}
                   />
                 )}
               </div>
@@ -1741,6 +1745,7 @@ export default function VideoAnalysis() {
                 fromCaption={fromCaption}
                 onSetScale={startCalibration}
                 onEstimate={setEstimateKg}
+                unit={loadUnit}
               />
             )}
 

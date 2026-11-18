@@ -172,7 +172,7 @@ export default function SavedAnalyses({ athleteId, limit = 20, athletes, refresh
                   </td>
                 )}
                 <td className="py-1 pr-4">{lift}</td>
-                <td className="py-1 pr-4">{row.loadKg != null ? `${row.loadKg} kg` : '—'}</td>
+                <td className="py-1 pr-4">{row.loadKg != null ? `${row.loadKg} ${row.athleteUnit ?? 'kg'}` : '—'}</td>
                 <td className="py-1 pr-4">{metrics.length || '—'}</td>
                 <td className="py-1 pr-4">{last != null ? `${last.toFixed(2)} m/s` : '—'}</td>
                 <td className="max-w-[16rem] truncate py-1 pr-4 text-muted-foreground" title={row.notes ?? undefined}>{row.notes ?? ''}</td>

@@ -68,7 +68,8 @@ function rememberLift(lift: VbtLift): void {
 }
 
 const fmtV = (v: number) => `${v.toFixed(2)} m/s`
-const fmtKg = (kg: number) => `${Math.round(kg * 2) / 2} kg`
+/** A load in the athlete's unit (S3), to the half: "182.5 kg", "405 lb". */
+const fmtLoadIn = (v: number, unit: string) => `${Math.round(v * 2) / 2} ${unit}`
 
 /**
  * Where the slope came from, in the coach's language.
@@ -131,6 +132,8 @@ interface Props {
   onSetScale?: () => void
   /** Told the estimated 1RM this panel shows (kg, or null), so the page can offer to record it (BP34). */
   onEstimate?: (e1rm: number | null) => void
+  /** The athlete's unit (S3): every load here is in it. */
+  unit?: string
 }
 
 export default function VelocityPanel({
@@ -149,7 +152,9 @@ export default function VelocityPanel({
   fromCaption,
   onSetScale,
   onEstimate,
+  unit = 'kg',
 }: Props) {
+  const fmtKg = (v: number) => fmtLoadIn(v, unit)
   const [mvtText, setMvtText] = useState('')
   const [targetRpe, setTargetRpe] = useState(8)
 
@@ -316,7 +321,7 @@ export default function VelocityPanel({
             value={value.loadText}
             onChange={(e) => onChange({ ...value, loadText: e.target.value })}
             inputMode="decimal"
-            placeholder="kg"
+            placeholder={unit}
             className="w-24 rounded-md border bg-background px-2 py-1 text-sm"
           />
         </label>
@@ -638,14 +643,14 @@ export default function VelocityPanel({
 
             {profile ? (
               <>
-                <LoadVelocityChart profile={profile} />
+                <LoadVelocityChart profile={profile} unit={unit} />
                 <div className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
                   <Stat
                     label={`Estimated 1RM at ${mvt!.toFixed(2)} m/s`}
                     value={profile.oneRm ? fmtKg(profile.oneRm) : '—'}
                   />
                   <Stat label="Sets in the profile" value={`${profile.points.length}`} />
-                  <Stat label="Slope" value={`${(profile.fit.slope * 1000).toFixed(1)} m/s per 100 kg`} />
+                  <Stat label="Slope" value={`${(profile.fit.slope * 100).toFixed(2)} m/s per 100 ${unit}`} />
                   <Stat label="Fit (R²)" value={profile.fit.r2.toFixed(3)} />
                   {validLoad != null && profile.pctOf1RM(validLoad) != null && (
                     <Stat

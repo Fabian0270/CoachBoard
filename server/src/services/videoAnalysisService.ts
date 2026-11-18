@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db.js'
+import { unitOf } from 'coachboard-shared/units'
 import { deleteVideo, sweepOrphanVideos, videoPath } from './analysisVideoStore.js'
 import type {
   CalibrationDto,
@@ -36,6 +37,7 @@ interface AnalysisRow {
   created_at: string
   updated_at: string
   athlete_name?: string | null
+  athlete_unit?: string | null
   posted_at?: string | null
   link_workout_id?: string | null
   link_date?: string | null
@@ -70,6 +72,8 @@ function toDto(row: AnalysisRow): VideoAnalysisDto {
     mediaId: row.media_id,
     athleteId: row.athlete_id,
     athleteName: row.athlete_name ?? null,
+    // The unit loadKg is in (S3): the athlete's; kg for nobody's set.
+    athleteUnit: unitOf(row.athlete_unit),
     sourceLabel: row.source_label,
     track: parseJson<Sample[]>(row.track, []),
     calibration: parseJson<CalibrationDto | null>(row.calibration, null),
@@ -145,6 +149,7 @@ function baseQuery(withTrack = true) {
       'video_analyses.created_at as created_at',
       'video_analyses.updated_at as updated_at',
       'athletes.name as athlete_name',
+      'athletes.unit as athlete_unit',
       // When the set was lifted, as near as the app knows (BP33): a synced
       // clip's posting time, else when the set was saved. A coach clearing an
       // inbox on Thursday must not turn Tuesday's sets into Thursday's.

@@ -664,6 +664,8 @@ export interface VideoAnalysisDto extends SetContext {
   mediaId: string | null
   athleteId: string | null
   athleteName: string | null
+  /** 'kg' | 'lb' (S3): the unit loadKg is in — the athlete's (the field name predates lb). */
+  athleteUnit?: 'kg' | 'lb'
   sourceLabel: string
   track: Sample[]
   calibration: CalibrationDto | null

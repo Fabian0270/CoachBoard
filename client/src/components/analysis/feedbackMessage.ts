@@ -13,6 +13,8 @@ const NOTABLE_DRIFT_CM = 3
 export function feedbackMessage(set: {
   lift: string | null
   loadKg: number | null
+  /** The athlete's unit (S3); kg when left out. */
+  unit?: string
   reps: RepMetrics[]
   metric: VelocityMetric
   /** The RPE the last rep reads as, if the set could be read. */
@@ -22,7 +24,7 @@ export function feedbackMessage(set: {
   note: string | null
 }): string {
   const sorted = [...set.reps].sort((a, b) => a.startT - b.startT)
-  const what = [isVbtLift(set.lift) && set.lift !== 'other' ? liftLabel(set.lift) : null, set.loadKg != null ? `${set.loadKg} kg` : null].filter(Boolean).join(' ')
+  const what = [isVbtLift(set.lift) && set.lift !== 'other' ? liftLabel(set.lift) : null, set.loadKg != null ? `${set.loadKg} ${set.unit ?? 'kg'}` : null].filter(Boolean).join(' ')
   const lines: string[] = []
   const count = `${sorted.length} rep${sorted.length === 1 ? '' : 's'}`
   lines.push(what ? `${what} — ${count}.` : `${count}.`)
