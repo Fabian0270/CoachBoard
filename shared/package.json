@@ -18,6 +18,7 @@
     "./pose": "./pose.ts",
     "./vbtSession": "./vbtSession.ts",
     "./velocityTarget": "./velocityTarget.ts",
-    "./units": "./units.ts"
+    "./units": "./units.ts",
+    "./revenue": "./revenue.ts"
   }
 }

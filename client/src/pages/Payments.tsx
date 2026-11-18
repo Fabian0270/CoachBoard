@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { AlertTriangle } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import PaymentsSection from '../components/PaymentsSection'
+import RevenueCard from '../components/RevenueCard'
 import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
 
 interface Athlete { id: string; name: string }
@@ -84,6 +85,8 @@ export default function Payments() {
           )}
         </CardContent>
       </Card>
+
+      <RevenueCard />
 
       {athletes.length === 0 ? (
         <Card><CardContent className="py-8 text-center text-muted-foreground">No athletes found. Add athletes first.</CardContent></Card>
