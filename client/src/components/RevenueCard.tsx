@@ -6,6 +6,7 @@ import { useToast } from './ui/toast'
 import LoadError from './LoadError'
 import { errorMessage, getJson, sendJson } from '../lib/api'
 import { formatAmount } from '../lib/paymentDisplay'
+import { CURRENCIES } from './CurrencySettingsCard'
 
 // ---------------------------------------------------------------------------
 // Revenue on the Payments page (S5, D84–D86): month by month, each currency on
@@ -27,7 +28,6 @@ interface Summary {
   missingRates: string[]
 }
 
-const COMMON = ['SEK', 'NOK', 'DKK', 'EUR', 'USD', 'GBP', 'CHF', 'PLN']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const monthLabel = (ym: string) => `${MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`
 const BASIS_KEY = 'coachboard-revenue-basis'
@@ -104,7 +104,7 @@ export default function RevenueCard() {
   const rows = [...summary.months].reverse()
   const currencies = [...new Set([...rows, summary.later, summary.outstanding].flatMap((r) => Object.keys(r.byCurrency)))].sort()
   const others = currencies.filter((c) => c !== summary.home)
-  const homeOptions = [...new Set([summary.home, ...COMMON, ...currencies])]
+  const homeOptions = [...new Set([summary.home, ...currencies, ...CURRENCIES])]
   const typedRates = Object.entries(summary.sources).filter(([, s]) => s === 'manual').map(([c]) => c)
   const needRate = [...new Set([...summary.missingRates, ...typedRates])].filter((c) => c !== summary.home).sort()
   const total = (r: Row) => (r.totalHome == null || Object.keys(r.byCurrency).length === 0 ? '—' : formatAmount(r.totalHome, summary.home))

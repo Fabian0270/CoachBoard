@@ -99,6 +99,23 @@ describe('with a database', () => {
     expect(await homeCurrency()).toBe('EUR')
   })
 
+  it('Settings and the Revenue card change the same currency', async () => {
+    const { createApp } = await import('../app.js')
+    const server = createApp().listen(0, '127.0.0.1')
+    await new Promise((r) => server.once('listening', r))
+    try {
+      const base = `http://127.0.0.1:${(server.address() as import('net').AddressInfo).port}/api`
+      const put = (url: string, body: unknown) => fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      expect((await (await put(`${base}/settings/currency`, { home: 'nok' })).json()).home).toBe('NOK')
+      expect((await (await fetch(`${base}/payments/summary`)).json()).home).toBe('NOK')
+      await put(`${base}/payments/currency`, { home: 'DKK' })
+      expect((await (await fetch(`${base}/settings/currency`)).json()).home).toBe('DKK')
+      expect((await put(`${base}/settings/currency`, { home: 'kronor' })).status).toBe(400)
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  })
+
   it('fetches the ECB once a day and works from the cache', async () => {
     const now = new Date('2026-11-18T12:00:00Z')
     await ratesIntoHome(now)

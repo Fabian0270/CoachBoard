@@ -4,6 +4,7 @@ import { getSettings, saveSettings, EmailSettingsError } from '../services/email
 import { sendTestEmail } from '../services/emailService.js'
 import { getDefaultUnit, setDefaultUnit } from '../services/unitService.js'
 import { getPreferences, setPreferences } from '../services/preferencesService.js'
+import { homeCurrency, setHomeCurrency } from '../services/ratesService.js'
 
 const router = Router()
 
@@ -55,6 +56,22 @@ router.put('/units', async (req, res) => {
   }
   await setDefaultUnit(parsed.data.defaultUnit)
   res.json({ defaultUnit: await getDefaultUnit() })
+})
+
+// The coach's own currency (S5, D84) — the same setting the Payments page's
+// Revenue card changes, so the two always agree.
+router.get('/currency', async (_req, res) => {
+  res.json({ home: await homeCurrency() })
+})
+
+router.put('/currency', async (req, res) => {
+  const parsed = z.object({ home: z.string().trim().regex(/^[A-Za-z]{3}$/, 'A three-letter currency code, like SEK') }).safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid currency' })
+    return
+  }
+  await setHomeCurrency(parsed.data.home)
+  res.json({ home: await homeCurrency() })
 })
 
 // Switches such as the day editor's suggested loads.

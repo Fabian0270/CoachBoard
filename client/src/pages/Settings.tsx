@@ -15,6 +15,7 @@ import DataSettingsCard from '../components/DataSettingsCard'
 import HelpSettingsCard from '../components/HelpSettingsCard'
 import UnitSettingsCard from '../components/UnitSettingsCard'
 import DayEditorSettingsCard from '../components/DayEditorSettingsCard'
+import CurrencySettingsCard from '../components/CurrencySettingsCard'
 import ReportProblemCard from '../components/ReportProblemCard'
 import { useSearchParams } from 'react-router-dom'
 
@@ -317,6 +318,7 @@ export default function Settings() {
         </TabsContent>
         <TabsContent value="preferences" className="space-y-6">
           <UnitSettingsCard />
+          <CurrencySettingsCard />
           <DayEditorSettingsCard />
         </TabsContent>
         <TabsContent value="data">
