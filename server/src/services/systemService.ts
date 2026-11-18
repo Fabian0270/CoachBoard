@@ -14,10 +14,17 @@ export interface ShellLike {
 }
 
 let injectedShell: ShellLike | null = null
+let injectedVersion: string | null = null
 
 /** Wired once at startup by the Electron main process (and by tests with fakes). */
-export function configureSystem(opts: { shell?: ShellLike | null }): void {
+export function configureSystem(opts: { shell?: ShellLike | null; appVersion?: string | null }): void {
   if ('shell' in opts) injectedShell = opts.shell ?? null
+  if ('appVersion' in opts) injectedVersion = opts.appVersion ?? null
+}
+
+/** The app's version, for problem reports (S4); null outside the desktop app. */
+export function appVersion(): string | null {
+  return injectedVersion
 }
 
 /**

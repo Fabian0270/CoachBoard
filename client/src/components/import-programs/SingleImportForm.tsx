@@ -7,6 +7,7 @@ import type { Athlete, Entry } from './types'
 import ColumnMapping from './ColumnMapping'
 import ColumnMapper from './ColumnMapper'
 import ExercisePreviewTable from './ExercisePreviewTable'
+import ReportThisLink from '../ReportThisLink'
 
 interface SingleImportFormProps {
   single: Entry
@@ -53,6 +54,10 @@ export default function SingleImportForm({
               ? <li>{single.error}</li>
               : singlePreview!.errors.map((err, i) => <li key={i}>{err}</li>)}
           </ul>
+          <ReportThisLink
+            file={single.file}
+            what={`Importing the program ${single.fileName} said it can't be imported:\n${single.error ?? singlePreview?.errors.join('\n') ?? ''}`}
+          />
           {/* Recovery: when the file parsed but couldn't be mapped, let the
               coach fix the columns live — fixing them clears the error. */}
           {singlePreview && (

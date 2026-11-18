@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
 import { Button } from './ui/button'
 import { Upload, Loader2, AlertTriangle, Check } from 'lucide-react'
+import ReportThisLink from './ReportThisLink'
 import type { ImportPreview, E1RMEstimate } from 'coachboard-shared'
 
 function E1RMTable({ estimates, unit }: { estimates: E1RMEstimate[]; unit: string }) {
@@ -167,6 +168,7 @@ export default function ImportDialog({ open, onOpenChange, programId, onImported
               onChange={handleFileChange}
             />
             {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <ReportThisLink file={pendingFile} what={`Importing results from ${pendingFile?.name ?? 'a sheet'} failed: ${error}`} />}
           </div>
         )}
 
@@ -182,6 +184,7 @@ export default function ImportDialog({ open, onOpenChange, programId, onImported
                 {preview.errors.map((e, i) => (
                   <p key={i} className="text-xs text-muted-foreground">{e}</p>
                 ))}
+                <ReportThisLink file={pendingFile} what={`Importing results from ${pendingFile?.name ?? 'a sheet'} said it can't be imported:\n${preview.errors.join('\n')}`} />
               </div>
             )}
 
@@ -214,6 +217,7 @@ export default function ImportDialog({ open, onOpenChange, programId, onImported
             )}
 
             {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <ReportThisLink file={pendingFile} what={`Importing results from ${pendingFile?.name ?? 'a sheet'} failed: ${error}`} />}
 
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => { reset() }}>

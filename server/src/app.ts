@@ -16,6 +16,7 @@ import systemRouter from './routes/system.js'
 import backupRouter from './routes/backup.js'
 import analysisRouter, { ANALYSIS_JSON_LIMIT } from './routes/analysis.js'
 import recorderRouter from './routes/recorder.js'
+import supportRouter, { REPORT_JSON_LIMIT } from './routes/support.js'
 
 export function createApp(staticDir?: string, logPath?: string) {
   const app = express()
@@ -48,6 +49,8 @@ export function createApp(staticDir?: string, logPath?: string) {
   // travel packed with their own raw parser (see routes/analysis.ts); this
   // limit covers the bar-path JSON.
   app.use('/api/analysis', express.json({ limit: ANALYSIS_JSON_LIMIT }), analysisRouter)
+  // A problem report may carry the Excel file that failed to import (S4).
+  app.use('/api/support', express.json({ limit: REPORT_JSON_LIMIT }), supportRouter)
 
   // JSON only. A urlencoded parser used to be mounted too, which nothing in the
   // client ever sent — but it is exactly the body an HTML <form> on another

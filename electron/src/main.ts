@@ -56,7 +56,7 @@ interface ServerBundle {
   /** Points the server's logger at the log file. Must run before initializeDatabase. */
   configureLogger?(path: string): void
   configureSecureStore(opts: { safeStorage: unknown; userDataDir: string }): void
-  configureSystem?(opts: { shell: unknown }): void
+  configureSystem?(opts: { shell?: unknown; appVersion?: string }): void
   configureCapture?(opts: { desktopCapturer: unknown; ownSourceIds?: () => string[]; windowTools?: WindowTools | null }): void
   /** The source the coach picked, consumed once. See services/captureService. */
   resolvePendingSource?(): Promise<
@@ -280,7 +280,8 @@ async function startServer(): Promise<void> {
   // Same injection seam for the handful of shell actions the UI needs (opening
   // the data folder from Settings and from the error screen). Optional-chained so
   // a stale bundle without the export can't break startup.
-  bundle.configureSystem?.({ shell })
+  // The version too, for problem reports (S4).
+  bundle.configureSystem?.({ shell, appVersion: app.getVersion() })
   // From Electron 45 the window list includes our own window, which the picker
   // already offers as "CoachBoard" (captured by frame, see the display handler).
   bundle.configureCapture?.({
