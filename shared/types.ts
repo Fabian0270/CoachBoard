@@ -53,6 +53,8 @@ export interface Exercise {
   /** Reps the athlete actually did, when a Discord caption said they differed
    *  from the plan (L1, D66). Cleared when Load Used is typed or imported. */
   reps_done?: string | null
+  /** The velocity target as typed, shown when the program's Velocity column is on (BP39). */
+  velocity?: string | null
   group_id: string | null
   suggestion_note: string | null
 }
@@ -68,12 +70,13 @@ export interface Workout {
   exercises: Exercise[]
 }
 
-export type ToggleableColumn = 'rest_time' | 'intensity' | 'load_cap' | 'load_used' | 'rpe' | 'notes'
+export type ToggleableColumn = 'rest_time' | 'intensity' | 'load_cap' | 'load_used' | 'rpe' | 'notes' | 'velocity'
 /** Every column a coach can switch on or off, in the order they appear. */
-export const TOGGLEABLE_COLUMNS: ToggleableColumn[] = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'notes']
+export const TOGGLEABLE_COLUMNS: ToggleableColumn[] = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'notes', 'velocity']
 /**
  * The columns a program has when it has never been given a choice
- * (enabled_columns is null). Everything except Notes: the cue column is opt-in,
+ * (enabled_columns is null). Everything except Notes and Velocity (BP39, D71):
+ * both are opt-in,
  * so programs made before it existed — and new ones — look exactly as before
  * until the coach switches it on.
  */

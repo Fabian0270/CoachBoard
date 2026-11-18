@@ -20,6 +20,7 @@ export async function createExercise(data: {
   intensity?: string | null
   load_used?: string | null
   rpe?: string | null
+  velocity?: string | null
   group_id?: string | null
 }) {
   return getDb()
@@ -39,6 +40,7 @@ export async function createExercise(data: {
       intensity: data.intensity ?? null,
       load_used: data.load_used ?? null,
       rpe: data.rpe ?? null,
+      velocity: data.velocity ?? null,
       group_id: data.group_id ?? null,
     })
     .returningAll()
@@ -61,6 +63,7 @@ export async function updateExercise(
     intensity?: string | null
     load_used?: string | null
     rpe?: string | null
+    velocity?: string | null
     group_id?: string | null
   },
 ) {
@@ -81,6 +84,7 @@ export async function updateExercise(
       // reps that caption said were done (L1).
       ...(data.load_used !== undefined ? { load_used: data.load_used ?? null, reps_done: null } : {}),
       ...(data.rpe !== undefined ? { rpe: data.rpe ?? null } : {}),
+      ...(data.velocity !== undefined ? { velocity: data.velocity ?? null } : {}),
       ...(data.group_id !== undefined ? { group_id: data.group_id ?? null } : {}),
     })
     .where('id', '=', id)
@@ -224,6 +228,7 @@ async function addSetInTransaction(
       intensity: lastRow.intensity,
       load_used: null,
       rpe: null,
+      velocity: lastRow.velocity,
       group_id: groupId,
     })
     .execute()
@@ -261,6 +266,7 @@ export interface PastedFields {
   intensity?: string | null
   load_used?: string | null
   rpe?: string | null
+  velocity?: string | null
 }
 
 export async function pasteExercises(
@@ -313,6 +319,7 @@ export async function pasteExercises(
         intensity: r.intensity ?? null,
         load_used: r.load_used ?? null,
         rpe: r.rpe ?? null,
+        velocity: r.velocity ?? null,
         group_id: null,
       }).execute()
     }
@@ -407,6 +414,7 @@ export async function duplicateExercise(exerciseId: string, workoutId: string, p
           intensity: row.intensity,
           load_used: null,
           rpe: null,
+          velocity: row.velocity,
           group_id: newGroupId,
         })
         .execute()

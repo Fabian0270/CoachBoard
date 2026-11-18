@@ -20,12 +20,12 @@ import { arrowLeavesCell } from './ExerciseRow'
 
 /** Narrower than the day editor: many weeks share the screen. */
 const WIDTH: Partial<Record<ColDef['key'], number>> = {
-  rest_time: 52, sets: 46, reps: 50, intensity: 92, load_cap: 62, load_used: 62, rpe: 50, notes: 150,
+  rest_time: 52, sets: 46, reps: 50, intensity: 92, load_cap: 62, load_used: 62, rpe: 50, notes: 150, velocity: 70,
 }
 
 const LONG_DAY = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
-type Patch = Partial<Pick<Exercise, 'sets' | 'reps' | 'weight' | 'rest_time' | 'intensity' | 'load_used' | 'rpe' | 'notes'>>
+type Patch = Partial<Pick<Exercise, 'sets' | 'reps' | 'weight' | 'rest_time' | 'intensity' | 'load_used' | 'rpe' | 'notes' | 'velocity'>>
 type Move = 'next' | 'up' | 'down' | 'left' | 'right'
 
 interface BlockViewProps {

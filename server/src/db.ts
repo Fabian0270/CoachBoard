@@ -92,6 +92,8 @@ export interface ExerciseTable {
    * the planned reps. Null almost always.
    */
   reps_done: Generated<string | null>
+  /** The row's velocity target as typed — "0.50", "0.45-0.55", "VL 20%" (BP39, D71). */
+  velocity: Generated<string | null>
 }
 
 export interface ProgressRecordTable {
@@ -623,6 +625,8 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   await addColumnIfMissing('exercises', 'suggestion_note', 'TEXT')
   // L1 (D66): reps done when a confirmed caption differs from the plan.
   await addColumnIfMissing('exercises', 'reps_done', 'TEXT')
+  // BP39 (D71): the row's velocity target, as the coach typed it.
+  await addColumnIfMissing('exercises', 'velocity', 'TEXT')
 
   await sql`
     CREATE TABLE IF NOT EXISTS progress_records (

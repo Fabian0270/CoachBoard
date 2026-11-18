@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { Response } from 'express'
 
 const isoDate = z.iso.date('Expected YYYY-MM-DD')
-const enabledColumnEnum = z.enum(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'notes'])
+const enabledColumnEnum = z.enum(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'notes', 'velocity'])
 const statusEnum = z.enum(['active', 'completed', 'archived', 'draft'])
 const focusEnum = z.enum(['hypertrophy', 'strength', 'peaking'])
 
@@ -27,6 +27,7 @@ const pastedFields = z.object({
   intensity: optionalString(100),
   load_used: optionalString(100),
   rpe: optionalString(50),
+  velocity: optionalString(100),
 })
 
 /** One exercise row exactly as it was stored, id included — what an undo puts back. */
@@ -44,6 +45,7 @@ const restoredExercise = z.object({
   intensity: optionalString(100),
   load_used: optionalString(100),
   rpe: optionalString(50),
+  velocity: optionalString(100),
   reps_done: optionalString(50),
   group_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
   suggestion_note: optionalString(2000),
@@ -167,6 +169,7 @@ export const schemas = {
       intensity: optionalString(100),
       load_used: optionalString(100),
       rpe: optionalString(50),
+      velocity: optionalString(100),
       group_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
     }),
     update: z.object({
@@ -182,6 +185,7 @@ export const schemas = {
       intensity: optionalString(100),
       load_used: optionalString(100),
       rpe: optionalString(50),
+      velocity: optionalString(100),
       group_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
     }),
   },

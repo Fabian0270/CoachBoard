@@ -1635,6 +1635,15 @@ function ProgramPage() {
                         in your own Excel style, after the exercise name. Turning this off keeps what you wrote, hidden.
                       </span>
                     </span>
+                  ) : col === 'velocity' ? (
+                    <span>
+                      {COLUMN_LABELS[col]}
+                      <span className="block text-xs text-muted-foreground">
+                        A speed (“0.50” = that fast or faster), a range (“0.45-0.55”) or a loss cut-off (“VL 20%”).
+                        A bar path set linked to the row is judged against it. In your own Excel style it goes after
+                        the Intensity text unless the sheet has a velocity column.
+                      </span>
+                    </span>
                   ) : COLUMN_LABELS[col]}
                 </label>
               )

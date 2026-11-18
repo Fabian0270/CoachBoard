@@ -20,6 +20,7 @@ export const COLUMN_LABELS: Record<ToggleableColumn, string> = {
   load_used: 'Load Used',
   rpe: 'Last Set RPE',
   notes: 'Notes (your cues)',
+  velocity: 'Velocity (target speed)',
 }
 
 export type ColKey = 'name' | 'sets' | 'reps' | ToggleableColumn
@@ -87,6 +88,7 @@ export function exerciseValue(ex: Exercise, key: ColKey): string {
     case 'load_used': return ex.load_used ?? ''
     case 'rpe': return ex.rpe ?? ''
     case 'notes': return ex.notes ?? ''
+    case 'velocity': return ex.velocity ?? ''
     default: {
       const _exhaustive: never = key
       void _exhaustive
@@ -105,6 +107,7 @@ export const DEFAULT_COL_WIDTH: Record<ColKey, number> = {
   load_used: 90,
   rpe: 90,
   notes: 200,
+  velocity: 110,
 }
 
 export function buildColumns(enabled: ToggleableColumn[]): ColDef[] {
@@ -118,6 +121,8 @@ export function buildColumns(enabled: ToggleableColumn[]): ColDef[] {
   if (enabled.includes('rpe')) cols.push({ key: 'rpe', label: 'Last Set RPE', width: 90, placeholder: 'e.g. 8' })
   // Last, as in the exported sheet.
   if (enabled.includes('notes')) cols.push({ key: 'notes', label: 'Notes', width: 200, placeholder: 'e.g. pause 2 s' })
+  // BP39 (D71, D72): a speed, a range or a loss cut-off, as the coach types them.
+  if (enabled.includes('velocity')) cols.push({ key: 'velocity', label: 'Velocity', width: 110, placeholder: 'e.g. 0.50, VL 20%' })
   return cols
 }
 

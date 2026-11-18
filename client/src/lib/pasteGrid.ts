@@ -20,6 +20,7 @@ export interface PastedFields {
   intensity?: string | null
   load_used?: string | null
   rpe?: string | null
+  velocity?: string | null
 }
 
 /**
