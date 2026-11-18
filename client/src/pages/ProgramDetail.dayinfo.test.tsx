@@ -118,6 +118,33 @@ describe('Day editor — suggested load', () => {
     expect(hints[0].title).toBe('Suggested from 10% lighter than the set above (150 kg). Ctrl+L or "Use" fills it in.')
   })
 
+  it('switched off in Settings, a back-off ("-10%") and a max-based row both stay empty', async () => {
+    const backoff = {
+      ...withLoadCap,
+      workouts: [day('w1', '2026-06-15', [
+        ex('a1', 'w1', { sets: '1', reps: '3', intensity: 'RPE 8', group_id: 'g' }),
+        ex('a2', 'w1', { sets: '3', reps: '5', intensity: '-10%', group_id: 'g', order_index: 1 }),
+      ])],
+    }
+    serve({
+      '/api/programs/p1': { body: backoff },
+      '/api/athletes/a1/maxes': { body: maxes },
+      '/api/settings/preferences': { body: { loadHints: false } },
+    })
+    await openDay('2026-06-15')
+    // Give the preference and the maxes time to land, then: nothing suggested.
+    await waitFor(() => expect((globalThis.fetch as unknown as { mock: { calls: [unknown][] } }).mock.calls.some(([u]) => String(u).includes('/preferences'))).toBe(true))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.queryAllByPlaceholderText(/^≈ /)).toHaveLength(0)
+    expect(screen.queryByRole('button', { name: /Use the suggested load/ })).toBeNull()
+  })
+
+  it('on by default when the setting cannot be read', async () => {
+    serve({ '/api/programs/p1': { body: withLoadCap }, '/api/athletes/a1/maxes': { body: maxes } })
+    await openDay('2026-06-22')
+    expect(await screen.findByPlaceholderText(/^≈ /)).toBeTruthy()
+  })
+
   it('offers nothing for an exercise with no max on file', async () => {
     serve({ '/api/programs/p1': { body: withLoadCap }, '/api/athletes/a1/maxes': { body: maxes } })
     await openDay('2026-06-22')

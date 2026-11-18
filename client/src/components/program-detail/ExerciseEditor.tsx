@@ -12,7 +12,7 @@ import {
 } from '../../lib/programUtils'
 import ExerciseRow, { type RowKeyAction } from './ExerciseRow'
 import type { LoadUnit } from 'coachboard-shared/units'
-import { dayLoadHints, type StoredMax } from '../../lib/loadHint'
+import { dayLoadHints, type LoadHint, type StoredMax } from '../../lib/loadHint'
 import { isCellBlock } from '../../lib/pasteGrid'
 
 interface ExerciseEditorProps {
@@ -32,6 +32,11 @@ interface ExerciseEditorProps {
   maxes?: StoredMax[]
   /** The unit the program's loads are in (S3): hints round to its plates. */
   unit?: LoadUnit
+  /**
+   * Suggested loads in empty Load Cap cells — from a max, a % or a back-off
+   * ("-10%") off the set above. Settings > Preferences can switch them off.
+   */
+  loadHints?: boolean
   /** Save the coach's note for the day. Resolves false when it did not save. */
   onSaveNote: (notes: string) => Promise<boolean>
   /**
@@ -103,7 +108,7 @@ export interface CopyDay {
 }
 export interface CopyWeek { weekIndex: number; days: CopyDay[] }
 
-export default function ExerciseEditor({ workout, enabledColumns, programId, copyGrid, unsavedKeys, onAdd, onDuplicate, previous, maxes = NO_MAXES, unit = 'kg', onSaveNote, onPasteRows, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
+export default function ExerciseEditor({ workout, enabledColumns, programId, copyGrid, unsavedKeys, onAdd, onDuplicate, previous, maxes = NO_MAXES, unit = 'kg', loadHints = true, onSaveNote, onPasteRows, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
   const exercises = workout?.exercises ?? []
   const columns = buildColumns(enabledColumns)
   const [widths, setWidth] = useColumnWidths(programId, columns)
@@ -444,7 +449,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
   const groups = buildGroups(exercises)
 
   // The suggested load for each row, top to bottom (a back-off follows the set above).
-  const hintFor = dayLoadHints(exercises, maxes, unit)
+  const hintFor = loadHints ? dayLoadHints(exercises, maxes, unit) : NO_HINTS
 
   // Last week, row by row: the nth row named "Squat" today lines up with the
   // nth row named "Squat" a week earlier, so set rows line up with set rows.
@@ -756,6 +761,7 @@ function describeLastWeek(ex: Exercise): string {
 }
 
 const NO_MAXES: StoredMax[] = []
+const NO_HINTS = new Map<string, LoadHint | null>()
 
 function PlaceholderRow({ colCount, onDrop }: { colCount: number; onDrop: () => void }) {
   return (

@@ -14,9 +14,10 @@ import DiscordSettingsCard from '../components/discord/DiscordSettingsCard'
 import DataSettingsCard from '../components/DataSettingsCard'
 import HelpSettingsCard from '../components/HelpSettingsCard'
 import UnitSettingsCard from '../components/UnitSettingsCard'
+import DayEditorSettingsCard from '../components/DayEditorSettingsCard'
 import { useSearchParams } from 'react-router-dom'
 
-const TABS = ['email', 'discord', 'units', 'data', 'help']
+const TABS = ['email', 'discord', 'preferences', 'data', 'help']
 import { errorMessage, getJson } from '../lib/api'
 
 type Provider = 'gmail' | 'outlook' | 'custom'
@@ -178,7 +179,7 @@ export default function Settings() {
         <TabsList>
           <TabsTrigger value="email"><Mail className="h-4 w-4 mr-2" />Email delivery</TabsTrigger>
           <TabsTrigger value="discord"><MessageSquare className="h-4 w-4 mr-2" />Discord</TabsTrigger>
-          <TabsTrigger value="units"><Scale className="h-4 w-4 mr-2" />Units</TabsTrigger>
+          <TabsTrigger value="preferences"><Scale className="h-4 w-4 mr-2" />Preferences</TabsTrigger>
           <TabsTrigger value="data"><Database className="h-4 w-4 mr-2" />Your data</TabsTrigger>
           <TabsTrigger value="help"><Keyboard className="h-4 w-4 mr-2" />Help</TabsTrigger>
         </TabsList>
@@ -313,8 +314,9 @@ export default function Settings() {
         <TabsContent value="discord">
           <DiscordSettingsCard />
         </TabsContent>
-        <TabsContent value="units">
+        <TabsContent value="preferences" className="space-y-6">
           <UnitSettingsCard />
+          <DayEditorSettingsCard />
         </TabsContent>
         <TabsContent value="data">
           <DataSettingsCard />

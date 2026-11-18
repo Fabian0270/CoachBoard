@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { getSettings, saveSettings, EmailSettingsError } from '../services/emailSettingsService.js'
 import { sendTestEmail } from '../services/emailService.js'
 import { getDefaultUnit, setDefaultUnit } from '../services/unitService.js'
+import { getPreferences, setPreferences } from '../services/preferencesService.js'
 
 const router = Router()
 
@@ -54,6 +55,20 @@ router.put('/units', async (req, res) => {
   }
   await setDefaultUnit(parsed.data.defaultUnit)
   res.json({ defaultUnit: await getDefaultUnit() })
+})
+
+// Switches such as the day editor's suggested loads.
+router.get('/preferences', async (_req, res) => {
+  res.json(await getPreferences())
+})
+
+router.put('/preferences', async (req, res) => {
+  const parsed = z.object({ loadHints: z.boolean().optional() }).safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid preferences' })
+    return
+  }
+  res.json(await setPreferences(parsed.data))
 })
 
 router.post('/email/test', async (_req, res) => {

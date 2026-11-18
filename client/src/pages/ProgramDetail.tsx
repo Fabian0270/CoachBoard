@@ -234,6 +234,15 @@ function ProgramPage() {
       .catch(() => { if (!cancelled) setAthleteMaxes([]) })
     return () => { cancelled = true }
   }, [athleteId])
+  // Settings > Preferences can switch the suggestions off; on until it says so.
+  const [loadHints, setLoadHints] = useState(true)
+  useEffect(() => {
+    let cancelled = false
+    getJson<{ loadHints: boolean }>('/api/settings/preferences')
+      .then((p) => { if (!cancelled) setLoadHints(p.loadHints) })
+      .catch(() => { /* keep the default */ })
+    return () => { cancelled = true }
+  }, [])
 
   // The coach's own exercise names, for the suggestions in the day editor.
   // Loaded once per visit; on failure the built-in list still suggests.
@@ -1338,6 +1347,7 @@ function ProgramPage() {
                 return ok
               }}
               maxes={athleteMaxes}
+              loadHints={loadHints}
               unit={unitOf(program.unit)}
               onPasteRows={(anchorId, start, text) => void pasteRows(openDate, anchorId, start, text)}
               onSaveField={(exerciseId, patch) =>
