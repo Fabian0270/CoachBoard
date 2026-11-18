@@ -12,6 +12,7 @@ import {
 import { fail } from '../lib/httpError.js'
 import { paymentsCsv, revenueSummary } from '../services/revenueService.js'
 import { setHomeCurrency, setManualRates } from '../services/ratesService.js'
+import { reminderDraft, sendReminder, ReminderError } from '../services/paymentReminderService.js'
 
 const router = Router()
 
@@ -101,6 +102,32 @@ router.patch('/:id', async (req: Request, res: Response): Promise<void> => {
     res.json(updated)
   } catch (err) {
     fail(res, 'Failed to update payment', err)
+  }
+})
+
+// --- Reminders (S5, D87): a draft, then sent only on the coach's click. ------
+
+router.get('/:id/reminder', async (req: Request, res: Response): Promise<void> => {
+  try {
+    res.json(await reminderDraft(String(req.params.id)))
+  } catch (err) {
+    if (err instanceof ReminderError) { res.status(err.status).json({ error: err.message }); return }
+    fail(res, 'Failed to prepare the reminder', err)
+  }
+})
+
+const reminderSchema = z.object({ subject: z.string().trim().min(1).max(300), body: z.string().trim().min(1).max(5000) })
+
+router.post('/:id/reminder', async (req: Request, res: Response): Promise<void> => {
+  const parsed = reminderSchema.safeParse(req.body)
+  if (!parsed.success) { res.status(400).json({ error: 'Write a subject and a message' }); return }
+  try {
+    const result = await sendReminder(String(req.params.id), parsed.data)
+    if (!result.ok) { res.status(result.status).json({ error: result.error, code: result.code }); return }
+    res.json({ ok: true })
+  } catch (err) {
+    if (err instanceof ReminderError) { res.status(err.status).json({ error: err.message }); return }
+    fail(res, 'Failed to send the reminder', err)
   }
 })
 

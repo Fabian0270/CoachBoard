@@ -165,6 +165,8 @@ export interface Payment {
   paid_through: string     // ISO date — coverage end / next payment due by this date
   paid: number             // 0/1
   paid_at: string | null   // ISO date when marked paid
+  /** When a reminder was last emailed (S5); missing on older fixtures. */
+  reminded_at?: string | null
   notes: string | null
   created_at: string
   updated_at: string

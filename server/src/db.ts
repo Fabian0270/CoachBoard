@@ -156,6 +156,8 @@ export interface PaymentTable {
   paid: number
   paid_at: string | null
   notes: string | null
+  /** When a payment reminder was last emailed (S5, D87); null = never. */
+  reminded_at: Generated<string | null>
   created_at: string
   updated_at: string
 }
@@ -745,6 +747,8 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   }
 
   await sql`CREATE INDEX IF NOT EXISTS idx_payments_athlete_id ON payments(athlete_id)`.execute(_db)
+  // S5 (D87): when a reminder was last emailed for the payment.
+  await addColumnIfMissing('payments', 'reminded_at', 'TEXT')
 
   // --- Discord integration -------------------------------------------------
   // ON DELETE SET NULL throughout: deleting an athlete returns their Discord

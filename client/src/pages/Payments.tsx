@@ -6,10 +6,12 @@ import LoadError from '../components/LoadError'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Mail } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import PaymentsSection from '../components/PaymentsSection'
 import RevenueCard from '../components/RevenueCard'
+import ReminderDialog from '../components/ReminderDialog'
+import { Button } from '../components/ui/button'
 import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
 
 interface Athlete { id: string; name: string }
@@ -18,6 +20,8 @@ export default function Payments() {
   const [athletes, setAthletes] = useState<Athlete[]>([])
   const [alerts, setAlerts] = useState<PaymentAlert[]>([])
   const [selectedAthlete, setSelectedAthlete] = useState<string>('')
+  // The reminder being written (S5, D87).
+  const [reminding, setReminding] = useState<PaymentAlert | null>(null)
   // "All payments are up to date" is the empty state here, so a swallowed
   // failure told the coach every invoice was settled. Of the misleading empty
   // states this one costs money.
@@ -77,7 +81,15 @@ export default function Payments() {
                         {formatAmount(a.payment.amount, a.payment.currency)} ·{' '}
                         {a.status === 'expiring_soon' ? 'paid through' : 'due by'} {a.payment.paid_through}
                       </span>
+                      {a.payment.reminded_at && (
+                        <span className="text-xs text-muted-foreground">· reminded {a.payment.reminded_at.slice(0, 10)}</span>
+                      )}
                     </div>
+                    {(a.status === 'overdue' || a.status === 'due_soon') && (
+                      <Button variant="outline" size="sm" onClick={() => setReminding(a)}>
+                        <Mail className="h-4 w-4" /> Send reminder
+                      </Button>
+                    )}
                   </div>
                 )
               })}
@@ -85,6 +97,13 @@ export default function Payments() {
           )}
         </CardContent>
       </Card>
+
+      <ReminderDialog
+        paymentId={reminding?.payment.id ?? null}
+        athleteId={reminding?.athleteId ?? null}
+        onClose={() => setReminding(null)}
+        onSent={() => void load()}
+      />
 
       <RevenueCard />
 
