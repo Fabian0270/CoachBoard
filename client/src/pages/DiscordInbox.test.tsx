@@ -46,7 +46,7 @@ describe('logging a caption result', () => {
     suggestedWorkoutId: 'w1', suggestedWorkoutName: 'Day 1', suggestedWorkoutDate: '2026-11-17',
     programId: 'p1', programName: 'Block', filename: 'v.mp4', contentType: 'video/mp4', sizeBytes: 1,
     width: null, height: null, caption: 'squat 180x3 @8',
-    parsedCaption: { weightKg: 180, reps: 3, rpe: 8, liftKeywords: ['squat'] },
+    parsedCaption: { weight: 180, unit: 'kg', reps: 3, rpe: 8, liftKeywords: ['squat'] },
     postedAt: '2026-11-17T10:00:00.000Z', downloadStatus: 'downloaded', downloadError: null,
     duplicateOfId: null, reviewed: false, playable: false, isVideo: true, thumbUrl: null,
     thumbStatus: 'unsupported', durationMs: null, analysisCount: 0,

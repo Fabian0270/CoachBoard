@@ -13,17 +13,17 @@ import type { CaptionLogCandidates, CaptionLogRow, ParsedCaption } from 'coachbo
 /** "180 kg × 3 @8" — the caption's numbers. */
 export function captionResult(p: ParsedCaption): string {
   const parts: string[] = []
-  if (p.weightKg != null) parts.push(`${p.weightKg} kg`)
+  if (p.weight != null) parts.push(`${p.weight} ${p.unit ?? 'kg'}`)
   if (p.reps != null) parts.push(`× ${p.reps}`)
   if (p.rpe != null) parts.push(`@${p.rpe}`)
   return parts.join(' ')
 }
 
 /** What the row asks for: "3 × 5 · 180 kg · RPE 8". */
-function planned(r: CaptionLogRow): string {
+function planned(r: CaptionLogRow, unit: string): string {
   return [
     r.sets && r.reps ? `${r.sets} × ${r.reps}` : r.reps ? `${r.reps} reps` : r.sets ? `${r.sets} sets` : '',
-    r.weight != null ? `${r.weight} kg` : '',
+    r.weight != null ? `${r.weight} ${unit}` : '',
     r.intensity ?? '',
   ].filter(Boolean).join(' · ')
 }
@@ -72,7 +72,7 @@ export default function CaptionLogDialog({
                     className="flex w-full flex-col items-start gap-0.5 rounded-md px-3 py-2 text-left text-sm hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
                   >
                     <span className="font-medium">{r.name}</span>
-                    {planned(r) && <span className="text-xs text-muted-foreground">{planned(r)}</span>}
+                    {planned(r, data.caption.unit) && <span className="text-xs text-muted-foreground">{planned(r, data.caption.unit)}</span>}
                     {r.alreadyLogged ? (
                       <span className="text-xs text-muted-foreground">
                         Already logged: {[r.loadUsed, r.rpe && `@${r.rpe}`].filter(Boolean).join(' ')}

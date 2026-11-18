@@ -41,7 +41,7 @@ const tooltipStyle = {
 const axisTick = { fontSize: 11, fill: 'hsl(var(--muted-foreground))' }
 const numTick = { ...axisTick, fontFamily: 'Geist Mono Variable, ui-monospace, monospace' }
 
-function E1RMChart({ points, color }: { points: ProgressE1RMPoint[]; color: string }) {
+function E1RMChart({ points, color, unit }: { points: ProgressE1RMPoint[]; color: string; unit: string }) {
   const ticks = kgTicks(points.map((p) => p.e1rm))
   return (
     <ResponsiveContainer width="100%" height={180}>
@@ -57,7 +57,7 @@ function E1RMChart({ points, color }: { points: ProgressE1RMPoint[]; color: stri
           }}
           formatter={(value, _n, item) => {
             const p = item.payload as ProgressE1RMPoint
-            return [`${value} kg  (${p.weight} kg × ${p.reps} @ ${p.rpe}, ${p.exerciseName})`, 'e1RM']
+            return [`${value} ${unit}  (${p.weight} ${unit} × ${p.reps} @ ${p.rpe}, ${p.exerciseName})`, 'e1RM']
           }}
         />
         <Line type="monotone" dataKey="e1rm" stroke={color} strokeWidth={2} dot={{ r: 3.5 }} activeDot={{ r: 5.5 }} />
@@ -84,7 +84,8 @@ function speedByLift(rows: VideoAnalysisDto[]): { lift: VbtLift; metric: Velocit
   return [...out.values()].map((e) => ({ ...e, points: e.points.sort((a, b) => a.date.localeCompare(b.date)) }))
 }
 
-export default function AthleteProgress({ athleteId }: { athleteId: string }) {
+/** unit is the athlete's (S3): every load here is in it. */
+export default function AthleteProgress({ athleteId, unit = 'kg' }: { athleteId: string; unit?: string }) {
   const [progress, setProgress] = useState<Progress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [speed, setSpeed] = useState<ReturnType<typeof speedByLift> | null>(null)
@@ -138,19 +139,19 @@ export default function AthleteProgress({ athleteId }: { athleteId: string }) {
               <div key={lift.liftKey}>
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                   <span className="font-semibold">{lift.displayName}</span>
-                  <Badge variant="outline">Best {best} kg</Badge>
-                  <Badge variant="outline">Latest {latest.e1rm} kg</Badge>
+                  <Badge variant="outline">Best {best} {unit}</Badge>
+                  <Badge variant="outline">Latest {latest.e1rm} {unit}</Badge>
                   {lift.points.length > 1 && (
                     <span className={`num text-sm ${change >= 0 ? 'text-success' : 'text-destructive'}`}>
-                      {change >= 0 ? '+' : ''}{change} kg since {shortDate(first.week)}
+                      {change >= 0 ? '+' : ''}{change} {unit} since {shortDate(first.week)}
                     </span>
                   )}
                 </div>
                 {lift.points.length > 1 ? (
-                  <E1RMChart points={lift.points} color={LIFT_COLORS[lift.liftKey]} />
+                  <E1RMChart points={lift.points} color={LIFT_COLORS[lift.liftKey]} unit={unit} />
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    One week so far: {latest.e1rm} kg on {shortDate(latest.date)} (
+                    One week so far: {latest.e1rm} {unit} on {shortDate(latest.date)} (
                     <Link to={`/programs/${latest.programId}`} className="hover:text-primary">{latest.programName}</Link>).
                   </p>
                 )}
@@ -207,7 +208,7 @@ export default function AthleteProgress({ athleteId }: { athleteId: string }) {
                     <td className="num py-1.5 pr-6">{shortDate(pr.date)}</td>
                     <td className="py-1.5 pr-6">
                       <Link to={`/analysis/saved/${pr.id}`} className="hover:text-primary">
-                        {isVbtLift(pr.lift) ? liftLabel(pr.lift) : pr.lift} {pr.loadKg} kg
+                        {isVbtLift(pr.lift) ? liftLabel(pr.lift) : pr.lift} {pr.loadKg} {unit}
                       </Link>
                     </td>
                     <td className="num py-1.5 pr-6 font-medium">{pr.best.toFixed(2)} m/s</td>
@@ -249,7 +250,7 @@ export default function AthleteProgress({ athleteId }: { athleteId: string }) {
                       labelFormatter={(l: string) => shortDate(l)}
                       formatter={(v, _n, item) => {
                         const p = item.payload as SpeedPoint
-                        return [`${v} m/s${p.load != null ? ` at ${p.load} kg` : ''}`, 'Fastest rep']
+                        return [`${v} m/s${p.load != null ? ` at ${p.load} ${unit}` : ''}`, 'Fastest rep']
                       }}
                     />
                     <Line type="monotone" dataKey="velocity" stroke="hsl(var(--chart-4))" strokeWidth={2} dot={{ r: 3.5 }} activeDot={{ r: 5.5 }} />
@@ -257,7 +258,7 @@ export default function AthleteProgress({ athleteId }: { athleteId: string }) {
                 </ResponsiveContainer>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  One set so far: {s.points[0].velocity} m/s{s.points[0].load != null ? ` at ${s.points[0].load} kg` : ''} on {shortDate(s.points[0].date)}.
+                  One set so far: {s.points[0].velocity} m/s{s.points[0].load != null ? ` at ${s.points[0].load} ${unit}` : ''} on {shortDate(s.points[0].date)}.
                 </p>
               )}
             </div>
@@ -292,7 +293,7 @@ export default function AthleteProgress({ athleteId }: { athleteId: string }) {
                     <td className="num py-1.5 pr-6">{shortDate(s.day)}</td>
                     <td className="py-1.5 pr-6">{liftLabel(s.lift)}</td>
                     <td className="num py-1.5 pr-6">{s.sets}</td>
-                    <td className="num py-1.5 pr-6 font-medium">{Math.round(s.todayMax! * 2) / 2} kg</td>
+                    <td className="num py-1.5 pr-6 font-medium">{Math.round(s.todayMax! * 2) / 2} {unit}</td>
                     <td className={`num py-1.5 ${s.vsUsual != null && s.vsUsual <= -SLOW_SESSION ? 'text-warning' : 'text-muted-foreground'}`}>
                       {s.vsUsual == null ? '—' : `${s.vsUsual >= 0 ? '+' : '−'}${Math.abs(Math.round(s.vsUsual * 100))} %`}
                     </td>

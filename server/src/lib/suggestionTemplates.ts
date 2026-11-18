@@ -1,10 +1,12 @@
 import { targetWeight } from 'coachboard-shared/rpe'
 import type { WeekSlot, SuggestionStyleAdjust } from 'coachboard-shared'
+import { plateStep, type LoadUnit } from 'coachboard-shared/units'
 
 // Server-only type — includes the generate function that the client never needs.
 export interface SuggestionTemplate {
   id: string
-  generate: (weeks: number, e1RM: number, rpeAdjustment: number, style?: SuggestionStyleAdjust) => WeekSlot[]
+  /** unit is the athlete's (S3): loads round to its plates and are worded in it. e1RM is in it too. */
+  generate: (weeks: number, e1RM: number, rpeAdjustment: number, style?: SuggestionStyleAdjust, unit?: LoadUnit) => WeekSlot[]
 }
 
 // Style nudges (Feature 5c) applied uniformly so each template stays readable and
@@ -26,10 +28,11 @@ function makeSlot(
   reps: number,
   rpe: number,
   e1RM: number,
+  unit: LoadUnit,
   label: string,
 ): WeekSlot {
   const snapped = snapRpe(rpe)
-  const weight = targetWeight(e1RM, reps, snapped)
+  const weight = targetWeight(e1RM, reps, snapped, plateStep(unit))
   // Off the chart — more than 10 reps once the coach's rep bias is applied.
   // This used to fall back to 0, and a draft went out prescribing 0 kg.
   if (weight === null) {
@@ -49,7 +52,7 @@ function makeSlot(
     reps,
     targetRpe: snapped,
     weight,
-    explanation: `e1RM ${Math.round(e1RM)} kg × ${pct}% → ${weight} kg for ${reps} reps @ RPE ${snapped} (${label})`,
+    explanation: `e1RM ${Math.round(e1RM)} ${unit} × ${pct}% → ${weight} ${unit} for ${reps} reps @ RPE ${snapped} (${label})`,
   }
 }
 
@@ -84,13 +87,13 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'hypertrophy_accumulation',
-    generate(weeks, e1RM, rpeAdjustment, style) {
+    generate(weeks, e1RM, rpeAdjustment, style, unit = 'kg') {
       const adjusted = e1RM * (1 - rpeAdjustment)
       return Array.from({ length: weeks }, (_, i) => {
         const sets = Math.round(lerp(3, 5, i, weeks))
         const reps = Math.round(lerp(10, 6, i, weeks))
         const rpe  = lerp(style?.startRpe ?? 7.0, style?.peakRpe ?? 8.5, i, weeks)
-        return makeSlot(i + 1, sets, adjReps(reps, style), rpe, adjusted, 'hypertrophy accumulation')
+        return makeSlot(i + 1, sets, adjReps(reps, style), rpe, adjusted, unit, 'hypertrophy accumulation')
       })
     },
   },
@@ -103,7 +106,7 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'hypertrophy_repeated_effort',
-    generate(weeks, e1RM, rpeAdjustment, style) {
+    generate(weeks, e1RM, rpeAdjustment, style, unit = 'kg') {
       const adjusted = e1RM * (1 - rpeAdjustment)
       const workRpe = style?.startRpe ?? 8.0
       return Array.from({ length: weeks }, (_, i) => {
@@ -114,7 +117,7 @@ const TEMPLATES: SuggestionTemplate[] = [
           isDeload ? 2 : 4,
           adjReps(isDeload ? 8 : 10, style),
           isDeload ? 6.5 : capPeak(workRpe, style),
-          adjusted,
+          adjusted, unit,
           isDeload ? 'repeated effort deload' : 'repeated effort',
         )
       })
@@ -129,12 +132,12 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'strength_linear',
-    generate(weeks, e1RM, rpeAdjustment, style) {
+    generate(weeks, e1RM, rpeAdjustment, style, unit = 'kg') {
       const adjusted = e1RM * (1 - rpeAdjustment)
       return Array.from({ length: weeks }, (_, i) => {
         const reps = Math.round(lerp(5, 3, i, weeks))
         const rpe  = lerp(style?.startRpe ?? 7.5, style?.peakRpe ?? 9.0, i, weeks)
-        return makeSlot(i + 1, 4, adjReps(reps, style), rpe, adjusted, 'linear intensification')
+        return makeSlot(i + 1, 4, adjReps(reps, style), rpe, adjusted, unit, 'linear intensification')
       })
     },
   },
@@ -147,7 +150,7 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'strength_wave',
-    generate(weeks, e1RM, rpeAdjustment, style) {
+    generate(weeks, e1RM, rpeAdjustment, style, unit = 'kg') {
       const adjusted = e1RM * (1 - rpeAdjustment)
       const REPS_PATTERN = [5, 4, 3]
       const RPE_BASE     = [7, 8, 9]
@@ -160,7 +163,7 @@ const TEMPLATES: SuggestionTemplate[] = [
           4,
           adjReps(REPS_PATTERN[step], style),
           rpe,
-          adjusted,
+          adjusted, unit,
           `wave ${waveNum + 1} step ${step + 1}`,
         )
       })
@@ -175,7 +178,7 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'peaking_standard',
-    generate(weeks, e1RM, rpeAdjustment, style) {
+    generate(weeks, e1RM, rpeAdjustment, style, unit = 'kg') {
       const adjusted = e1RM * (1 - rpeAdjustment)
       const arc = [
         { sets: 3, reps: 3, rpe: 8.0 },
@@ -184,7 +187,7 @@ const TEMPLATES: SuggestionTemplate[] = [
         { sets: 2, reps: 1, rpe: 10.0 },
       ]
       return fitArc(arc, weeks).map((e, i) =>
-        makeSlot(i + 1, e.sets, adjReps(e.reps, style), capPeak(e.rpe, style), adjusted, 'standard peak'),
+        makeSlot(i + 1, e.sets, adjReps(e.reps, style), capPeak(e.rpe, style), adjusted, unit, 'standard peak'),
       )
     },
   },
@@ -197,7 +200,7 @@ const TEMPLATES: SuggestionTemplate[] = [
   // ------------------------------------------------------------------
   {
     id: 'peaking_extended',
-    generate(weeks, e1RM, rpeAdjustment, style) {
+    generate(weeks, e1RM, rpeAdjustment, style, unit = 'kg') {
       const adjusted = e1RM * (1 - rpeAdjustment)
       const arc = [
         { sets: 4, reps: 4, rpe: 7.5 },
@@ -208,7 +211,7 @@ const TEMPLATES: SuggestionTemplate[] = [
         { sets: 2, reps: 1, rpe: 10.0 },
       ]
       return fitArc(arc, weeks).map((e, i) =>
-        makeSlot(i + 1, e.sets, adjReps(e.reps, style), capPeak(e.rpe, style), adjusted, 'extended peak'),
+        makeSlot(i + 1, e.sets, adjReps(e.reps, style), capPeak(e.rpe, style), adjusted, unit, 'extended peak'),
       )
     },
   },

@@ -13,7 +13,7 @@ import type { Exercise, Workout } from './programUtils'
 // ---------------------------------------------------------------------------
 
 export interface ProgressionRule {
-  /** kg added to Load Cap per week. */
+  /** Added to Load Cap per week, in the program's unit. */
   loadStep: number
   /** Added to an RPE target per week ("RPE 8", "@8", "8"). */
   rpeStep: number
@@ -23,6 +23,8 @@ export interface ProgressionRule {
   repsStep: number
   /** Week indexes (0-based) that are deloads: lighter, and not counted as a step. */
   deloadWeeks: number[]
+  /** The plates a deload rounds to: 2.5 kg, 5 lb (S3). */
+  plate?: number
 }
 
 /** How a deload week is made lighter than the week before it. */
@@ -102,7 +104,7 @@ export function planProgression(
         if (isDeload) {
           // A deload is the week before it made lighter: the steps so far, then off.
           const prevWeight = from.weight != null ? from.weight + steps * rule.loadStep : null
-          weight = prevWeight != null ? round(prevWeight * DELOAD.loadFactor, 2.5) : null
+          weight = prevWeight != null ? round(prevWeight * DELOAD.loadFactor, rule.plate ?? 2.5) : null
           intensity = stepIntensity(from.intensity, steps * rule.rpeStep - DELOAD.rpeOff, steps * rule.pctStep - DELOAD.pctOff)
         }
         const patch: PlannedChange['patch'] = {}

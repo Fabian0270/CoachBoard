@@ -4,7 +4,7 @@ import { Button } from './ui/button'
 import { Upload, Loader2, AlertTriangle, Check } from 'lucide-react'
 import type { ImportPreview, E1RMEstimate } from 'coachboard-shared'
 
-function E1RMTable({ estimates }: { estimates: E1RMEstimate[] }) {
+function E1RMTable({ estimates, unit }: { estimates: E1RMEstimate[]; unit: string }) {
   if (estimates.length === 0) return null
   return (
     <div>
@@ -25,10 +25,10 @@ function E1RMTable({ estimates }: { estimates: E1RMEstimate[] }) {
                 <td className="px-3 py-2 font-medium">{est.liftName}</td>
                 <td className="px-3 py-2 text-center text-muted-foreground">W{est.weekIndex + 1}</td>
                 <td className="px-3 py-2 text-center text-muted-foreground font-mono text-xs">
-                  {est.weight} kg × {est.reps} @ RPE {est.rpe}
+                  {est.weight} {unit} × {est.reps} @ RPE {est.rpe}
                 </td>
                 <td className="px-3 py-2 text-center font-mono font-semibold">
-                  ~{est.e1rm} kg
+                  ~{est.e1rm} {unit}
                 </td>
               </tr>
             ))}
@@ -44,11 +44,13 @@ interface Props {
   onOpenChange: (open: boolean) => void
   programId: string
   onImported: () => void
+  /** The program's unit (S3). */
+  unit?: string
 }
 
 type Step = 'pick' | 'previewing' | 'preview' | 'committing' | 'done'
 
-export default function ImportDialog({ open, onOpenChange, programId, onImported }: Props) {
+export default function ImportDialog({ open, onOpenChange, programId, onImported, unit = 'kg' }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>('pick')
   const [preview, setPreview] = useState<ImportPreview | null>(null)
@@ -195,7 +197,7 @@ export default function ImportDialog({ open, onOpenChange, programId, onImported
               </p>
             )}
 
-            {hasE1rm && <E1RMTable estimates={preview.e1rmEstimates} />}
+            {hasE1rm && <E1RMTable estimates={preview.e1rmEstimates} unit={unit} />}
 
             {hasWarnings && (
               <div className="space-y-1">
@@ -241,7 +243,7 @@ export default function ImportDialog({ open, onOpenChange, programId, onImported
                 {updatedCount} exercise{updatedCount !== 1 ? 's' : ''} updated — program marked as completed.
               </span>
             </div>
-            {preview && hasE1rm && <E1RMTable estimates={preview.e1rmEstimates} />}
+            {preview && hasE1rm && <E1RMTable estimates={preview.e1rmEstimates} unit={unit} />}
             <div className="flex justify-end">
               <Button onClick={() => handleClose(false)}>Close</Button>
             </div>

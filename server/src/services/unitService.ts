@@ -24,6 +24,16 @@ export async function setDefaultUnit(unit: LoadUnit): Promise<void> {
     .onConflict((oc) => oc.column('key').doUpdateSet({ value: unit })).execute()
 }
 
+/**
+ * The unit a program's loads are in: its athlete's, or — for a template with
+ * no athlete — the default new athletes get.
+ */
+export async function programUnit(athleteId: string | null): Promise<LoadUnit> {
+  if (!athleteId) return getDefaultUnit()
+  const row = await getDb().selectFrom('athletes').select('unit').where('id', '=', athleteId).executeTakeFirst()
+  return unitOf(row?.unit)
+}
+
 /** A Load Used that is just a number ("140", "102,5", "140 kg"); null for anything else. */
 export function numericLoad(text: string | null): number | null {
   if (!text) return null

@@ -60,7 +60,13 @@ export interface GuildMemberHit {
 
 /** Values parsed out of a message caption like "180 kg for 2 @8". */
 export interface ParsedCaption {
-  weightKg: number | null
+  /**
+   * The load, in `unit` — the athlete's (S3). A caption without a unit ("225x3")
+   * is taken to be in it; one naming the other unit ("100 kg x 3" from a lb
+   * athlete) is converted.
+   */
+  weight: number | null
+  unit: 'kg' | 'lb'
   reps: number | null
   rpe: number | null
   liftKeywords: string[]

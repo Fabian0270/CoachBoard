@@ -5,6 +5,7 @@ import { clearSettings } from './discordSettingsService.js'
 import { deleteAllFilesFor } from './mediaStore.js'
 import { countAnalysesForMedia } from './videoAnalysisService.js'
 import { parseCaption } from './captionMatcher.js'
+import { unitOf } from 'coachboard-shared/units'
 import type {
   DiscordMediaItem,
   DiscordUserItem,
@@ -34,6 +35,7 @@ type MediaJoinRow = DiscordMediaTable & {
   author_display_name: string | null
   author_avatar_url: string | null
   athlete_name: string | null
+  athlete_unit?: string | null
   workout_name: string | null
   workout_date: string | null
   workout_program_id: string | null
@@ -69,7 +71,8 @@ function toItem(row: MediaJoinRow): DiscordMediaItem {
     width: row.width,
     height: row.height,
     caption: row.message_content,
-    parsedCaption: row.message_content ? parseCaption(row.message_content) : null,
+    // In the athlete's unit (S3); kg while the clip is nobody's.
+    parsedCaption: row.message_content ? parseCaption(row.message_content, unitOf(row.athlete_unit)) : null,
     postedAt: row.posted_at,
     downloadStatus: row.download_status as DiscordMediaItem['downloadStatus'],
     downloadError: row.download_error,
@@ -104,6 +107,7 @@ function baseMediaQuery() {
       'discord_users.display_name as author_display_name',
       'discord_users.avatar_url as author_avatar_url',
       'athletes.name as athlete_name',
+      'athletes.unit as athlete_unit',
       'confirmed_w.name as workout_name',
       'confirmed_w.scheduled_date as workout_date',
       'confirmed_w.program_id as workout_program_id',

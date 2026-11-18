@@ -1,5 +1,6 @@
 import { competitionLiftKey } from 'coachboard-shared/vbt'
 import { dayLoadHints, type StoredMax } from './loadHint'
+import type { LoadUnit } from 'coachboard-shared/units'
 import type { Workout } from './programUtils'
 
 // ---------------------------------------------------------------------------
@@ -31,7 +32,7 @@ export function volumeLift(name: string): VolumeLift {
 export interface VolumeCell {
   plannedSets: number
   doneSets: number
-  /** kg lifted, planned: sets × reps × load. */
+  /** Load lifted, planned: sets × reps × load, in the program's unit (the name predates lb). */
   plannedKg: number
   doneKg: number
   /** Some of the planned tonnage comes from a suggested load. */
@@ -53,14 +54,14 @@ export function countOf(text: string | null | undefined): number | null {
 }
 
 const kgOf = (text: string | null | undefined): number | null => {
-  const n = Number((text ?? '').replace(',', '.').replace(/\s*kg$/i, '').trim())
+  const n = Number((text ?? '').replace(',', '.').replace(/\s*(?:kgs?|lbs?)$/i, '').trim())
   return (text ?? '').trim() !== '' && Number.isFinite(n) && n > 0 ? n : null
 }
 
 const empty = (): VolumeCell => ({ plannedSets: 0, doneSets: 0, plannedKg: 0, doneKg: 0, estimated: false })
 
 /** Weekly volume for a program, week 0 starting on the Monday of its start date. */
-export function computeVolume(workouts: Workout[], startDate: string | null, maxes: StoredMax[]): VolumeWeek[] {
+export function computeVolume(workouts: Workout[], startDate: string | null, maxes: StoredMax[], unit: LoadUnit = 'kg'): VolumeWeek[] {
   if (!startDate) return []
   const monday = (iso: string) => {
     const d = new Date(`${iso}T00:00:00Z`)
@@ -81,7 +82,7 @@ export function computeVolume(workouts: Workout[], startDate: string | null, max
     weeks.set(weekIndex, week)
 
     const rows = [...w.exercises].sort((a, b) => a.order_index - b.order_index)
-    const hints = dayLoadHints(rows, maxes)
+    const hints = dayLoadHints(rows, maxes, unit)
     let prevName = ''
     let prevGroup: string | null = null
     for (const ex of rows) {

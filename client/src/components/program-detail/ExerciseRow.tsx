@@ -10,6 +10,8 @@ import type { LoadHint } from '../../lib/loadHint'
 import { isCellBlock } from '../../lib/pasteGrid'
 
 interface ExerciseRowProps {
+  /** The program's unit (S3), for the load hint's wording. */
+  unit?: string
   exercise: Exercise
   columns: ColDef[]
   /** Resolves true once the server has stored the change. */
@@ -68,7 +70,7 @@ export function arrowLeavesCell(el: HTMLInputElement | HTMLTextAreaElement, left
   return left ? start === 0 && end === 0 : start === len && end === len
 }
 
-export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, onKey, onPasteBlock, suggestions = NO_NAMES, lastWeek, loadHint, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
+export default function ExerciseRow({ unit = 'kg', exercise, columns, onSave, onDelete, onAddSet, onKey, onPasteBlock, suggestions = NO_NAMES, lastWeek, loadHint, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
   const toast = useToast()
   /**
    * Whether this cell holds a value the server has not accepted.
@@ -509,8 +511,8 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                   tabIndex={-1}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={applyLoadHint}
-                  title={`Use ${loadHint.kg} kg — ${loadHint.basis} (Ctrl+L)`}
-                  aria-label={`Use the suggested load, ${loadHint.kg} kg`}
+                  title={`Use ${loadHint.kg} ${unit} — ${loadHint.basis} (Ctrl+L)`}
+                  aria-label={`Use the suggested load, ${loadHint.kg} ${unit}`}
                   className="absolute right-1 top-1.5 rounded px-1 text-[10px] font-semibold text-primary hover:bg-primary/10"
                 >
                   Use

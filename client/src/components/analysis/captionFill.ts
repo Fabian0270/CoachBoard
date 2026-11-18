@@ -25,7 +25,7 @@ export function captionFill(cap: ParsedCaption | null | undefined): Partial<{ li
   // One lift named, or none: "squat then bench" says nothing about this clip.
   const lifts = cap.liftKeywords.map((k) => LIFTS[k]).filter(Boolean)
   if (lifts.length === 1) out.lift = lifts[0]
-  if (cap.weightKg != null && cap.weightKg > 0 && cap.weightKg <= 1000) out.load = cap.weightKg
+  if (cap.weight != null && cap.weight > 0 && cap.weight <= 1000) out.load = cap.weight
   if (cap.reps != null && cap.reps > 0 && cap.reps <= 30) out.reps = cap.reps
   // The page takes half steps from 5 to 10, as the saved set does.
   if (cap.rpe != null && cap.rpe >= 5 && cap.rpe <= 10 && Number.isInteger(cap.rpe * 2)) out.rpe = cap.rpe

@@ -41,9 +41,9 @@ export function parseCellBlock(text: string): string[][] {
   return lines.map((line) => line.split('\t').map((c) => c.trim().replace(/^"(.*)"$/s, '$1').trim()))
 }
 
-/** A Load Cap from a cell: "102,5", "102.5 kg". Null for empty; NaN for anything else. */
+/** A Load Cap from a cell: "102,5", "102.5 kg", "225 lb". Null for empty; NaN for anything else. */
 function parseLoad(cell: string): number | null {
-  const t = cell.replace(/\s*kg$/i, '').replace(',', '.').trim()
+  const t = cell.replace(/\s*(?:kgs?|lbs?)$/i, '').replace(',', '.').trim()
   if (t === '') return null
   const n = Number(t)
   return Number.isFinite(n) && n >= 0 ? n : NaN

@@ -393,7 +393,7 @@ export default function AthleteDetail() {
           </SlideIn>
         </TabsContent>
         <TabsContent value="progress">
-          <SlideIn>{id && <AthleteProgress athleteId={id} />}</SlideIn>
+          <SlideIn>{id && <AthleteProgress athleteId={id} unit={unitOf(athlete.unit)} />}</SlideIn>
         </TabsContent>
         <TabsContent value="maxes">
           <SlideIn>{id && <AthleteMaxes athleteId={id} unit={unitOf(athlete.unit)} />}</SlideIn>

@@ -11,6 +11,7 @@ import {
   buildColumns,
 } from '../../lib/programUtils'
 import ExerciseRow, { type RowKeyAction } from './ExerciseRow'
+import type { LoadUnit } from 'coachboard-shared/units'
 import { dayLoadHints, type StoredMax } from '../../lib/loadHint'
 import { isCellBlock } from '../../lib/pasteGrid'
 
@@ -29,6 +30,8 @@ interface ExerciseEditorProps {
   previous?: Workout | null
   /** The athlete's stored maxes, for suggested loads. Empty: no suggestions. */
   maxes?: StoredMax[]
+  /** The unit the program's loads are in (S3): hints round to its plates. */
+  unit?: LoadUnit
   /** Save the coach's note for the day. Resolves false when it did not save. */
   onSaveNote: (notes: string) => Promise<boolean>
   /**
@@ -100,7 +103,7 @@ export interface CopyDay {
 }
 export interface CopyWeek { weekIndex: number; days: CopyDay[] }
 
-export default function ExerciseEditor({ workout, enabledColumns, programId, copyGrid, unsavedKeys, onAdd, onDuplicate, previous, maxes = NO_MAXES, onSaveNote, onPasteRows, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
+export default function ExerciseEditor({ workout, enabledColumns, programId, copyGrid, unsavedKeys, onAdd, onDuplicate, previous, maxes = NO_MAXES, unit = 'kg', onSaveNote, onPasteRows, suggestions, onSaveField, onDeleteExercise, onDeleteWorkout, onAddSet, onCopyDay, onReorder }: ExerciseEditorProps) {
   const exercises = workout?.exercises ?? []
   const columns = buildColumns(enabledColumns)
   const [widths, setWidth] = useColumnWidths(programId, columns)
@@ -441,7 +444,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
   const groups = buildGroups(exercises)
 
   // The suggested load for each row, top to bottom (a back-off follows the set above).
-  const hintFor = dayLoadHints(exercises, maxes)
+  const hintFor = dayLoadHints(exercises, maxes, unit)
 
   // Last week, row by row: the nth row named "Squat" today lines up with the
   // nth row named "Squat" a week earlier, so set rows line up with set rows.
@@ -581,6 +584,7 @@ export default function ExerciseEditor({ workout, enabledColumns, programId, cop
                           onPasteBlock={onPasteRows ? (col, text) => onPasteRows(ex.id, col as ColKey, text) : undefined}
                           lastWeek={lastWeekFor.get(ex.id)}
                           loadHint={hintFor.get(ex.id) ?? null}
+                          unit={unit}
                           suggestions={suggestions}
                           onGroupDragStart={i === 0 ? startGroupDrag(ex.id, group.groupId) : undefined}
                           onSetDragStart={i > 0 && group.groupId ? startSetDrag(ex.id, group.groupId) : undefined}

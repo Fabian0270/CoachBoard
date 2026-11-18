@@ -4,6 +4,7 @@ import { Button } from '../ui/button'
 import { Label } from '../ui/label'
 import type { Workout } from '../../lib/programUtils'
 import { planProgression, DELOAD, type PlannedChange, type ProgressionRule } from '../../lib/progression'
+import { plateStep, type LoadUnit } from 'coachboard-shared/units'
 
 const DAY = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -20,6 +21,7 @@ export default function ProgressionDialog({
   exerciseNames,
   initialWeek,
   onApply,
+  unit = 'kg',
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -29,11 +31,13 @@ export default function ProgressionDialog({
   exerciseNames: string[]
   initialWeek: number
   onApply: (changes: PlannedChange[], exercise: string) => Promise<boolean>
+  /** The program's unit (S3): the load step starts at its plate, deloads round to it. */
+  unit?: LoadUnit
 }) {
   const weeks = Math.floor(dates.length / 7)
   const [exercise, setExercise] = useState('')
   const [startWeek, setStartWeek] = useState(0)
-  const [steps, setSteps] = useState({ load: '2.5', rpe: '0', pct: '0', reps: '0' })
+  const [steps, setSteps] = useState({ load: String(plateStep(unit)), rpe: '0', pct: '0', reps: '0' })
   const [deloads, setDeloads] = useState<Set<number>>(new Set())
   const [applying, setApplying] = useState(false)
 
@@ -51,6 +55,7 @@ export default function ProgressionDialog({
   const rule: ProgressionRule = {
     loadStep: num(steps.load), rpeStep: num(steps.rpe), pctStep: num(steps.pct), repsStep: Math.round(num(steps.reps)),
     deloadWeeks: [...deloads],
+    plate: plateStep(unit),
   }
   const plan = useMemo(
     () => (exercise ? planProgression(workouts, dates, exercise, startWeek, rule) : []),
@@ -72,7 +77,7 @@ export default function ProgressionDialog({
   )
 
   const describe = (v: PlannedChange['after']) =>
-    [v.reps ? `${v.reps} reps` : '', v.weight != null ? `${v.weight} kg` : '', v.intensity ?? ''].filter(Boolean).join(' · ')
+    [v.reps ? `${v.reps} reps` : '', v.weight != null ? `${v.weight} ${unit}` : '', v.intensity ?? ''].filter(Boolean).join(' · ')
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!applying) onOpenChange(o) }}>
@@ -103,7 +108,7 @@ export default function ProgressionDialog({
               {Array.from({ length: Math.max(0, weeks - 1) }, (_, w) => <option key={w} value={w}>Week {w + 1} as it is</option>)}
             </select>
           </div>
-          {field('load', 'Load Cap per week (kg)', 'e.g. 2.5, or −5')}
+          {field('load', `Load Cap per week (${unit})`, unit === 'lb' ? 'e.g. 5, or −10' : 'e.g. 2.5, or −5')}
           {field('rpe', 'RPE per week', 'e.g. 0.5 — for "RPE 8", "@8"')}
           {field('pct', '% per week', 'e.g. 2.5 — for "75%"')}
           {field('reps', 'Reps per week', 'e.g. −1 — plain numbers only')}

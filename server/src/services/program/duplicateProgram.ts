@@ -1,6 +1,8 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../../db.js'
 import { bestStoredMax, mainLiftKey, type MainLiftKey } from 'coachboard-shared/vbt'
+import { convertLoad, plateStep, roundToPlates, unitOf, type LoadUnit } from 'coachboard-shared/units'
+import { numericLoad, programUnit } from '../unitService.js'
 
 // ---------------------------------------------------------------------------
 // Duplicate a program: the same block for another athlete, another start date,
@@ -11,7 +13,7 @@ import { bestStoredMax, mainLiftKey, type MainLiftKey } from 'coachboard-shared/
 // the athlete logged (Load Used, Last Set RPE) comes along only when asked.
 //
 // Loads can be scaled to the new athlete: a Load Cap on a competition lift is
-// multiplied by new max / old max, rounded to 2.5 kg, when both athletes have
+// multiplied by new max / old max, rounded to the new athlete's plates, when both have
 // a max for that lift. Anything without both maxes keeps its number, and the
 // result says how many were scaled, so nothing is changed silently.
 // ---------------------------------------------------------------------------
@@ -45,10 +47,12 @@ const monday = (d: Date) => {
   return r
 }
 
-async function maxesByLift(athleteId: string | null): Promise<Map<MainLiftKey, number>> {
+/** The athlete's best max per competition lift, in `unit` (a max kept in the other unit is converted). */
+async function maxesByLift(athleteId: string | null, unit: LoadUnit): Promise<Map<MainLiftKey, number>> {
   const out = new Map<MainLiftKey, number>()
   if (!athleteId) return out
-  const rows = await getDb().selectFrom('athlete_maxes').selectAll().where('athlete_id', '=', athleteId).execute()
+  const rows = (await getDb().selectFrom('athlete_maxes').selectAll().where('athlete_id', '=', athleteId).execute())
+    .map((m) => ({ ...m, weight: convertLoad(m.weight, unitOf(m.unit), unit) }))
   for (const key of ['squat', 'bench', 'deadlift'] as MainLiftKey[]) {
     const best = bestStoredMax(key, rows)
     if (best) out.set(key, best.weight)
@@ -77,8 +81,19 @@ export async function duplicateProgram(sourceId: string, opts: DuplicateOptions)
   const newEnd = new Date(newStart)
   newEnd.setUTCDate(newEnd.getUTCDate() + weeks * 7 - 1)
 
-  const scaleFrom = opts.scaleLoads ? await maxesByLift(source.athlete_id) : new Map<MainLiftKey, number>()
-  const scaleTo = opts.scaleLoads ? await maxesByLift(opts.athleteId) : new Map<MainLiftKey, number>()
+  // S3: the copy is in its new athlete's unit. Scaled loads come out in it by
+  // the ratio of the two maxes; every other number is converted when the
+  // units differ, rounded to the new unit's plates.
+  const fromUnit = await programUnit(source.athlete_id)
+  const toUnit = await programUnit(opts.athleteId)
+  const plate = plateStep(toUnit)
+  const convert = (n: number) => (fromUnit === toUnit ? n : roundToPlates(convertLoad(n, fromUnit, toUnit), toUnit))
+  const convertUsed = (text: string | null) => {
+    const n = fromUnit === toUnit ? null : numericLoad(text)
+    return n == null ? text : String(convert(n))
+  }
+  const scaleFrom = opts.scaleLoads ? await maxesByLift(source.athlete_id, fromUnit) : new Map<MainLiftKey, number>()
+  const scaleTo = opts.scaleLoads ? await maxesByLift(opts.athleteId, toUnit) : new Map<MainLiftKey, number>()
 
   const workouts = await db.selectFrom('workouts').selectAll().where('program_id', '=', sourceId).execute()
   const exercises = workouts.length
@@ -125,13 +140,13 @@ export async function duplicateProgram(sourceId: string, opts: DuplicateOptions)
       }).execute()
 
       for (const ex of exercises.filter((e) => e.workout_id === w.id)) {
-        let weight = ex.weight
-        const key = weight != null && opts.scaleLoads ? mainLiftKey(ex.name) : null
-        if (key && weight != null) {
+        let weight = ex.weight != null ? convert(ex.weight) : null
+        const key = ex.weight != null && opts.scaleLoads ? mainLiftKey(ex.name) : null
+        if (key && ex.weight != null) {
           const from = scaleFrom.get(key)
           const to = scaleTo.get(key)
           if (from && to) {
-            const next = Math.round((weight * to) / from / 2.5) * 2.5
+            const next = Math.round((ex.weight * to) / from / plate) * plate
             if (next !== weight) scaled++
             weight = next
           } else {
@@ -156,7 +171,7 @@ export async function duplicateProgram(sourceId: string, opts: DuplicateOptions)
           order_index: ex.order_index,
           rest_time: ex.rest_time,
           intensity: ex.intensity,
-          load_used: opts.keepResults ? ex.load_used : null,
+          load_used: opts.keepResults ? convertUsed(ex.load_used) : null,
           rpe: opts.keepResults ? ex.rpe : null,
           reps_done: opts.keepResults ? ex.reps_done : null,
           velocity: ex.velocity,

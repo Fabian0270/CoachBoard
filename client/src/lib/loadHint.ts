@@ -1,5 +1,6 @@
 import { targetWeight } from 'coachboard-shared/rpe'
 import { bestStoredMax, mainLiftKey } from 'coachboard-shared/vbt'
+import { convertLoad, plateStep, unitOf, type LoadUnit } from 'coachboard-shared/units'
 
 // ---------------------------------------------------------------------------
 // A suggested load for one exercise, from the athlete's stored max.
@@ -16,9 +17,12 @@ export interface StoredMax {
   lift_name: string
   weight: number
   recorded_at: string
+  /** The max's own unit; missing = kg. Converted to the program's when they differ (S3). */
+  unit?: string
 }
 
 export interface LoadHint {
+  /** The load, in the program's unit (the field predates lb; S3). */
   kg: number
   /** How it was worked out, for the tooltip: "RPE 8 × 5 reps of a 180 kg max". */
   basis: string
@@ -90,7 +94,8 @@ export function maxFor(exerciseName: string, maxes: StoredMax[]): StoredMax | nu
   return key ? bestStoredMax(key, maxes) : null
 }
 
-const round = (kg: number, step = 2.5) => Math.round(kg / step) * step
+/** Rounded to the plates of the program's unit: 2.5 kg, 5 lb (S3). */
+const round = (load: number, unit: LoadUnit) => Math.round(load / plateStep(unit)) * plateStep(unit)
 
 /**
  * `above` is the load of the set directly above when it is the same movement
@@ -100,6 +105,7 @@ export function loadHint(
   ex: { name: string; reps: string | null; intensity: string | null },
   maxes: StoredMax[],
   above: number | null = null,
+  unit: LoadUnit = 'kg',
 ): LoadHint | null {
   const target = parseTarget(ex.intensity)
   if (!target) return null
@@ -107,11 +113,11 @@ export function loadHint(
     if (above === null || above <= 0) return null
     const pct = Math.abs(target.change)
     return {
-      kg: round((above * (100 + target.change)) / 100),
-      basis: `${pct}% ${target.change < 0 ? 'lighter' : 'heavier'} than the set above (${above} kg)`,
+      kg: round((above * (100 + target.change)) / 100, unit),
+      basis: `${pct}% ${target.change < 0 ? 'lighter' : 'heavier'} than the set above (${above} ${unit})`,
     }
   }
-  return fromMax(ex, target, maxes)
+  return fromMax(ex, target, maxes, unit)
 }
 
 /**
@@ -124,6 +130,7 @@ export function loadHint(
 export function dayLoadHints(
   rows: { id: string; name: string; reps: string | null; intensity: string | null; weight: number | null; group_id: string | null }[],
   maxes: StoredMax[],
+  unit: LoadUnit = 'kg',
 ): Map<string, LoadHint | null> {
   const out = new Map<string, LoadHint | null>()
   let prev: { id: string; weight: number | null; group_id: string | null; name: string } | null = null
@@ -133,7 +140,7 @@ export function dayLoadHints(
     const name: string = inGroup && p ? p.name : ex.name
     const same: boolean = !!p && (inGroup || (!!name.trim() && p.name.trim().toLowerCase() === name.trim().toLowerCase()))
     const above: number | null = same && p ? p.weight ?? out.get(p.id)?.kg ?? null : null
-    out.set(ex.id, loadHint({ ...ex, name }, maxes, above))
+    out.set(ex.id, loadHint({ ...ex, name }, maxes, above, unit))
     prev = { id: ex.id, weight: ex.weight, group_id: ex.group_id, name }
   }
   return out
@@ -143,15 +150,19 @@ function fromMax(
   ex: { name: string; reps: string | null },
   target: { rpe: number } | { pct: number },
   maxes: StoredMax[],
+  unit: LoadUnit,
 ): LoadHint | null {
-  const max = maxFor(ex.name, maxes)
-  if (!max) return null
+  const found = maxFor(ex.name, maxes)
+  if (!found) return null
+  // A max kept in the other unit after a switch without converting is read in this one.
+  const weight = unitOf(found.unit) === unit ? found.weight : Math.round(convertLoad(found.weight, unitOf(found.unit), unit) * 10) / 10
+  const max = { ...found, weight }
   if ('pct' in target) {
-    return { kg: round((max.weight * target.pct) / 100), basis: `${target.pct}% of a ${max.weight} kg max (${max.lift_name})` }
+    return { kg: round((max.weight * target.pct) / 100, unit), basis: `${target.pct}% of a ${max.weight} ${unit} max (${max.lift_name})` }
   }
   const reps = parseReps(ex.reps)
   if (!reps) return null
-  const kg = targetWeight(max.weight, reps, target.rpe)
+  const kg = targetWeight(max.weight, reps, target.rpe, plateStep(unit))
   if (kg === null) return null
-  return { kg, basis: `${reps} reps at RPE ${target.rpe} from a ${max.weight} kg max (${max.lift_name})` }
+  return { kg, basis: `${reps} reps at RPE ${target.rpe} from a ${max.weight} ${unit} max (${max.lift_name})` }
 }

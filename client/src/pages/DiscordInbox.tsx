@@ -116,7 +116,7 @@ export default function DiscordInbox() {
 
   const confirmWorkout = async (item: DiscordMediaItem, workoutId: string) => {
     if (await post(`/api/discord/media/${item.id}/workout`, { workoutId }, 'Could not attach it to the training day.')) {
-      if (logTicked.has(item.id) && item.parsedCaption?.weightKg != null) {
+      if (logTicked.has(item.id) && item.parsedCaption?.weight != null) {
         await logAfterAttach(item, workoutId)
       } else {
         toast.success('Attached to the training day')
@@ -288,7 +288,7 @@ export default function DiscordInbox() {
                         Attach to a day…
                       </Button>
                     )}
-                    {!item.workoutId && item.parsedCaption?.weightKg != null && (
+                    {!item.workoutId && item.parsedCaption?.weight != null && (
                       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <input
                           type="checkbox"
@@ -414,7 +414,7 @@ function MediaRowList({
 /** Parsed-caption chips like "180 kg × 2 @8" — the athlete's own numbers at a glance. */
 function CaptionChips({ item }: { item: DiscordMediaItem }) {
   const p = item.parsedCaption
-  if (!p || (p.weightKg == null && p.reps == null && p.rpe == null)) return null
+  if (!p || (p.weight == null && p.reps == null && p.rpe == null)) return null
   return (
     <Badge className="bg-primary/10 text-primary hover:bg-primary/10">{captionResult(p)}</Badge>
   )

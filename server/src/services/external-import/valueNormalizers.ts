@@ -55,7 +55,7 @@ export function normalizeLoad(
     if (m[2] && m[2].toLowerCase().startsWith('lb')) {
       warnings.push({
         sheetRow,
-        message: `Row ${sheetRow}: load "${text}" is in pounds — stored as ${m[1]}, but CoachBoard works in kg. Convert it if that matters.`,
+        message: `Row ${sheetRow}: load "${text}" says pounds — stored as ${m[1]}. Set the athlete to lb (on their page) if their sheet is in pounds.`,
       })
     }
     return m[1]

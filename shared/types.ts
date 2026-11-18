@@ -102,6 +102,8 @@ export interface Program {
   // on export so this program looks like the coach's own sheet. null = generic.
   export_layout: ExportLayoutTemplate | null
   bookmarked?: number   // 0/1 — coach favorited this program for reuse
+  /** 'kg' | 'lb' (S3): the unit its loads are in — its athlete's. Only on the single-program read. */
+  unit?: string
   workouts?: Workout[]
 }
 

@@ -1,4 +1,5 @@
 import type { ParsedCaption } from 'coachboard-shared/discord'
+import { convertLoad, type LoadUnit } from 'coachboard-shared/units'
 
 // ---------------------------------------------------------------------------
 // Caption parsing + workout suggestion scoring.
@@ -9,8 +10,6 @@ import type { ParsedCaption } from 'coachboard-shared/discord'
 // video belongs to. Pure functions, no I/O. The result is always a SUGGESTION
 // the coach confirms — never an automatic attachment (support, never override).
 // ---------------------------------------------------------------------------
-
-const LBS_TO_KG = 0.45359237
 
 // "180 kg for 2", "180x2", "80 kg x 5", "180*2", Swedish "180 för 2".
 const LOAD_REPS_RE = /(\d+(?:[.,]\d+)?)\s*(kg|lbs?)?\s*(?:x|×|\*|for|för)\s*(\d+)\b/i
@@ -32,17 +31,20 @@ function parseNumber(raw: string): number {
   return Number(raw.replace(',', '.'))
 }
 
-export function parseCaption(text: string | null | undefined): ParsedCaption {
-  const result: ParsedCaption = { weightKg: null, reps: null, rpe: null, liftKeywords: [] }
+/**
+ * `unit` is the athlete's (S3): a caption without one ("225x3") is in it, and
+ * one that names the other unit is converted to it.
+ */
+export function parseCaption(text: string | null | undefined, unit: LoadUnit = 'kg'): ParsedCaption {
+  const result: ParsedCaption = { weight: null, unit, reps: null, rpe: null, liftKeywords: [] }
   if (!text) return result
 
   const loadReps = LOAD_REPS_RE.exec(text)
   if (loadReps) {
     const value = parseNumber(loadReps[1])
-    const unit = loadReps[2]?.toLowerCase()
-    result.weightKg = unit?.startsWith('lb')
-      ? Math.round(value * LBS_TO_KG * 10) / 10
-      : value
+    const said = loadReps[2]?.toLowerCase()
+    const from: LoadUnit = said ? (said.startsWith('lb') ? 'lb' : 'kg') : unit
+    result.weight = from === unit ? value : Math.round(convertLoad(value, from, unit) * 10) / 10
     result.reps = Number(loadReps[3])
   }
 
@@ -148,10 +150,10 @@ export function suggestWorkout(
     // Load/reps agreement is checked against keyword-matched exercises when we
     // have them, otherwise against the whole day.
     const pool = keywordExercises.length > 0 ? keywordExercises : c.exercises
-    if (parsed.weightKg != null) {
+    if (parsed.weight != null) {
       const loadHit = pool.some((ex) => {
         const load = numericLoad(ex)
-        return load != null && Math.abs(load - parsed.weightKg!) / load <= 0.075
+        return load != null && Math.abs(load - parsed.weight!) / load <= 0.075
       })
       if (loadHit) score += 2
     }

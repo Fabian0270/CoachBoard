@@ -51,6 +51,8 @@ type ProgramRow = {
   end_date: string | null
   enabled_columns: string | null
   export_layout: string | null
+  /** 'kg' | 'lb' (S3): the athlete's; written where the sheet names a unit. */
+  unit?: string
 }
 
 const DEFAULT_HEADER_COLOR = 'FFB39DDB'
@@ -441,7 +443,7 @@ function fmtKg(value: number): string {
 }
 
 /** One-line prescription summary for a Modern card, e.g. "5 × 5   ·   100 kg   ·   RPE 8". */
-function prescriptionSummary(ex: ExerciseRow, withVelocity = false): string {
+function prescriptionSummary(ex: ExerciseRow, withVelocity = false, unit = 'kg'): string {
   const parts: string[] = []
   const sets = (ex.sets ?? '').trim()
   const reps = (ex.reps ?? '').trim()
@@ -453,9 +455,9 @@ function prescriptionSummary(ex: ExerciseRow, withVelocity = false): string {
   // The velocity target after the intensity, as in a style without its own column (D73).
   const velocity = withVelocity ? (ex.velocity ?? '').trim() : ''
   if (velocity) parts.push(velocity)
-  if (ex.weight != null) parts.push(`${ex.weight} kg`)
+  if (ex.weight != null) parts.push(`${ex.weight} ${unit}`)
   const used = (ex.load_used ?? '').trim()
-  if (used) parts.push(`→ ${used} kg`)
+  if (used) parts.push(`→ ${used} ${unit}`)
   const rpe = (ex.rpe ?? '').trim()
   if (rpe) parts.push(`RPE ${rpe.replace(/^@/, '')}`)
   const rest = (ex.rest_time ?? '').trim()
@@ -532,7 +534,7 @@ function renderModern(
           nameCell.value = {
             richText: [
               { text: ex.name, font: { bold: true, size: 12, color: { argb: MODERN.title } } },
-              { text: `      e1RM ${fmtKg(e1)} kg`, font: { size: 10, color: { argb: MODERN.badge } } },
+              { text: `      e1RM ${fmtKg(e1)} ${program.unit ?? 'kg'}`, font: { size: 10, color: { argb: MODERN.badge } } },
             ],
           }
         } else {
@@ -548,7 +550,7 @@ function renderModern(
         // Card detail row — prescription summary.
         const detail = ws.getCell(row, 1)
         const cue = withCues ? (ex.notes ?? '').trim() : ''
-        detail.value = [prescriptionSummary(ex, withVelocity), cue].filter(Boolean).join('   ·   ')
+        detail.value = [prescriptionSummary(ex, withVelocity, program.unit ?? 'kg'), cue].filter(Boolean).join('   ·   ')
         detail.fill = fill(MODERN.cardDetail)
         detail.font = { color: { argb: MODERN.detailText } }
         detail.alignment = { horizontal: 'left', vertical: 'middle' }

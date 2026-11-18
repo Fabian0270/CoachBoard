@@ -22,6 +22,7 @@ import LoadError from '../components/LoadError'
 import { ApiError, errorMessage, getJson, getList } from '../lib/api'
 import { barSpeedSets, type BarSpeedSet } from '../lib/barSpeedReport'
 import { shortDay } from '../components/analysis/TrainingDayLink'
+import { unitOf, type LoadUnit } from 'coachboard-shared/units'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
 import { localToday } from '../lib/dates'
 import { computeVolume, VOLUME_LABELS, VOLUME_LIFTS, type VolumeLift } from '../lib/volume'
@@ -70,8 +71,8 @@ const kg = (v: number) => Math.round(v).toLocaleString('en-GB')
  * Weekly sets and tonnage per lift, done against planned (I3). Shown before
  * any results come in too: the planned side is useful on its own.
  */
-function VolumeCard({ program, maxes }: { program: Program; maxes: ProgramReport['storedMaxes'] }) {
-  const weeks = useMemo(() => computeVolume(program.workouts, program.start_date, maxes), [program, maxes])
+function VolumeCard({ program, maxes, unit }: { program: Program; maxes: ProgramReport['storedMaxes']; unit: LoadUnit }) {
+  const weeks = useMemo(() => computeVolume(program.workouts, program.start_date, maxes, unit), [program, maxes, unit])
   const lifts = VOLUME_LIFTS.filter((l) => weeks.some((w) => w.byLift[l].plannedSets > 0))
   if (lifts.length === 0) return null
   const total = (l: VolumeLift) => weeks.reduce((t, w) => {
@@ -97,7 +98,7 @@ function VolumeCard({ program, maxes }: { program: Program; maxes: ProgramReport
       <CardHeader>
         <CardTitle>Volume</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Sets and tonnage (kg) per week, done / planned. Squat, Bench and Deadlift are the competition lifts; every variation is under Other.
+          Sets and tonnage ({unit}) per week, done / planned. Squat, Bench and Deadlift are the competition lifts; every variation is under Other.
         </p>
       </CardHeader>
       <CardContent>
@@ -147,7 +148,7 @@ const LIFT_NAMES: Record<string, string> = { squat: 'Squat', bench: 'Bench', dea
  * load, the fastest rep, and that day's estimated max from bar speed beside the
  * week's e1RM from logged sets. Never mixed into the e1RM above (D69).
  */
-function BarSpeedCard({ program, trends, athleteId }: { program: Program; trends: ProgramReport['e1rmTrends']; athleteId: string }) {
+function BarSpeedCard({ program, trends, athleteId, unit }: { program: Program; trends: ProgramReport['e1rmTrends']; athleteId: string; unit: LoadUnit }) {
   const [sets, setSets] = useState<BarSpeedSet[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
@@ -199,10 +200,10 @@ function BarSpeedCard({ program, trends, athleteId }: { program: Program; trends
                   <td className="py-1.5 pr-4 text-muted-foreground">
                     {shortDay(s.date)} · {s.workoutName}{s.exerciseName ? ` — ${s.exerciseName}` : ''}
                   </td>
-                  <td className="num py-1.5 pr-4 text-right">{s.loadKg != null ? `${s.loadKg} kg` : '—'}</td>
+                  <td className="num py-1.5 pr-4 text-right">{s.loadKg != null ? `${s.loadKg} ${unit}` : '—'}</td>
                   <td className="num py-1.5 pr-4 text-right">{s.speed != null ? `${s.speed.toFixed(2)} m/s` : '—'}</td>
-                  <td className="num py-1.5 pr-4 text-right">{s.dayMax != null ? `${Math.round(s.dayMax)} kg` : <span className="text-muted-foreground">—</span>}</td>
-                  <td className="num py-1.5 pr-4 text-right">{firstOf(i) ? (s.rpeE1rm != null ? `${fmt(s.rpeE1rm)} kg` : <span className="text-muted-foreground">—</span>) : ''}</td>
+                  <td className="num py-1.5 pr-4 text-right">{s.dayMax != null ? `${Math.round(s.dayMax)} ${unit}` : <span className="text-muted-foreground">—</span>}</td>
+                  <td className="num py-1.5 pr-4 text-right">{firstOf(i) ? (s.rpeE1rm != null ? `${fmt(s.rpeE1rm)} ${unit}` : <span className="text-muted-foreground">—</span>) : ''}</td>
                   <td className="py-1.5 text-right">
                     <Link to={`/analysis/saved/${s.analysisId}`} className="text-xs text-primary underline-offset-2 hover:underline">Open</Link>
                   </td>
@@ -271,7 +272,7 @@ export default function ProgramReport() {
         body: JSON.stringify({
           lift_name: displayName,
           weight: e1rm,
-          unit: 'kg',
+          unit,
           recorded_at: localToday(),
           notes: 'Estimated 1RM from program analysis',
         }),
@@ -295,6 +296,8 @@ export default function ProgramReport() {
   if (error) return <LoadError what="the report" message={error} onRetry={() => setAttempt((n) => n + 1)} />
   if (notFound || !report || !program) return <div className="text-muted-foreground">Report not found.</div>
 
+  // The unit the program's loads are in (S3): its athlete's.
+  const unit = unitOf(program.unit)
   const hasData = report.exercisesCompleted > 0
   const completionPct = Math.round(report.completionRate * 100)
   const hasRpeDeviation = report.rpeDeviations.some((r) => r.delta !== null)
@@ -373,9 +376,9 @@ export default function ProgramReport() {
         </Card>
       </div>
 
-      <VolumeCard program={program} maxes={report.storedMaxes} />
+      <VolumeCard program={program} maxes={report.storedMaxes} unit={unit} />
 
-      {report.athleteId && <BarSpeedCard program={program} trends={report.e1rmTrends} athleteId={report.athleteId} />}
+      {report.athleteId && <BarSpeedCard program={program} trends={report.e1rmTrends} athleteId={report.athleteId} unit={unit} />}
 
       {!hasData ? (
         <Card>
@@ -414,8 +417,8 @@ export default function ProgramReport() {
                   <div key={trend.liftKey}>
                     <div className="flex items-center gap-2 mb-3">
                       <span className="font-semibold">{trend.displayName}</span>
-                      <Badge variant="outline">Best {fmt(trend.bestE1RM)} kg</Badge>
-                      <Badge variant="outline">Latest {fmt(trend.latestE1RM)} kg</Badge>
+                      <Badge variant="outline">Best {fmt(trend.bestE1RM)} {unit}</Badge>
+                      <Badge variant="outline">Latest {fmt(trend.latestE1RM)} {unit}</Badge>
                     </div>
                     {trend.dataPoints.length > 1 ? (
                       <ResponsiveContainer width="100%" height={180}>
@@ -437,7 +440,7 @@ export default function ProgramReport() {
                             padding={{ left: 16, right: 16 }}
                           />
                           {/* No per-tick "kg": at this width it wrapped every label onto
-                              two lines and clipped the top one. The badges above say kg. */}
+                              two lines and clipped the top one. The badges above say the unit. */}
                           <YAxis
                             {...(() => {
                               const ticks = kgTicks(trend.dataPoints.map((d) => d.e1rm))
@@ -450,7 +453,7 @@ export default function ProgramReport() {
                             width={40}
                           />
                           <Tooltip
-                            formatter={(value: number) => [`${value} kg`, 'e1RM']}
+                            formatter={(value: number) => [`${value} ${unit}`, 'e1RM']}
                             labelFormatter={(label: number) => `Week ${label + 1}`}
                             contentStyle={{
                               background: 'hsl(var(--popover))',
@@ -474,7 +477,7 @@ export default function ProgramReport() {
                       </ResponsiveContainer>
                     ) : (
                       <p className="text-sm text-muted-foreground">
-                        Only one data point — {fmt(trend.dataPoints[0]?.e1rm)} kg
+                        Only one data point — {fmt(trend.dataPoints[0]?.e1rm)} {unit}
                         (Week {(trend.dataPoints[0]?.weekIndex ?? 0) + 1})
                       </p>
                     )}
@@ -510,8 +513,8 @@ export default function ProgramReport() {
                           <span className="font-medium">{trend.displayName}</span>
                           <div className="text-sm text-muted-foreground mt-0.5">
                             {storedMax
-                              ? `Stored max: ${storedMax.weight} ${storedMax.unit}  →  e1RM this block: ${fmt(trend.latestE1RM)} kg`
-                              : `No stored max  →  e1RM this block: ${fmt(trend.latestE1RM)} kg`}
+                              ? `Stored max: ${storedMax.weight} ${storedMax.unit}  →  e1RM this block: ${fmt(trend.latestE1RM)} ${unit}`
+                              : `No stored max  →  e1RM this block: ${fmt(trend.latestE1RM)} ${unit}`}
                           </div>
                         </div>
                         {!report.athleteId ? (
@@ -534,7 +537,7 @@ export default function ProgramReport() {
                               )
                             }
                           >
-                            {isUpdating ? 'Saving…' : `Set PR to ${fmt(trend.latestE1RM)} kg`}
+                            {isUpdating ? 'Saving…' : `Set PR to ${fmt(trend.latestE1RM)} ${unit}`}
                           </Button>
                         ) : (
                           <span className="text-sm text-muted-foreground">At or below max</span>

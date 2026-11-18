@@ -114,7 +114,7 @@ export default function DuplicateProgramDialog({
               Scale loads to this athlete’s maxes
               <span className="block text-xs text-muted-foreground">
                 {canScale
-                  ? 'Load Cap on squat, bench and deadlift, by the ratio of the two athletes’ maxes, rounded to 2.5 kg.'
+                  ? 'Load Cap on squat, bench and deadlift, by the ratio of the two athletes’ maxes, rounded to the new athlete’s plates (2.5 kg or 5 lb). An athlete in the other unit gets every load converted.'
                   : 'Only when copying to a different athlete.'}
               </span>
             </span>

@@ -25,6 +25,7 @@ import PreviewProgramDialog from '../components/PreviewProgramDialog'
 import ExerciseEditor, { type CopyWeek } from '../components/program-detail/ExerciseEditor'
 import DayPreview from '../components/program-detail/DayPreview'
 import DuplicateProgramDialog from '../components/DuplicateProgramDialog'
+import { unitOf } from 'coachboard-shared/units'
 import ProgressionDialog from '../components/program-detail/ProgressionDialog'
 import BlockView from '../components/program-detail/BlockView'
 import { anchorFor, weekdayCounts, type BlockRow } from '../lib/blockLayout'
@@ -1208,7 +1209,7 @@ function ProgramPage() {
                                       <span className="num text-muted-foreground"> {ex.sets}×{ex.reps}</span>
                                     )}
                                     {ex.weight != null && (
-                                      <span className="num text-muted-foreground"> @{ex.weight}kg</span>
+                                      <span className="num text-muted-foreground"> @{ex.weight}{unitOf(program.unit)}</span>
                                     )}
                                     {/* The target, so an RPE- or %-based program reads in the grid. */}
                                     {ex.intensity && (
@@ -1337,6 +1338,7 @@ function ProgramPage() {
                 return ok
               }}
               maxes={athleteMaxes}
+              unit={unitOf(program.unit)}
               onPasteRows={(anchorId, start, text) => void pasteRows(openDate, anchorId, start, text)}
               onSaveField={(exerciseId, patch) =>
                 openWorkout ? saveCell(openDate, openWorkout.id, exerciseId, patch) : Promise.resolve(false)}
@@ -1449,6 +1451,7 @@ function ProgramPage() {
         dates={allDates}
         exerciseNames={exerciseNamesInProgram.map((n) => n.name)}
         initialWeek={Math.max(0, Math.floor(allDates.indexOf(today) / 7))}
+        unit={unitOf(program.unit)}
         onApply={(changes, exercise) =>
           days.withUndo(
             [...new Set(changes.map((c) => c.date))],
@@ -1657,6 +1660,7 @@ function ProgramPage() {
           open={importOpen}
           onOpenChange={setImportOpen}
           programId={program.id}
+          unit={unitOf(program.unit)}
           onImported={() => { void reloadProgram() }}
         />
       )}

@@ -8,6 +8,9 @@ import { configureSecureStore } from './secureStore.js'
 import { createAthlete, createAthleteMax } from './athleteService.js'
 import { getDefaultUnit, setDefaultUnit, numericLoad, switchAthleteUnit, unitImpact } from './unitService.js'
 import { roundToPlates, convertLoad } from 'coachboard-shared/units'
+import { duplicateProgram } from './program/duplicateProgram.js'
+import { buildProgramWorkbook } from './programExport.js'
+import ExcelJS from 'exceljs'
 
 // S3 (D76–D78): kg or lb per athlete, the Settings default, and switching.
 
@@ -58,6 +61,41 @@ describe('the default unit', () => {
     expect(await getDefaultUnit()).toBe('lb')
     expect((await createAthlete({ name: 'B' })).unit).toBe('lb')
     expect((await createAthlete({ name: 'C', unit: 'kg' })).unit).toBe('kg')
+  })
+})
+
+describe('duplicating to an athlete in the other unit', () => {
+  it('converts the loads to their unit, rounded to their plates, and scales by maxes in it', async () => {
+    const kgId = await athleteWithData('kg')
+    const source = await getDb().selectFrom('programs').select('id').where('athlete_id', '=', kgId).executeTakeFirstOrThrow()
+    const lb = await createAthlete({ name: 'Lb', unit: 'lb' })
+    const plain = await duplicateProgram(source.id, { athleteId: lb.id, name: 'Copy', startDate: '2026-12-07', keepResults: true, scaleLoads: false })
+    const rows = (id: string) => getDb().selectFrom('exercises').innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+      .select(['exercises.name', 'exercises.weight', 'exercises.load_used']).where('workouts.program_id', '=', id).orderBy('exercises.name').execute()
+    expect(await rows(plain!.id)).toEqual([
+      { name: 'Bench', weight: null, load_used: 'BW+20' },
+      { name: 'Row', weight: 130, load_used: null },
+      { name: 'Squat', weight: 395, load_used: '400' },
+    ])
+    // The kg athlete's squat max is 200 kg; the lb athlete's 500 lb (~227 kg).
+    await createAthleteMax({ athlete_id: lb.id, lift_name: 'Squat', weight: 500 })
+    const scaled = await duplicateProgram(source.id, { athleteId: lb.id, name: 'Scaled', startDate: '2026-12-07', keepResults: false, scaleLoads: true })
+    // 180 kg is 90 % of 200 kg; 90 % of 500 lb is 450 lb.
+    expect((await rows(scaled!.id)).find((r) => r.name === 'Squat')?.weight).toBe(450)
+  })
+})
+
+describe('the exported sheet', () => {
+  it("names the athlete's unit on a Modern card", async () => {
+    const id = await athleteWithData('lb')
+    const program = await getDb().selectFrom('programs').select('id').where('athlete_id', '=', id).executeTakeFirstOrThrow()
+    await getDb().updateTable('programs').set({ builtin_template: 'modern' }).where('id', '=', program.id).execute()
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load((await buildProgramWorkbook(program.id)).buffer as unknown as ArrayBuffer)
+    const cells: string[] = []
+    wb.worksheets[0].eachRow((row) => row.eachCell((c) => { cells.push(typeof c.value === 'string' ? c.value : JSON.stringify(c.value)) }))
+    expect(cells.some((t) => t.includes('180 lb') && t.includes('→ 182,5 lb'))).toBe(true)
+    expect(cells.some((t) => /\bkg\b/.test(t))).toBe(false)
   })
 })
 

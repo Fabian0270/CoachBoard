@@ -113,7 +113,7 @@ describe('logCandidates', () => {
     ])
     const m = await media('squat 180x3 @8')
     const c = await logCandidates(m, d.workoutId)
-    expect(c.caption).toMatchObject({ weightKg: 180, reps: 3, rpe: 8 })
+    expect(c.caption).toMatchObject({ weight: 180, reps: 3, rpe: 8 })
     expect(c.rows.filter((r) => r.fits).map((r) => r.name)).toEqual(['Squat'])
   })
 
@@ -227,5 +227,19 @@ describe('reps done downstream', () => {
       .select('exercises.reps_done').where('workouts.program_id', '=', programId).executeTakeFirstOrThrow()
     expect((await of(kept!.id)).reps_done).toBe('3')
     expect((await of(plain!.id)).reps_done).toBeNull()
+  })
+})
+
+describe('a lb athlete', () => {
+  it('logs "225x3" as 225, and fits it against their lb Load Caps', async () => {
+    const d = await day([{ name: 'Squat', reps: '3', weight: 225 }, { name: 'Squat', reps: '3', weight: 315 }])
+    await getDb().updateTable('athletes').set({ unit: 'lb' }).where('id', '=', d.athleteId).execute()
+    const m = await media('squat 225x3 @8', d.workoutId)
+    await getDb().updateTable('discord_media').set({ athlete_id: d.athleteId }).where('id', '=', m).execute()
+    const c = await logCandidates(m, d.workoutId)
+    expect(c.caption).toMatchObject({ weight: 225, unit: 'lb' })
+    expect(c.rows.filter((r) => r.fits).map((r) => r.weight)).toEqual([225])
+    await logCaption(m, d.ids[0])
+    expect((await row(d.ids[0])).load_used).toBe('225')
   })
 })

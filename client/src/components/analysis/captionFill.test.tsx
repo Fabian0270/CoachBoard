@@ -7,11 +7,11 @@ import { renderScreen } from '../../test/render'
 
 // What the Discord caption fills in on the bar path page (BP14).
 
-const cap = (over: Record<string, unknown>) => ({ weightKg: null, reps: null, rpe: null, liftKeywords: [], ...over })
+const cap = (over: Record<string, unknown>) => ({ weight: null, unit: 'kg' as const, reps: null, rpe: null, liftKeywords: [], ...over })
 
 describe('captionFill', () => {
   it('fills the lift, load, reps and RPE a caption gives', () => {
-    expect(captionFill(cap({ weightKg: 180, reps: 2, rpe: 8, liftKeywords: ['bench'] }))).toEqual({
+    expect(captionFill(cap({ weight: 180, reps: 2, rpe: 8, liftKeywords: ['bench'] }))).toEqual({
       lift: 'bench-press', load: 180, reps: 2, rpe: 8,
     })
   })

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { sql } from 'kysely'
 import { getDb } from '../db.js'
 import { serializeEnabledColumns, withParsedColumns } from './program/columns.js'
+import { programUnit } from './unitService.js'
 
 // Re-export the column helpers + workout/exercise services so existing
 // consumers can keep importing everything from './programService.js'.
@@ -99,6 +100,8 @@ export async function findProgramById(id: string) {
 
   return {
     ...withParsedColumns(program),
+    // The unit its loads are in (S3): the athlete's, or the default for a template.
+    unit: await programUnit(program.athlete_id),
     workouts: workouts.map((w) => ({
       ...w,
       exercises: exercises.filter((e) => e.workout_id === w.id),
@@ -130,7 +133,7 @@ export async function findProgramForExport(id: string) {
         .execute()
     : []
 
-  return { program, workouts, exercises }
+  return { program: { ...program, unit: await programUnit(program.athlete_id) }, workouts, exercises }
 }
 
 export async function createProgram(data: {
