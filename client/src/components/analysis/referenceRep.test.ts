@@ -20,7 +20,7 @@ const analysis = (loadKg: number) => ({
   calibration: { a: { x: 0, y: 0 }, b: { x: 0, y: 90 }, plateDiameterMm: 450 },
   metrics: [rep(0, 1.5, 3, 0.5, 0.6), rep(1, 4.5, 6, 0.5, 0.5)], notes: null, hasVideo: false,
   createdAt: '2026-11-10T10:00:00Z', updatedAt: '2026-11-10T10:00:00Z', liftedAt: '2026-11-10T10:00:00Z',
-  lift: 'back-squat', loadKg, calledRpe: null, metric: null,
+  lift: 'back-squat', loadKg, calledRpe: null, metric: null, link: null,
 })
 
 describe('referenceShape', () => {

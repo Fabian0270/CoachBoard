@@ -20,6 +20,7 @@ import {
 } from '../services/poseTrackService.js'
 import { POSE_WIRE_TYPE, PoseWireError, decodePoseTrack, encodePoseTrack } from 'coachboard-shared/pose'
 import { fail } from '../lib/httpError.js'
+import { linkCandidates, linkProblem } from '../services/analysisLinkService.js'
 
 const router = Router()
 
@@ -105,6 +106,28 @@ const saveSchema = z.object({
     .nullable()
     .optional(),
   videoBytes: z.number().int().positive().nullable().optional(),
+  // The training day and row (L2, D67). Optional: saving without a link works.
+  workoutId: z.string().min(1).nullable().optional(),
+  exerciseId: z.string().min(1).nullable().optional(),
+})
+
+// The training days near when a set was lifted, for the link pickers (L2).
+// Before '/:id', which would otherwise swallow it.
+const linkCandidatesSchema = z.object({
+  athleteId: z.string().min(1),
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  lift: z.string().optional(),
+  loadKg: z.coerce.number().positive().max(1000).optional(),
+})
+
+router.get('/link-candidates', async (req, res) => {
+  const parsed = linkCandidatesSchema.safeParse(req.query)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Which athlete and day?' })
+    return
+  }
+  const { athleteId, day, lift, loadKg } = parsed.data
+  res.json(await linkCandidates(athleteId, day, lift ?? null, loadKg ?? null))
 })
 
 router.get('/', async (req, res) => {
@@ -202,6 +225,11 @@ router.post('/', async (req, res) => {
   const parsed = saveSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid analysis' })
+    return
+  }
+  const problem = await linkProblem(parsed.data.athleteId, parsed.data.workoutId ?? null, parsed.data.exerciseId ?? null)
+  if (problem) {
+    res.status(400).json({ error: problem })
     return
   }
   res.status(201).json(
@@ -347,6 +375,9 @@ const contextSchema = z
     // back by Undo. Shaped as on save; each needs its index, which the rep
     // table, the strike and the Undo all key on.
     metrics: z.array(z.record(z.string(), z.unknown()).refine((m) => Number.isInteger(m.index), 'Each rep needs its index')).max(200).optional(),
+    // The training day and row (L2). Linked from the saved page, or unlinked.
+    workoutId: z.string().min(1).nullable().optional(),
+    exerciseId: z.string().min(1).nullable().optional(),
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), 'Nothing to change')
 
@@ -355,6 +386,19 @@ router.patch('/:id', async (req, res) => {
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid change' })
     return
+  }
+  if (parsed.data.workoutId !== undefined) {
+    const current = await getAnalysis(req.params.id)
+    if (!current) {
+      res.status(404).json({ error: 'Analysis not found' })
+      return
+    }
+    const athleteId = parsed.data.athleteId !== undefined ? parsed.data.athleteId : current.athleteId
+    const problem = await linkProblem(athleteId, parsed.data.workoutId, parsed.data.exerciseId ?? null)
+    if (problem) {
+      res.status(400).json({ error: problem })
+      return
+    }
   }
   const updated = await updateAnalysisContext(req.params.id, parsed.data)
   if (!updated) {

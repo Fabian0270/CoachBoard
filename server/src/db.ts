@@ -285,6 +285,11 @@ export interface VideoAnalysisTable {
    *  identical file. Either way the analysis can be replayed. */
   video_path: string | null
   video_bytes: number | null
+  /** The training day and the row of it this set was (L2, D67). Plain ids, no
+   *  foreign key: a deleted day reads as unlinked, and undoing the delete
+   *  (which restores the same ids) brings the link back. */
+  workout_id: Generated<string | null>
+  exercise_id: Generated<string | null>
   created_at: string
   updated_at: string
 }
@@ -507,12 +512,14 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
     )
   `.execute(_db)
 
-  const addColumnIfMissing = async (table: string, column: string, type: string): Promise<void> => {
+  /** Returns true when the column was added just now. */
+  const addColumnIfMissing = async (table: string, column: string, type: string): Promise<boolean> => {
     const result = await sql<{ name: string }>`PRAGMA table_info(${sql.raw(table)})`.execute(_db!)
     const exists = result.rows.some((row) => row.name === column)
     if (!exists) {
       await sql`ALTER TABLE ${sql.raw(table)} ADD COLUMN ${sql.raw(column)} ${sql.raw(type)}`.execute(_db!)
     }
+    return !exists
   }
 
   await sql`CREATE INDEX IF NOT EXISTS idx_programs_athlete_id ON programs(athlete_id)`.execute(_db)
@@ -857,6 +864,11 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   await addColumnIfMissing('video_analyses', 'metric', 'TEXT')
   await addColumnIfMissing('video_analyses', 'video_path', 'TEXT')
   await addColumnIfMissing('video_analyses', 'video_bytes', 'INTEGER')
+  // L2 (D67): the training day and row a set was. Added once; that run also
+  // links the analyses saved before, where it is clear (D70).
+  const analysisLinkAdded = await addColumnIfMissing('video_analyses', 'workout_id', 'TEXT')
+  await addColumnIfMissing('video_analyses', 'exercise_id', 'TEXT')
+  await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_workout ON video_analyses(workout_id)`.execute(_db)
 
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_media ON video_analyses(media_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_athlete ON video_analyses(athlete_id)`.execute(_db)
@@ -925,6 +937,20 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   // delete: deleting an athlete cascades to their programs inside SQLite, where
   // no application code sees it.
   const pruned = pruneOrphanTemplates(_sqlite!)
+
+  // D70: analyses saved before L2 from a Discord clip on a day. Imported late
+  // because the service reads through getDb(), which this module defines. A
+  // failure leaves them unlinked — the coach can link them by hand — and never
+  // stops the app from starting.
+  if (analysisLinkAdded) {
+    try {
+      const { backfillAnalysisLinks } = await import('./services/analysisLinkService.js')
+      const linked = await backfillAnalysisLinks()
+      if (linked > 0) log(`Linked ${linked} saved bar path ${linked === 1 ? 'analysis' : 'analyses'} to their training days`)
+    } catch (err) {
+      log(`Could not link saved analyses to their training days: ${String(err)}`)
+    }
+  }
 
   // Dropping a column frees its pages but does not shrink the file; VACUUM
   // does. Once, right after the move — that is the run where it pays off. A

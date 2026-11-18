@@ -73,6 +73,8 @@ import {
   useAthleteMaxes,
   useAthleteMvt,
 } from '../components/analysis/useVbtHistory'
+import TrainingDayLink, { NO_LINK, type DayLink } from '../components/analysis/TrainingDayLink'
+import { localDay } from 'coachboard-shared/vbtSession'
 import { useConfirm } from '../components/ui/confirm-dialog'
 import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import { num } from '../lib/num'
@@ -573,6 +575,12 @@ export default function VideoAnalysis() {
   // Lets the panel judge the plate scale against how far this lifter's bar
   // should actually travel, instead of a band wide enough to cover everyone.
   const athleteHeightCm = roster.find((a) => a.id === athleteId)?.height_cm ?? null
+  // The training day and row the set was (L2, D67). Follows the clip until the
+  // coach picks; a new clip or another athlete starts over.
+  const [linkChoice, setLinkChoice] = useState<DayLink | null>(null)
+  const [dayLink, setDayLink] = useState<DayLink>(NO_LINK)
+  useEffect(() => { setLinkChoice(null) }, [athleteId, source])
+  const liftedDay = source?.kind === 'discord' ? localDay(source.item.postedAt) : localDay(new Date().toISOString())
   const metric = setContext.metric ?? defaultVelocityMetric(setContext.lift)
   const { anchors: savedAnchors, points: savedPoints, rows: historyRows } = useVbtHistory(
     athleteId,
@@ -830,6 +838,8 @@ export default function VideoAnalysis() {
         metric: reps.length > 0 ? metric : null,
         videoPath: stored?.relPath ?? null,
         videoBytes: stored?.bytes ?? null,
+        workoutId: athleteId ? dayLink.workoutId : null,
+        exerciseId: athleteId && dayLink.workoutId ? dayLink.exerciseId : null,
       })
       setSavedId(saved.id)
       setSavedContext(contextNow())
@@ -1579,6 +1589,17 @@ export default function VideoAnalysis() {
                     </span>
                   )}
                 </div>
+
+                <TrainingDayLink
+                  athleteId={athleteId}
+                  day={liftedDay}
+                  lift={reps.length > 0 ? setContext.lift : null}
+                  loadKg={loadKg}
+                  preferredWorkoutId={source?.kind === 'discord' ? source.item.workoutId : null}
+                  choice={linkChoice}
+                  onChoose={setLinkChoice}
+                  onResolved={setDayLink}
+                />
 
                 <div className="flex gap-2">
                   <Button size="sm" onClick={saveAnalysis} disabled={saving}>

@@ -60,12 +60,18 @@ export function sessionMvt(lift: VbtLift, stored: number | null | undefined): nu
   return resolveMvt(lift, { stored: stored ?? null })
 }
 
+/** A set's fastest counted rep in the lift's standard measure, m/s; null without one. */
+export function setSpeed(metrics: RepMetrics[], lift: VbtLift): number | null {
+  const metric = defaultVelocityMetric(lift)
+  const speeds = metrics.filter((r) => !looksMistracked(r)).map((r) => readRep(r, metric)).filter((v): v is number => v != null)
+  return speeds.length ? Math.max(...speeds) : null
+}
+
 /** One point per set: its load and its fastest counted rep in the lift's standard measure. */
 function point(set: SessionSet, lift: VbtLift): LvPoint | null {
   if (set.loadKg == null || set.loadKg <= 0) return null
-  const metric = defaultVelocityMetric(lift)
-  const speeds = set.metrics.filter((r) => !looksMistracked(r)).map((r) => readRep(r, metric)).filter((v): v is number => v != null)
-  return speeds.length ? { load: set.loadKg, velocity: Math.max(...speeds) } : null
+  const velocity = setSpeed(set.metrics, lift)
+  return velocity != null ? { load: set.loadKg, velocity } : null
 }
 
 /** The max one day's sets read, or why not. */

@@ -19,7 +19,10 @@ import type { Program } from '../lib/programUtils'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import { useToast } from '../components/ui/toast'
 import LoadError from '../components/LoadError'
-import { ApiError, errorMessage, getJson } from '../lib/api'
+import { ApiError, errorMessage, getJson, getList } from '../lib/api'
+import { barSpeedSets, type BarSpeedSet } from '../lib/barSpeedReport'
+import { shortDay } from '../components/analysis/TrainingDayLink'
+import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
 import { localToday } from '../lib/dates'
 import { computeVolume, VOLUME_LABELS, VOLUME_LIFTS, type VolumeLift } from '../lib/volume'
 
@@ -131,6 +134,85 @@ function VolumeCard({ program, maxes }: { program: Program; maxes: ProgramReport
         <p className="mt-3 text-xs text-muted-foreground">
           Done counts each logged row at its prescribed sets and reps with the load the athlete logged.
           {anyEstimated && ' ≈ includes suggested loads for rows with no Load Cap (from the max, or the set above for a back-off).'}
+        </p>
+      </CardContent>
+    </Card>
+  )
+}
+
+const LIFT_NAMES: Record<string, string> = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' }
+
+/**
+ * Bar speed from the saved sets linked to this program's days (L2, D68): the
+ * load, the fastest rep, and that day's estimated max from bar speed beside the
+ * week's e1RM from logged sets. Never mixed into the e1RM above (D69).
+ */
+function BarSpeedCard({ program, trends, athleteId }: { program: Program; trends: ProgramReport['e1rmTrends']; athleteId: string }) {
+  const [sets, setSets] = useState<BarSpeedSet[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    const aid = encodeURIComponent(athleteId)
+    Promise.all([
+      getList<VideoAnalysisDto>(`/api/analysis?athleteId=${aid}&withTrack=0`),
+      getJson<Record<string, number>>(`/api/athletes/${aid}/mvt`).catch(() => ({} as Record<string, number>)),
+    ])
+      .then(([analyses, mvt]) => { if (!cancelled) { setSets(barSpeedSets(program, analyses, mvt, trends)); setError(null) } })
+      .catch((e) => { if (!cancelled) setError(errorMessage(e)) })
+    return () => { cancelled = true }
+  }, [program, trends, athleteId, attempt])
+
+  if (error) return <LoadError what="the bar speed sets" message={error} onRetry={() => setAttempt((n) => n + 1)} />
+  if (!sets || sets.length === 0) return null
+  // The week's lift label and e1RM only on its first row.
+  const firstOf = (i: number) => i === 0 || sets[i - 1].weekIndex !== sets[i].weekIndex || sets[i - 1].liftKey !== sets[i].liftKey
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Bar speed</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Saved bar path sets linked to this program&rsquo;s days. The day&rsquo;s max is read from that day&rsquo;s sets,
+          as on the Progress tab; the e1RM beside it is the week&rsquo;s from logged sets, and the two are kept apart.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" aria-label="Bar speed per week">
+            <thead>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                <th className="pb-2 pr-4 font-medium">Week</th>
+                <th className="pb-2 pr-4 font-medium">Lift</th>
+                <th className="pb-2 pr-4 font-medium">Day</th>
+                <th className="pb-2 pr-4 text-right font-medium">Load</th>
+                <th className="pb-2 pr-4 text-right font-medium">Fastest rep</th>
+                <th className="pb-2 pr-4 text-right font-medium">Day&rsquo;s max (bar speed)</th>
+                <th className="pb-2 pr-4 text-right font-medium">Week e1RM (RPE)</th>
+                <th className="pb-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {sets.map((s, i) => (
+                <tr key={s.analysisId} className={firstOf(i) ? 'border-t' : ''}>
+                  <td className="py-1.5 pr-4">{firstOf(i) ? `Wk ${s.weekIndex + 1}` : ''}</td>
+                  <td className="py-1.5 pr-4 font-medium">{firstOf(i) ? LIFT_NAMES[s.liftKey] : ''}</td>
+                  <td className="py-1.5 pr-4 text-muted-foreground">
+                    {shortDay(s.date)} · {s.workoutName}{s.exerciseName ? ` — ${s.exerciseName}` : ''}
+                  </td>
+                  <td className="num py-1.5 pr-4 text-right">{s.loadKg != null ? `${s.loadKg} kg` : '—'}</td>
+                  <td className="num py-1.5 pr-4 text-right">{s.speed != null ? `${s.speed.toFixed(2)} m/s` : '—'}</td>
+                  <td className="num py-1.5 pr-4 text-right">{s.dayMax != null ? `${Math.round(s.dayMax)} kg` : <span className="text-muted-foreground">—</span>}</td>
+                  <td className="num py-1.5 pr-4 text-right">{firstOf(i) ? (s.rpeE1rm != null ? `${fmt(s.rpeE1rm)} kg` : <span className="text-muted-foreground">—</span>) : ''}</td>
+                  <td className="py-1.5 text-right">
+                    <Link to={`/analysis/saved/${s.analysisId}`} className="text-xs text-primary underline-offset-2 hover:underline">Open</Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          A day&rsquo;s max needs at least three sets of the lift that day with a clear load-speed line; — means there were too few.
         </p>
       </CardContent>
     </Card>
@@ -292,6 +374,8 @@ export default function ProgramReport() {
       </div>
 
       <VolumeCard program={program} maxes={report.storedMaxes} />
+
+      {report.athleteId && <BarSpeedCard program={program} trends={report.e1rmTrends} athleteId={report.athleteId} />}
 
       {!hasData ? (
         <Card>

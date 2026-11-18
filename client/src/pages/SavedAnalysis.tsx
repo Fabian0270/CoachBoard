@@ -34,6 +34,7 @@ import BarSpeedChart from '../components/analysis/BarSpeedChart'
 import PathClipButton from '../components/analysis/PathClipButton'
 import PathImageButtons, { repSpeeds } from '../components/analysis/PathImageButtons'
 import FeedbackPanel from '../components/analysis/FeedbackPanel'
+import SavedDayLink from '../components/analysis/SavedDayLink'
 import { feedbackMessage } from '../components/analysis/feedbackMessage'
 import { buildPathImage } from '../components/analysis/pathImage'
 import { downloadCsv, repCsv } from '../components/analysis/repCsv'
@@ -327,6 +328,7 @@ export default function SavedAnalysis() {
             {analysis.athleteName ?? 'Unassigned'} · {analysis.createdAt.slice(0, 10)} ·{' '}
             {analysis.sourceLabel || 'no source name'}
           </p>
+          <SavedDayLink analysis={analysis} onSaved={setAnalysis} />
           {pr?.kind === 'pr' && (
             <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
               <Trophy className="h-3.5 w-3.5" />

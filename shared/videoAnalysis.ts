@@ -679,6 +679,46 @@ export interface VideoAnalysisDto extends SetContext {
    * time, else when it was saved. What sessions are grouped by (BP33).
    */
   liftedAt: string
+  /** The training day, and the row of it, this set was (L2). Null when not
+   *  linked, or when the day has since been deleted. */
+  link: AnalysisLink | null
+}
+
+/** Where in a program a saved set belongs (L2, D67). */
+export interface AnalysisLink {
+  workoutId: string
+  date: string | null
+  workoutName: string
+  programId: string
+  programName: string
+  /** Null: linked to the day only, or the row has since been deleted. */
+  exerciseId: string | null
+  exerciseName: string | null
+}
+
+/** A row of a day a set could be linked to. */
+export interface AnalysisLinkRow {
+  exerciseId: string
+  name: string
+  sets: string | null
+  reps: string | null
+  /** The planned load (Load Cap). */
+  weight: number | null
+  loadUsed: string | null
+  /** The lift matches the set's, and the load agrees when there is one. */
+  fits: boolean
+}
+
+/** A training day near when the set was lifted, for the link pickers. */
+export interface AnalysisLinkDay {
+  workoutId: string
+  date: string | null
+  workoutName: string
+  programId: string
+  programName: string
+  rows: AnalysisLinkRow[]
+  /** The one row that fits, when exactly one does — picked for the coach. */
+  suggestedExerciseId: string | null
 }
 
 export interface SaveVideoAnalysisInput extends SetContext {
@@ -693,6 +733,9 @@ export interface SaveVideoAnalysisInput extends SetContext {
    *  Null for a Discord clip, which needs no copy. */
   videoPath?: string | null
   videoBytes?: number | null
+  /** The training day and row (L2); both optional. */
+  workoutId?: string | null
+  exerciseId?: string | null
 }
 
 /**
