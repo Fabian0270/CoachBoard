@@ -4,6 +4,7 @@ import { cn } from '../lib/utils'
 import ThemeToggle from './ThemeToggle'
 import UpdateNotice from './UpdateNotice'
 import BrandMark from './BrandMark'
+import QuickSearch from './QuickSearch'
 import { useDiscordInboxCounts } from '../hooks/useDiscordInboxCounts'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
 import { useRecorder } from './recorder/RecorderProvider'
@@ -133,6 +134,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </nav>
       <main className="h-full min-w-0 flex-1 overflow-auto bg-glow-main p-6 md:px-10 md:py-8">{children}</main>
       <UpdateNotice />
+      <QuickSearch />
     </div>
   )
 }

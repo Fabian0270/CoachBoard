@@ -65,7 +65,17 @@ interface Program {
   bookmarked?: number
 }
 
+/**
+ * One page per athlete, as with programs: going straight from one athlete to
+ * another (Ctrl+K) kept the page mounted, showing the previous athlete under
+ * the new address until the new one loaded, with its dialogs still open.
+ */
 export default function AthleteDetail() {
+  const { id } = useParams<{ id: string }>()
+  return <AthletePage key={id} />
+}
+
+function AthletePage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const toast = useToast()

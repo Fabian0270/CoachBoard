@@ -21,6 +21,13 @@ export interface ShortcutGroup {
 
 export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
+    title: 'Anywhere',
+    where: 'On every page, also while typing in a training day (what you typed is saved first).',
+    shortcuts: [
+      { keys: [['Ctrl', 'K']], does: 'Find an athlete or program and go to it' },
+    ],
+  },
+  {
     title: 'Program calendar',
     where: 'On a program, with no day open. The arrow keys work straight away — no click needed.',
     shortcuts: [
@@ -109,6 +116,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     where: 'Everywhere in the program editor.',
     shortcuts: [
       { keys: [['↑'], ['↓']], does: 'Move through a menu' },
+      { keys: [['A'], ['…'], ['Z']], does: 'Jump to the menu item starting with that letter' },
       { keys: [['Enter']], does: 'Choose the item, or press the focused button' },
       { keys: [['Esc']], does: 'Close the menu or dialog and go back to where you were' },
     ],
