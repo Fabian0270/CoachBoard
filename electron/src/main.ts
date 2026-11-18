@@ -15,6 +15,7 @@ import fs from 'fs'
 import { createServer, type RequestListener } from 'http'
 import { autoUpdater } from 'electron-updater'
 import { createWindowTools, type WindowTools } from './minimizedWindows'
+import { MIN_SIZE, parseSavedWindow, windowBoundsFor, type SavedWindow } from './windowBounds'
 
 /**
  * Dev means "running from source", which is exactly what app.isPackaged says.
@@ -571,9 +572,18 @@ async function createWindow(): Promise<void> {
     })
   })
 
+  // Where the coach left it (P3), when that spot is still on a screen.
+  const statePath = path.join(app.getPath('userData'), 'window-state.json')
+  let savedState: SavedWindow | null = null
+  try { savedState = parseSavedWindow(JSON.parse(fs.readFileSync(statePath, 'utf8'))) } catch { /* first start */ }
+  const primaryArea = screen.getPrimaryDisplay().workArea
+  const areas = [primaryArea, ...screen.getAllDisplays().map((d) => d.workArea).filter((a) => a !== primaryArea)]
+  const opening = windowBoundsFor(savedState, areas)
+
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    ...opening.bounds,
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
     autoHideMenuBar: true,
     // Dev only. A packaged build takes its window and taskbar icon from the
     // executable, which electron-builder stamps from build/icon.png — but an
@@ -599,6 +609,23 @@ async function createWindow(): Promise<void> {
   })
 
   ownWindow = win
+  if (opening.maximized) win.maximize()
+
+  // Saved as it changes (debounced) and on close, so a crash still remembers.
+  // The normal bounds, not the maximised ones: un-maximising goes back there.
+  let saveTimer: NodeJS.Timeout | null = null
+  const saveState = (): void => {
+    if (win.isDestroyed() || win.isMinimized()) return
+    const state: SavedWindow = { ...win.getNormalBounds(), maximized: win.isMaximized() }
+    try { fs.writeFileSync(statePath, JSON.stringify(state)) } catch (err) { log(`Could not save the window position: ${describeError(err)}`) }
+  }
+  const saveSoon = (): void => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(saveState, 500)
+  }
+  for (const event of ['resize', 'move', 'maximize', 'unmaximize'] as const) win.on(event as 'resize', saveSoon)
+  win.on('close', () => { if (saveTimer) clearTimeout(saveTimer); saveState() })
+
   // The bar counts as a window: left open, the app would not quit on Windows.
   win.on('closed', () => {
     if (controlsWindow && !controlsWindow.isDestroyed()) controlsWindow.destroy()
