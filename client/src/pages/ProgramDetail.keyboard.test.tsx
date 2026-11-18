@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ProgramDetail from './ProgramDetail'
@@ -223,6 +223,33 @@ describe('Day editor — keyboard only', () => {
     // With no list open, Esc closes the day.
     await userEvent.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('the arrows walk the whole list, scrolling it to the highlighted name', async () => {
+    liveServer()
+    await openDay()
+    const scrolled: string[] = []
+    Element.prototype.scrollIntoView ??= () => {} // jsdom has none
+    const spy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push(this.textContent ?? '')
+    })
+    try {
+      await userEvent.keyboard('{Control>}a{/Control}Squat')
+      const options = () => screen.getAllByRole('option')
+      await screen.findByRole('listbox')
+      const n = options().length
+      expect(n).toBeGreaterThan(6)
+      for (let i = 0; i < n; i++) await userEvent.keyboard('{ArrowDown}')
+      // The last name is highlighted and was brought into view.
+      expect(options()[n - 1].getAttribute('aria-selected')).toBe('true')
+      expect(scrolled[scrolled.length - 1]).toBe(options()[n - 1].textContent)
+      // One more goes back round to the top, and the list scrolls up with it.
+      await userEvent.keyboard('{ArrowDown}')
+      expect(options()[0].getAttribute('aria-selected')).toBe('true')
+      expect(scrolled[scrolled.length - 1]).toBe(options()[0].textContent)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
 

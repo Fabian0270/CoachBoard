@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { GripVertical, Plus, Trash2 } from 'lucide-react'
+import { GripVertical, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '../ui/popover'
 import { EXERCISE_NAMES } from 'coachboard-shared/exercises'
 import { type Exercise, type ColDef, exerciseValue } from '../../lib/programUtils'
 import { failedEditKeyForColumn } from '../../lib/failedEdits'
@@ -70,6 +71,11 @@ export function arrowLeavesCell(el: HTMLInputElement | HTMLTextAreaElement, left
   return left ? start === 0 && end === 0 : start === len && end === len
 }
 
+/** Whether a just-focused element got there by keyboard (Tab, arrows) rather than a click. */
+function focusedByKeyboard(el: Element): boolean {
+  try { return el.matches(':focus-visible') } catch { return false }
+}
+
 export default function ExerciseRow({ unit = 'kg', exercise, columns, onSave, onDelete, onAddSet, onKey, onPasteBlock, suggestions = NO_NAMES, lastWeek, loadHint, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
   const toast = useToast()
   /**
@@ -126,6 +132,8 @@ export default function ExerciseRow({ unit = 'kg', exercise, columns, onSave, on
   }
   // Exercise-name autocomplete (exercise directory).
   const [nameFocused, setNameFocused] = useState(false)
+  // The suggestion note's popover (P5).
+  const [noteOpen, setNoteOpen] = useState(false)
   const nameInputRef = useRef<HTMLTextAreaElement>(null)
   // Anchor rect for the suggestion menu, which renders in a portal so it
   // escapes the day dialog's scroll/overflow clipping.
@@ -139,6 +147,13 @@ export default function ExerciseRow({ unit = 'kg', exercise, columns, onSave, on
   // after typing "Squat" would swap it for the first suggestion.
   const [highlight, setHighlight] = useState(-1)
   const nameMatches = nameFocused && !listClosed ? matchSuggestions(suggestions, EXERCISE_NAMES, draft.name ?? '') : []
+  // The list is shorter than its longest set of names: the arrows have to
+  // scroll it along, or the last names are chosen out of sight.
+  const suggestionListRef = useRef<HTMLUListElement>(null)
+  useEffect(() => {
+    if (highlight < 0) return
+    suggestionListRef.current?.children[highlight]?.scrollIntoView?.({ block: 'nearest' })
+  }, [highlight])
 
   useEffect(() => {
     if (nameMatches.length === 0 || !portalContainer) {
@@ -394,6 +409,8 @@ export default function ExerciseRow({ unit = 'kg', exercise, columns, onSave, on
                   >
                     <GripVertical className="h-3.5 w-3.5" />
                   </span>
+                  <Popover open={noteOpen} onOpenChange={setNoteOpen}>
+                  <PopoverAnchor asChild>
                   <div className="relative flex-1 min-w-0">
                     <textarea
                       ref={nameInputRef}
@@ -403,22 +420,41 @@ export default function ExerciseRow({ unit = 'kg', exercise, columns, onSave, on
                       onChange={(e) => { edit(c.key, e.target.value); setListClosed(false); setHighlight(-1) }}
                       onKeyDown={(e) => onCellKey(e, c)}
                       onPaste={(e) => onCellPaste(e, c)}
-                      onFocus={() => setNameFocused(true)}
-                      onBlur={() => { commit(c); setNameFocused(false); setListClosed(true); setHighlight(-1) }}
+                      onFocus={(e) => {
+                        setNameFocused(true)
+                        // P5 (D90): arriving by keyboard shows the note too, since
+                        // the marker is left out of the Tab order like Add set.
+                        if (exercise.suggestion_note && focusedByKeyboard(e.currentTarget)) setNoteOpen(true)
+                      }}
+                      onBlur={() => { commit(c); setNameFocused(false); setListClosed(true); setHighlight(-1); setNoteOpen(false) }}
                       placeholder={c.placeholder}
                       style={textareaStyle}
-                      title={
-                        isUnsaved(c.key)
-                          ? 'Not saved yet — use "Try again" above'
-                          : exercise.suggestion_note ?? undefined
-                      }
+                      title={isUnsaved(c.key) ? 'Not saved yet — use "Try again" above' : undefined}
                       className={
                         'w-full bg-transparent px-1 py-1.5 text-sm outline-none focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary resize-none block leading-snug' +
+                        (exercise.suggestion_note ? ' pr-6' : '') +
                         unsavedCls(c.key)
                       }
                     />
+                    {exercise.suggestion_note && (
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          // Skipped by Tab, which walks the cells; focusing the
+                          // name cell from the keyboard opens the note instead.
+                          tabIndex={-1}
+                          onMouseDown={(e) => e.preventDefault()}
+                          aria-label="Why this exercise"
+                          title="Why this exercise"
+                          className="absolute right-1 top-1.5 rounded p-0.5 text-primary/70 hover:bg-primary/10 hover:text-primary"
+                        >
+                          <Sparkles className="h-3.5 w-3.5" />
+                        </button>
+                      </PopoverTrigger>
+                    )}
                     {nameMatches.length > 0 && menuRect && portalContainer && createPortal(
                       <ul
+                        ref={suggestionListRef}
                         // Marks an open list for the dialog, which then keeps Esc
                         // from closing the day.
                         data-exercise-suggestions
@@ -451,6 +487,21 @@ export default function ExerciseRow({ unit = 'kg', exercise, columns, onSave, on
                       </div>
                     )}
                   </div>
+                  </PopoverAnchor>
+                  {exercise.suggestion_note && (
+                    <PopoverContent
+                      container={portalContainer}
+                      side="bottom"
+                      // The cursor stays in the cell: the note is read, not edited.
+                      onOpenAutoFocus={(e) => e.preventDefault()}
+                      onCloseAutoFocus={(e) => e.preventDefault()}
+                      aria-label="Why this exercise"
+                    >
+                      <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-primary"><Sparkles className="h-3.5 w-3.5" />Suggested</p>
+                      <p className="text-sm leading-snug">{exercise.suggestion_note}</p>
+                    </PopoverContent>
+                  )}
+                  </Popover>
                 </div>
               )}
             </td>,
