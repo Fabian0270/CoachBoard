@@ -102,12 +102,25 @@ describe('Program page — shortcuts', () => {
     expect(document.activeElement?.textContent).toMatch(/Export/)
   })
 
+  it('a dialog opened from the Export menu leaves the page clickable once it closes', async () => {
+    await open()
+    await userEvent.keyboard('{Control>}e{/Control}')
+    await screen.findByRole('menu')
+    await userEvent.keyboard('{ArrowDown}{ArrowDown}{Enter}') // Email to athlete
+    await screen.findByRole('dialog')
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(document.body.style.pointerEvents).not.toBe('none')
+    // And the cursor is back on the Export button, not at the top of the page.
+    await waitFor(() => expect(document.activeElement?.textContent).toMatch(/Export/))
+  })
+
   it('opens a week menu by keyboard and walks it with the arrows', async () => {
     await open()
     const w1 = screen.getByRole('button', { name: 'Week 1 actions' })
     w1.focus()
     await userEvent.keyboard('{Enter}')
-    await screen.findByRole('menu', { name: 'Week 1' })
+    await screen.findByRole('menu', { name: 'Week 1 actions' })
     expect(document.activeElement?.textContent).toMatch(/Copy week to/)
     await userEvent.keyboard('{ArrowDown}')
     expect(document.activeElement?.textContent).toMatch(/Clear week/)

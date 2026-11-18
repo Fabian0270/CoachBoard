@@ -4,7 +4,7 @@ import { useProgramData } from '../hooks/useProgramData'
 import { useProgramCalendar, useWorkoutByDate } from '../hooks/useProgramCalendar'
 import { useWorkoutActions } from '../hooks/useWorkoutActions'
 import { useDayOperations, dayHasResults } from '../hooks/useDayOperations'
-import { useMenuKeys } from '../hooks/useMenuKeys'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -93,7 +93,6 @@ function ProgramPage() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const [exportToast, setExportToast] = useState(false)
   const exportToastTimer = useRef<number | null>(null)
-  const exportMenuRef = useRef<HTMLDivElement>(null)
   const savedTimers = useRef<Record<string, number>>({})
 
   const [dayDragSource, setDayDragSource] = useState<string | null>(null)
@@ -126,16 +125,6 @@ function ProgramPage() {
     }
     return map
   }, [discordMedia])
-
-  useEffect(() => {
-    if (!exportMenuOpen) return
-    const close = () => setExportMenuOpen(false)
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [exportMenuOpen])
-
-  const exportMenu = useMenuKeys(exportMenuOpen, () => setExportMenuOpen(false))
-  const weekMenuKeys = useMenuKeys(weekMenu !== null, () => setWeekMenu(null))
 
   // Shortcuts for the buttons at the top of the program. Only while nothing
   // else is open, so they never reach into a dialog or a menu. Delete has no
@@ -413,12 +402,6 @@ function ProgramPage() {
   // ── A whole week at a time ──────────────────────────────────────────────
   const [copyWeekFrom, setCopyWeekFrom] = useState<number | null>(null)
   const [copyWeekTo, setCopyWeekTo] = useState<Set<number>>(new Set())
-  useEffect(() => {
-    if (weekMenu === null) return
-    const close = () => setWeekMenu(null)
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [weekMenu])
   const weekDates = (w: number) => grid?.rows[w]?.days.map((d) => d.date) ?? []
   const weekHasResults = (w: number) => weekDates(w).some((d) => dayHasResults(workoutByDate.get(d)))
   const weekHasExercises = (w: number) => weekDates(w).some((d) => (workoutByDate.get(d)?.exercises.length ?? 0) > 0)
@@ -893,44 +876,24 @@ function ProgramPage() {
                 </Link>
               </Button>
               <span aria-hidden className="mx-1 h-5 w-px bg-border" />
-              <div className="relative" ref={exportMenuRef}>
-                <Button
-                  size="sm" ref={exportMenu.triggerRef}
-                  aria-haspopup="menu" aria-expanded={exportMenuOpen} title="Export (Ctrl+E)"
-                  onClick={(e) => { e.stopPropagation(); setExportMenuOpen((v) => !v) }}
-                >
-                  <Upload className="h-4 w-4" />Export<ChevronDown className="h-4 w-4 -mr-0.5 opacity-70" />
-                </Button>
-                {exportMenuOpen && (
-                  <div
-                    ref={exportMenu.menuRef} role="menu" aria-label="Export"
-                    className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-lg border bg-popover py-1 shadow-xl shadow-black/20"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button
-                      type="button" role="menuitem"
-                      onClick={() => { exportMenu.triggerRef.current?.focus(); setExportMenuOpen(false); setPreviewOpen(true) }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none"
-                    >
-                      <Eye className="h-4 w-4" />Preview Excel
-                    </button>
-                    <button
-                      type="button" role="menuitem"
-                      onClick={() => { exportMenu.triggerRef.current?.focus(); setExportMenuOpen(false); handleExport() }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none"
-                    >
-                      <Download className="h-4 w-4" />Download as Excel
-                    </button>
-                    <button
-                      type="button" role="menuitem"
-                      onClick={() => { exportMenu.triggerRef.current?.focus(); setExportMenuOpen(false); setEmailOpen(true) }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none"
-                    >
-                      <Mail className="h-4 w-4" />Email to athlete
-                    </button>
-                  </div>
-                )}
-              </div>
+              <DropdownMenu open={exportMenuOpen} onOpenChange={setExportMenuOpen}>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" title="Export (Ctrl+E)">
+                    <Upload className="h-4 w-4" />Export<ChevronDown className="h-4 w-4 -mr-0.5 opacity-70" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[200px]">
+                  <DropdownMenuItem onSelect={() => setPreviewOpen(true)}>
+                    <Eye className="h-4 w-4" />Preview Excel
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => handleExport()}>
+                    <Download className="h-4 w-4" />Download as Excel
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setEmailOpen(true)}>
+                    <Mail className="h-4 w-4" />Email to athlete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           )}
           <Button
@@ -1069,48 +1032,40 @@ function ProgramPage() {
                     <th className="num relative border-b border-r border-border p-0 align-top text-[11px] font-medium text-muted-foreground">
                       {/* The week's own actions: copying week 1 across a block
                           used to mean opening every training day in turn. */}
-                      <button
-                        type="button"
-                        ref={weekMenu === row.weekIndex ? weekMenuKeys.triggerRef : undefined}
-                        onClick={(e) => { e.stopPropagation(); setWeekMenu(weekMenu === row.weekIndex ? null : row.weekIndex) }}
-                        aria-haspopup="menu"
-                        aria-expanded={weekMenu === row.weekIndex}
-                        aria-label={`Week ${row.weekIndex + 1} actions`}
-                        title={`Week ${row.weekIndex + 1}, from ${shortDate(row.days[0].date)}: copy or clear`}
-                        className="h-full w-full px-2 py-2 text-left transition-colors hover:bg-foreground/[0.05] hover:text-foreground focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary"
+                      <DropdownMenu
+                        open={weekMenu === row.weekIndex}
+                        onOpenChange={(o) => setWeekMenu(o ? row.weekIndex : null)}
                       >
-                        W{row.weekIndex + 1}
-                        {/* Where in the calendar this week is, without counting. */}
-                        <span className="mt-0.5 block text-[9.5px] font-normal leading-tight text-muted-foreground/80">
-                          {shortDate(row.days[0].date)}
-                        </span>
-                      </button>
-                      {weekMenu === row.weekIndex && (
-                        <div
-                          role="menu"
-                          ref={weekMenuKeys.menuRef}
-                          aria-label={`Week ${row.weekIndex + 1}`}
-                          className="absolute left-1 top-8 z-20 min-w-[170px] rounded-lg border bg-popover py-1 text-left text-sm font-normal text-foreground shadow-xl shadow-black/20"
-                          onClick={(e) => e.stopPropagation()}
-                        >
+                        <DropdownMenuTrigger asChild>
                           <button
-                            type="button" role="menuitem"
+                            type="button"
+                            aria-label={`Week ${row.weekIndex + 1} actions`}
+                            title={`Week ${row.weekIndex + 1}, from ${shortDate(row.days[0].date)}: copy or clear`}
+                            className="h-full w-full px-2 py-2 text-left transition-colors hover:bg-foreground/[0.05] hover:text-foreground focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary"
+                          >
+                            W{row.weekIndex + 1}
+                            {/* Where in the calendar this week is, without counting. */}
+                            <span className="mt-0.5 block text-[9.5px] font-normal leading-tight text-muted-foreground/80">
+                              {shortDate(row.days[0].date)}
+                            </span>
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="min-w-[170px]">
+                          <DropdownMenuItem
                             disabled={!weekHasExercises(row.weekIndex) || grid.rows.length < 2}
-                            onClick={() => { weekMenuKeys.triggerRef.current?.focus(); setWeekMenu(null); setCopyWeekTo(new Set()); setCopyWeekFrom(row.weekIndex) }}
-                            className="flex w-full items-center gap-2 px-3 py-2 hover:bg-accent focus:bg-accent focus:outline-none disabled:opacity-50"
+                            onSelect={() => { setCopyWeekTo(new Set()); setCopyWeekFrom(row.weekIndex) }}
                           >
                             <Copy className="h-4 w-4" />Copy week to…
-                          </button>
-                          <button
-                            type="button" role="menuitem"
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            destructive
                             disabled={!weekHasExercises(row.weekIndex)}
-                            onClick={() => { weekMenuKeys.triggerRef.current?.focus(); setWeekMenu(null); void days.clearDays(weekDates(row.weekIndex), `Week ${row.weekIndex + 1} cleared`) }}
-                            className="flex w-full items-center gap-2 px-3 py-2 text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:outline-none disabled:opacity-50"
+                            onSelect={() => { void days.clearDays(weekDates(row.weekIndex), `Week ${row.weekIndex + 1} cleared`) }}
                           >
                             <Trash2 className="h-4 w-4" />Clear week
-                          </button>
-                        </div>
-                      )}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </th>
                     {row.days.map((cell) => {
                       const workout = workoutByDate.get(cell.date)

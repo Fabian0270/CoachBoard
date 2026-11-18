@@ -2,6 +2,7 @@ import * as React from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { recentMenuTrigger } from '../../lib/menuFocusReturn'
 
 const Dialog = DialogPrimitive.Root
 const DialogTrigger = DialogPrimitive.Trigger
@@ -43,7 +44,10 @@ const DialogContent = React.forwardRef<
         // now, so what was focused before is lost. Don't use autoFocus inside a
         // DialogContent: Radix puts the cursor in the first field anyway.
         const inside = active instanceof Node && (event.currentTarget as Node | null)?.contains(active)
-        returnTo.current = active instanceof HTMLElement && active !== document.body && !inside ? active : null
+        const inMenu = active instanceof Element && !!active.closest('[role="menu"]')
+        returnTo.current = active instanceof HTMLElement && active !== document.body && !inside && !inMenu ? active : null
+        // Opened from a menu item: back to the menu's button, not the page top.
+        if (!returnTo.current) returnTo.current = recentMenuTrigger()
         onOpenAutoFocus?.(event)
       }}
       onCloseAutoFocus={(event) => {

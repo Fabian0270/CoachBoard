@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError, getList, errorMessage, sendJson } from '../lib/api'
 import LoadError from '../components/LoadError'
@@ -7,6 +7,10 @@ import PageHeader from '../components/PageHeader'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup,
+  DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu'
 import { Plus, CopyPlus, Dumbbell, MoreHorizontal, Check, Pencil, X, UserPlus, Star, Search } from 'lucide-react'
 import { Input } from '../components/ui/input'
 import { matchesSearch } from '../lib/search'
@@ -69,7 +73,6 @@ export default function ProgramComparison() {
   const [assigning, setAssigning] = useState<Program | null>(null)
   const [assignTo, setAssignTo] = useState<string>('')
   const [savingAssign, setSavingAssign] = useState(false)
-  const menuRef = useRef<HTMLLIElement>(null)
 
   const loadData = useCallback(async () => {
     setLoadError(null)
@@ -100,12 +103,6 @@ export default function ProgramComparison() {
     }
   }, [searchParams, setSearchParams])
 
-  useEffect(() => {
-    if (!menuOpen) return
-    const close = () => setMenuOpen(null)
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [menuOpen])
 
 
   const handleAssign = async () => {
@@ -310,7 +307,7 @@ export default function ProgramComparison() {
           </div>
           <ul className="divide-y">
           {filtered.map((program) => (
-            <li key={program.id} className="group relative" ref={menuOpen === program.id ? menuRef : null}>
+            <li key={program.id} className="group relative">
               {renamingId === program.id ? (
                 <div className="px-4 py-3">
                   <div>
@@ -380,76 +377,46 @@ export default function ProgramComparison() {
 
               {/* Three-dot menu button */}
               {renamingId !== program.id && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setMenuOpen(menuOpen === program.id ? null : program.id)
-                  }}
-                  className={`absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground transition-opacity hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary ${menuOpen === program.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                  aria-label="Program options"
+                <DropdownMenu
+                  open={menuOpen === program.id}
+                  onOpenChange={(o) => setMenuOpen(o ? program.id : null)}
                 >
-                  <MoreHorizontal className="h-4 w-4" />
-                </button>
-              )}
-
-              {/* Dropdown menu */}
-              {menuOpen === program.id && (
-                <div
-                  className="absolute right-3 top-[calc(50%+18px)] z-20 min-w-[160px] rounded-lg border border-border bg-popover py-1 shadow-xl shadow-black/20"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <p className="px-3 py-1 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Status</p>
-                  {STATUSES.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => handleStatusChange(program.id, s)}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent capitalize"
-                    >
-                      <span className="w-3">
-                        {program.status === s && <Check className="h-3 w-3" />}
-                      </span>
-                      {s}
-                    </button>
-                  ))}
-                  <div className="my-1 border-t border-border" />
-                  {program.athlete_id === null && (
+                  <DropdownMenuTrigger asChild>
                     <button
                       type="button"
-                      onClick={() => { setMenuOpen(null); setAssignTo(''); setAssigning(program) }}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
+                      className={`absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground transition-opacity hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary focus-visible:opacity-100 ${menuOpen === program.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                      aria-label="Program options"
                     >
-                      <UserPlus className="h-3 w-3" />
-                      Assign to athlete
+                      <MoreHorizontal className="h-4 w-4" />
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => startRename(program)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
-                  >
-                    <Pencil className="h-3 w-3" />
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setMenuOpen(null); setDuplicating(program) }}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
-                  >
-                    <CopyPlus className="h-3 w-3" />
-                    Duplicate…
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(program)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10"
-                  >
-                    <span className="w-3" />
-                    Delete
-                  </button>
-                </div>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[160px]">
+                    <DropdownMenuLabel>Status</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={program.status}
+                      onValueChange={(s) => handleStatusChange(program.id, s as typeof STATUSES[number])}
+                    >
+                      {STATUSES.map((s) => (
+                        <DropdownMenuRadioItem key={s} value={s} className="capitalize">{s}</DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                    <DropdownMenuSeparator />
+                    {program.athlete_id === null && (
+                      <DropdownMenuItem className="py-1.5" onSelect={() => { setAssignTo(''); setAssigning(program) }}>
+                        <UserPlus className="h-3 w-3" />Assign to athlete
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem className="py-1.5" onSelect={() => startRename(program)}>
+                      <Pencil className="h-3 w-3" />Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="py-1.5" onSelect={() => setDuplicating(program)}>
+                      <CopyPlus className="h-3 w-3" />Duplicate…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="py-1.5" destructive onSelect={() => handleDelete(program)}>
+                      <span className="w-3" />Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </li>
           ))}

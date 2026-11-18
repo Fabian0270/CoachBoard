@@ -46,7 +46,7 @@ describe('A refused change says so', () => {
     })
     renderScreen(<ProgramComparison />)
     await userEvent.click(await screen.findByRole('button', { name: 'Program options' }))
-    await userEvent.click(screen.getByRole('button', { name: /completed/ }))
+    await userEvent.click(screen.getByRole('menuitemradio', { name: /completed/ }))
     expect(await screen.findByText(/Could not change the status/)).toBeTruthy()
   })
 
@@ -58,7 +58,7 @@ describe('A refused change says so', () => {
     })
     renderScreen(<ProgramComparison />)
     await userEvent.click(await screen.findByRole('button', { name: 'Program options' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
     await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Delete' }))
     expect(await screen.findByText(/Could not delete "Spring Block"/)).toBeTruthy()
     expect(screen.getByText('Spring Block')).toBeTruthy()
