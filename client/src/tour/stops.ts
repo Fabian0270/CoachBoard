@@ -63,7 +63,7 @@ export const TOUR_STOPS: TourStop[] = [
   {
     id: 'dashboard', chapter: 'Overview', route: () => '/', target: 'dashboard-attention',
     title: 'What needs you today',
-    body: 'Blocks about to end with nothing after them, training days nobody logged, athletes without a program, payments due, and sets that came in slower than usual.',
+    body: 'Blocks about to end with nothing after them, athletes without a program, payments due, and sets that came in slower than usual.',
   },
   // 2. Athletes
   {

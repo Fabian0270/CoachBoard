@@ -8,7 +8,7 @@ import LoadError from '../components/LoadError'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import PageHeader from '../components/PageHeader'
-import { Plus, AlertTriangle, ArrowUpRight, CalendarClock, FileInput, UserX, Film, Gauge } from 'lucide-react'
+import { Plus, AlertTriangle, ArrowUpRight, CalendarClock, UserX, Film, Gauge } from 'lucide-react'
 import { isVbtLift, liftLabel } from 'coachboard-shared/vbt'
 import MyStyleCard from '../components/MyStyleCard'
 import Onboarding, { checklistFrom } from '../components/Onboarding'
@@ -83,13 +83,6 @@ function AttentionCard({ unreviewedVideos }: { unreviewedVideos: number }) {
           key: `end:${item.programId}`,
           icon: <CalendarClock className="h-4 w-4 text-warning" />,
           body: <>{athlete} · {program} {item.date! < today ? 'ended' : 'ends'} <span className="num">{shortDay(item.date!)}</span> <span className="text-muted-foreground">— no next block yet</span></>,
-        }
-      }
-      if (item.kind === 'no-results') {
-        return {
-          key: `res:${item.programId}`,
-          icon: <FileInput className="h-4 w-4 text-warning" />,
-          body: <>{athlete} · {program}: <span className="num">{item.count}</span> training day{item.count === 1 ? '' : 's'} with nothing logged <span className="text-muted-foreground">(latest <span className="num">{shortDay(item.date!)}</span>)</span></>,
         }
       }
       if (item.kind === 'slow-session') {

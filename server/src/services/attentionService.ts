@@ -1,4 +1,3 @@
-import { sql } from 'kysely'
 import { getDb } from '../db.js'
 import type { AttentionItem } from 'coachboard-shared'
 import { isVbtLift } from 'coachboard-shared/vbt'
@@ -12,9 +11,12 @@ import { getAthleteMvts } from './athleteMvtService.js'
 //
 //   - a block ending within a week (or already past its end and still active)
 //     with no next program for that athlete;
-//   - an active program with a training day 7 or more days ago that has
-//     nothing logged (D45): a weekly import never trips it, a forgotten one does;
-//   - an athlete on the roster with no active program.
+//   - an athlete on the roster with no active program;
+//   - a bar path session that read well under the athlete's usual max.
+//
+// Not here on purpose (D114): training days with nothing logged. Programs go
+// out as Excel and typically come back when the block is done, often after a
+// month, so a week-old unlogged day is the normal state, not a warning.
 //
 // `today` comes from the coach's own screen, so "this week" is their week and
 // not the server's idea of the time zone.
@@ -46,44 +48,20 @@ export async function needsAttention(today: string): Promise<AttentionItem[]> {
     if (hasNext) continue
     items.push({
       kind: 'block-ending', athleteId: p.athlete_id!, athleteName: nameOf.get(p.athlete_id!)!,
-      programId: p.id, programName: p.name, date: p.end_date, count: null,
+      programId: p.id, programName: p.name, date: p.end_date,
     })
-  }
-
-  // Training days a week or more ago with nothing logged.
-  const cutoff = shift(today, -7)
-  if (active.length > 0) {
-    const days = await db.selectFrom('workouts')
-      .innerJoin('exercises', 'exercises.workout_id', 'workouts.id')
-      .select([
-        'workouts.program_id as programId',
-        'workouts.scheduled_date as date',
-        sql<number>`sum(case when trim(coalesce(exercises.load_used, '')) <> '' or trim(coalesce(exercises.rpe, '')) <> '' then 1 else 0 end)`.as('logged'),
-      ])
-      .where('workouts.program_id', 'in', active.map((p) => p.id))
-      .where('workouts.scheduled_date', '<=', cutoff)
-      .groupBy(['workouts.id', 'workouts.program_id', 'workouts.scheduled_date'])
-      .execute()
-    for (const p of active) {
-      const missing = days.filter((d) => d.programId === p.id && Number(d.logged) === 0 && d.date)
-      if (missing.length === 0) continue
-      items.push({
-        kind: 'no-results', athleteId: p.athlete_id!, athleteName: nameOf.get(p.athlete_id!)!,
-        programId: p.id, programName: p.name,
-        date: missing.map((d) => d.date!).sort().at(-1)!, count: missing.length,
-      })
-    }
   }
 
   // Athletes without an active program.
   const withActive = new Set(active.map((p) => p.athlete_id))
   for (const a of athletes) {
     if (withActive.has(a.id)) continue
-    items.push({ kind: 'no-program', athleteId: a.id, athleteName: a.name, programId: null, programName: null, date: null, count: null })
+    items.push({ kind: 'no-program', athleteId: a.id, athleteName: a.name, programId: null, programName: null, date: null })
   }
 
   // A bar path session in the last week that read well under the athlete's
   // usual max (BP33, D59) — read exactly as the saved page and Progress tab do.
+  const cutoff = shift(today, -7)
   for (const a of athletes) {
     const sets = await listAnalyses({ athleteId: a.id, withTrack: false })
     if (sets.length === 0) continue
@@ -93,13 +71,13 @@ export async function needsAttention(today: string): Promise<AttentionItem[]> {
         if (s.day < cutoff || s.day > today || s.vsUsual == null || s.vsUsual > -SLOW_SESSION) continue
         items.push({
           kind: 'slow-session', athleteId: a.id, athleteName: a.name, programId: null, programName: null,
-          date: s.day, count: null, lift, under: -s.vsUsual,
+          date: s.day, lift, under: -s.vsUsual,
         })
       }
     }
   }
 
-  const order = { 'block-ending': 0, 'no-results': 1, 'slow-session': 2, 'no-program': 3 } as const
+  const order = { 'block-ending': 0, 'slow-session': 1, 'no-program': 2 } as const
   return items.sort((x, y) =>
     order[x.kind] - order[y.kind] || (x.date ?? '').localeCompare(y.date ?? '') || x.athleteName.localeCompare(y.athleteName))
 }
