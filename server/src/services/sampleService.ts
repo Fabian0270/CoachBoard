@@ -1,8 +1,13 @@
+import fs from 'fs'
+import path from 'path'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db.js'
-import { log } from '../lib/logger.js'
+import { log, logError } from '../lib/logger.js'
 import { homeCurrency } from './ratesService.js'
 import { todayIso } from './paymentService.js'
+import { adoptVideoFile, deleteVideo } from './analysisVideoStore.js'
+import { saveAnalysis } from './videoAnalysisService.js'
+import { SAMPLE_LIFT, SAMPLE_LIFT_CALIBRATION, SAMPLE_LIFT_FILE, SAMPLE_LIFT_METRICS, sampleLiftTrack } from './sampleLift.js'
 
 // ---------------------------------------------------------------------------
 // The sample athlete (S2 / T7, D9, D15, D111).
@@ -15,6 +20,10 @@ import { todayIso } from './paymentService.js'
 // everywhere, and left out of everything that describes the coach's real
 // business: the learned style, the dashboard counts, the needs-attention list,
 // revenue and payment reminders. Removing it takes everything it owns.
+//
+// It also has one saved bar path analysis (D110): a real squat filmed from
+// the side, whose clip ships with the app (client/public/sample) and is
+// copied into the media folder like any kept video.
 //
 // Dates are laid out around today, so the finished block always ended last
 // week and the draft always starts next Monday, whenever it is loaded.
@@ -66,11 +75,49 @@ function day(dayIndex: number, week: number): Row[] {
   ]
 }
 
-export interface SampleStatus { loaded: boolean; athleteId: string | null }
+export interface SampleStatus {
+  loaded: boolean
+  athleteId: string | null
+  /** The sample's saved bar path analysis, when it has one. */
+  analysisId: string | null
+}
+
+/** Where the bundled sample clip lives: the client build's sample folder. Set by createApp. */
+let clipDir: string | null = null
+export function configureSampleClips(dir: string | null): void {
+  clipDir = dir
+}
 
 export async function sampleStatus(): Promise<SampleStatus> {
   const row = await getDb().selectFrom('athletes').select('id').where('is_sample', '=', 1).executeTakeFirst()
-  return { loaded: !!row, athleteId: row?.id ?? null }
+  const analysis = row
+    ? await getDb().selectFrom('video_analyses').select('id').where('athlete_id', '=', row.id).orderBy('created_at').executeTakeFirst()
+    : undefined
+  return { loaded: !!row, athleteId: row?.id ?? null, analysisId: analysis?.id ?? null }
+}
+
+/**
+ * The sample's squat, with its own copy of the clip. Best-effort: without the
+ * clip (a dev server with no client build) the sample loads without it, and the
+ * tour's bar path stop falls back to the empty page.
+ */
+async function addSampleLift(athleteId: string): Promise<void> {
+  const src = clipDir ? path.join(clipDir, SAMPLE_LIFT_FILE) : null
+  if (!src || !fs.existsSync(src)) {
+    log(`Sample lift clip not found (${src ?? 'no client build'}); the sample has no analysis`)
+    return
+  }
+  try {
+    const stored = await adoptVideoFile(src)
+    await saveAnalysis({
+      mediaId: null, athleteId, sourceLabel: SAMPLE_LIFT.sourceLabel,
+      track: sampleLiftTrack(), calibration: SAMPLE_LIFT_CALIBRATION, metrics: SAMPLE_LIFT_METRICS,
+      notes: SAMPLE_LIFT.notes, lift: SAMPLE_LIFT.lift, loadKg: SAMPLE_LIFT.loadKg, calledRpe: null, metric: null,
+      videoPath: stored.relPath, videoBytes: stored.bytes,
+    })
+  } catch (err) {
+    logError('Could not add the sample lift', err)
+  }
 }
 
 /** Load the sample athlete, or return the one already there. */
@@ -145,22 +192,28 @@ export async function loadSampleAthlete(today = todayIso()): Promise<SampleStatu
       created_at: now, updated_at: now,
     }).execute()
   })
+  await addSampleLift(athleteId)
   log(`Sample athlete loaded (${athleteId})`)
-  return { loaded: true, athleteId }
+  return sampleStatus()
 }
 
 /**
  * Remove the sample athlete and everything it owns. Programs, workouts,
  * exercises, maxes and payments go with the athlete (ON DELETE CASCADE);
- * saved analyses are only unlinked by that, so they are deleted first.
+ * saved analyses are only unlinked by that, so they are deleted first, and
+ * their kept videos after the rows are gone (a locked file is left to the
+ * launch sweep).
  */
 export async function removeSampleAthlete(): Promise<SampleStatus> {
+  const none: SampleStatus = { loaded: false, athleteId: null, analysisId: null }
   const { athleteId } = await sampleStatus()
-  if (!athleteId) return { loaded: false, athleteId: null }
+  if (!athleteId) return none
+  const videos = await getDb().selectFrom('video_analyses').select('video_path').where('athlete_id', '=', athleteId).execute()
   await getDb().transaction().execute(async (trx) => {
     await trx.deleteFrom('video_analyses').where('athlete_id', '=', athleteId).execute()
     await trx.deleteFrom('athletes').where('id', '=', athleteId).where('is_sample', '=', 1).execute()
   })
+  for (const v of videos) await deleteVideo(v.video_path)
   log(`Sample athlete removed (${athleteId})`)
-  return { loaded: false, athleteId: null }
+  return none
 }

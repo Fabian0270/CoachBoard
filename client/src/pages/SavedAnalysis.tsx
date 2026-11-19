@@ -432,7 +432,7 @@ export default function SavedAnalysis() {
       {videoSrc ? (
         // The reps laid over each other beside the video (BP10). It used to
         // appear only when there was no video.
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]" data-tour="saved-analysis">
         <AnalysisStage
           src={videoSrc}
           videoRef={videoRef}
@@ -462,7 +462,9 @@ export default function SavedAnalysis() {
         <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} reps={metrics} currentTime={currentTime} height={320} />
         </div>
       ) : (
-        <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} reps={metrics} />
+        <div data-tour="saved-analysis">
+          <PathPlot track={analysis.track} color={color} pixelsPerMetre={pixelsPerMetre} reps={metrics} />
+        </div>
       )}
 
       {/* The bar's speed through the set and each rep's sticking point (BP11),

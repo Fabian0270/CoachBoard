@@ -10,6 +10,8 @@
 
 export interface TourContext {
   sampleAthleteId: string | null
+  /** The sample's saved squat, filmed from the side (D110). */
+  sampleAnalysisId: string | null
   /** The sample's finished block, its first training day, and its drafted next block. */
   finishedProgramId: string | null
   firstDay: string | null
@@ -129,8 +131,14 @@ export const TOUR_STOPS: TourStop[] = [
   },
   // 4. Video
   {
-    id: 'bar-path', chapter: 'Video', route: () => '/analysis', target: 'analysis-start',
+    // A real squat, filmed from the side, tracked and saved (D110).
+    id: 'sample-lift', chapter: 'Video', route: (c) => (c.sampleAnalysisId ? `/analysis/saved/${c.sampleAnalysisId}` : null), target: 'saved-analysis',
     title: 'Bar path and bar speed from a video',
+    body: 'A squat filmed from the side: the path of the plate through every rep, the reps laid over each other, and each rep’s speed in m/s. Play it and the path follows the bar.',
+  },
+  {
+    id: 'bar-path', chapter: 'Video', route: () => '/analysis', target: 'analysis-start',
+    title: (c) => (c.sampleAnalysisId ? 'Your own clips' : 'Bar path and bar speed from a video'),
     body: 'Open a clip, click the plate, and get the path and every rep’s speed. Coaching in person? Record with a camera, or send the set from your phone over the Wi-Fi.',
   },
   {

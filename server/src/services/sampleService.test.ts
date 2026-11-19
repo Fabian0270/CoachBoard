@@ -6,7 +6,10 @@ import { initializeDatabase, getDb } from '../db.js'
 import { configureSecureStore } from './secureStore.js'
 import { createAthlete } from './athleteService.js'
 import { createPayment, getPaymentAlerts } from './paymentService.js'
-import { loadSampleAthlete, removeSampleAthlete, sampleStatus, SAMPLE_NAME } from './sampleService.js'
+import { configureSampleClips, loadSampleAthlete, removeSampleAthlete, sampleStatus, SAMPLE_NAME } from './sampleService.js'
+import { SAMPLE_LIFT_FILE, SAMPLE_LIFT_METRICS, sampleLiftTrack } from './sampleLift.js'
+import { getAnalysis, ownedVideoPath } from './videoAnalysisService.js'
+import { analysePath } from 'coachboard-shared/videoAnalysis'
 import { needsAttention } from './attentionService.js'
 import { revenueSummary, paymentsCsv } from './revenueService.js'
 import { computeStyleProfile } from './styleService.js'
@@ -108,12 +111,58 @@ describe('the sample athlete', () => {
     expect((await sampleStatus()).loaded).toBe(true)
     await removeSampleAthlete()
     const db = getDb()
-    expect(await sampleStatus()).toEqual({ loaded: false, athleteId: null })
+    expect(await sampleStatus()).toEqual({ loaded: false, athleteId: null, analysisId: null })
     for (const table of ['programs', 'athlete_maxes', 'payments'] as const) {
       expect(await db.selectFrom(table).select('id').where('athlete_id', '=', athleteId!).execute()).toHaveLength(0)
     }
     expect(await db.selectFrom('workouts').select('id').execute()).toHaveLength(0)
     expect(await db.selectFrom('exercises').select('id').execute()).toHaveLength(0)
     expect(await db.selectFrom('athletes').select('name').execute()).toEqual([{ name: real.name }])
+  })
+})
+
+describe('the sample lift (D110)', () => {
+  const withClip = () => {
+    const clips = fs.mkdtempSync(path.join(dir, 'clips-'))
+    fs.writeFileSync(path.join(clips, SAMPLE_LIFT_FILE), Buffer.from('not really a video'))
+    configureSampleClips(clips)
+  }
+  afterEach(() => configureSampleClips(null))
+
+  it('a saved, calibrated squat with its own copy of the clip', async () => {
+    withClip()
+    const status = await loadSampleAthlete(TODAY)
+    expect(status.analysisId).toBeTruthy()
+    const a = await getAnalysis(status.analysisId!)
+    expect(a).toMatchObject({ athleteId: status.athleteId, athleteName: SAMPLE_NAME, lift: 'back-squat', loadKg: 70, hasVideo: true })
+    expect(a!.calibration?.plateDiameterMm).toBe(450)
+    expect(a!.metrics).toHaveLength(2)
+    expect(a!.track.length).toBeGreaterThan(200)
+    expect(await ownedVideoPath(a!.id)).toBeTruthy()
+    // Loading again changes nothing.
+    expect((await loadSampleAthlete(TODAY)).analysisId).toBe(status.analysisId)
+  })
+
+  it('the track and the reps agree: the reps are what the shared code finds on the path', async () => {
+    const ppm = 196 / 0.45
+    const { reps } = analysePath(sampleLiftTrack(), ppm)
+    // To the hundredth the app shows (the stored path is rounded to 0.1 px).
+    expect(reps.map((r) => r.meanVelocity!.toFixed(2))).toEqual(SAMPLE_LIFT_METRICS.map((r) => r.meanVelocity!.toFixed(2)))
+    expect(reps.map((r) => r.romM!.toFixed(2))).toEqual(SAMPLE_LIFT_METRICS.map((r) => r.romM!.toFixed(2)))
+  })
+
+  it('without the clip the sample still loads, with no analysis', async () => {
+    const status = await loadSampleAthlete(TODAY)
+    expect(status).toMatchObject({ loaded: true, analysisId: null })
+  })
+
+  it('removing the sample deletes the analysis and its video file', async () => {
+    withClip()
+    const { analysisId } = await loadSampleAthlete(TODAY)
+    const file = (await ownedVideoPath(analysisId!))!
+    expect(fs.existsSync(file)).toBe(true)
+    await removeSampleAthlete()
+    expect(await getAnalysis(analysisId!)).toBeNull()
+    expect(fs.existsSync(file)).toBe(false)
   })
 })

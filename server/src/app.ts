@@ -18,6 +18,7 @@ import analysisRouter, { ANALYSIS_JSON_LIMIT } from './routes/analysis.js'
 import recorderRouter from './routes/recorder.js'
 import phoneLinkRouter from './routes/phoneLink.js'
 import sampleRouter from './routes/sample.js'
+import { configureSampleClips } from './services/sampleService.js'
 import supportRouter, { REPORT_JSON_LIMIT } from './routes/support.js'
 
 export function createApp(staticDir?: string, logPath?: string) {
@@ -80,6 +81,9 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Not found' })
   })
+
+  // The sample athlete's squat clip ships in the client build (D110).
+  configureSampleClips(staticDir ? join(staticDir, 'sample') : null)
 
   if (staticDir) {
     app.use(express.static(staticDir))

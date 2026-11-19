@@ -101,6 +101,18 @@ export async function finishVideo(id: string, ext: string): Promise<StoredVideo>
   return { relPath: `analyses/${id}${ext}`, bytes: stat.size }
 }
 
+/**
+ * Stores a copy of a file already on this computer, the way an upload would
+ * be. Only the app's own files come through here (the sample lift, D110),
+ * never a path from a request.
+ */
+export async function adoptVideoFile(src: string): Promise<StoredVideo> {
+  const { id, ext } = await beginVideo(src)
+  const { part } = pathsFor(id, ext)
+  await fsp.copyFile(src, part)
+  return finishVideo(id, ext)
+}
+
 /** Absolute path for the file route, or null when it is gone. */
 export async function videoPath(relPath: string): Promise<string | null> {
   let abs: string

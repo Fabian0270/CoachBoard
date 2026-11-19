@@ -35,7 +35,7 @@ const app = () => renderScreen(
 
 const card = () => screen.queryByRole('dialog', { name: /./ })
 /** A stop's title as this setup shows it: the sample loaded, Discord not connected. */
-const setup: TourContext = { sampleAthleteId: 's1', finishedProgramId: 'p1', firstDay: '2026-10-19', draftProgramId: 'p2', discordConnected: false }
+const setup: TourContext = { sampleAthleteId: 's1', sampleAnalysisId: null, finishedProgramId: 'p1', firstDay: '2026-10-19', draftProgramId: 'p2', discordConnected: false }
 const title = (i: number) => words(TOUR_STOPS[i].title, setup)
 
 describe('the welcome', () => {

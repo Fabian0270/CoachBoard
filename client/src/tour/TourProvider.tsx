@@ -46,6 +46,7 @@ async function tourContext(): Promise<TourContext> {
   try { discordConnected = !!(await getJson<{ configured?: boolean }>('/api/discord/settings')).configured } catch { /* not set up */ }
   return {
     sampleAthleteId: id,
+    sampleAnalysisId: sample.analysisId ?? null,
     finishedProgramId: finished?.id ?? null,
     firstDay: finished?.start_date ?? null,
     draftProgramId: draft?.id ?? null,

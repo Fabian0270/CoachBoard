@@ -15,7 +15,7 @@ const marked = new Set(
   files(src).flatMap((f) => [...fs.readFileSync(f, 'utf8').matchAll(/data-tour="([a-z-]+)"/g)].map((m) => m[1])),
 )
 
-const ctx: TourContext = { sampleAthleteId: 'a1', finishedProgramId: 'p1', firstDay: '2026-10-19', draftProgramId: 'p2', discordConnected: false }
+const ctx: TourContext = { sampleAthleteId: 'a1', sampleAnalysisId: 'v1', finishedProgramId: 'p1', firstDay: '2026-10-19', draftProgramId: 'p2', discordConnected: false }
 
 describe('tour stops', () => {
   it('every target is marked in a page', () => {
@@ -46,6 +46,17 @@ describe('tour stops', () => {
     for (const thing of ['Ctrl+K', 'Record with a camera', 'phone', 'revenue', 'reminder', 'second folder']) {
       expect(text, thing).toContain(thing)
     }
+  })
+
+  it('bar path: the sample’s saved squat, then the page for your own clips (D110)', () => {
+    const sample = TOUR_STOPS.find((s) => s.id === 'sample-lift')!
+    const own = TOUR_STOPS.find((s) => s.id === 'bar-path')!
+    expect(TOUR_STOPS.indexOf(own)).toBe(TOUR_STOPS.indexOf(sample) + 1)
+    expect(sample.route(ctx)).toBe('/analysis/saved/v1')
+    // No clip on this server: the saved stop is skipped and the next one introduces bar path itself.
+    const without = { ...ctx, sampleAnalysisId: null }
+    expect(sample.route(without)).toBeNull()
+    expect(words(own.title, without)).toBe(words(sample.title, ctx))
   })
 
   it('Discord: the real inbox when connected, its Settings tab when not (D23)', () => {
