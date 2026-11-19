@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Film, FolderOpen, Search, Upload } from 'lucide-react'
+import { Check, Film, FolderOpen, Search, Upload, Video } from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
+import type { VbtLift } from 'coachboard-shared/vbt'
+import CameraCapture from './CameraCapture'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { errorMessage, getJson } from '../../lib/api'
@@ -16,7 +18,11 @@ import { errorMessage, getJson } from '../../lib/api'
  */
 export type AnalysisSource =
   | { kind: 'discord'; item: DiscordMediaItem }
-  | { kind: 'local'; name: string; url: string; file: File }
+  | {
+      kind: 'local'; name: string; url: string; file: File
+      /** Picked on the camera screen before recording (BP41, D103), for the analysis to start with. */
+      preset?: { athleteId: string | null; lift: VbtLift }
+    }
 
 /** Media rows read from the inbox at a time. */
 const PAGE = 200
@@ -39,6 +45,8 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
   const [items, setItems] = useState<DiscordMediaItem[] | null>(null)
   const [query, setQuery] = useState('')
   const [dragging, setDragging] = useState(false)
+  /** Recording a set from a camera instead (BP41). */
+  const [camera, setCamera] = useState(false)
 
   /** Why the synced videos could not be read. Never shown as "no videos yet" (BP6). */
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -102,6 +110,17 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
     )
   }, [items, query])
 
+  if (camera) {
+    return (
+      <CameraCapture
+        onCancel={() => setCamera(false)}
+        onDone={({ file, athleteId, lift }) =>
+          onPick({ kind: 'local', name: file.name, url: URL.createObjectURL(file), file, preset: { athleteId, lift } })
+        }
+      />
+    )
+  }
+
   return (
     <div className="space-y-6">
       <div
@@ -127,9 +146,15 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
             analysis.
           </p>
         </div>
-        <Button variant="outline" onClick={() => fileRef.current?.click()}>
-          <FolderOpen className="h-4 w-4" /> Choose a video
-        </Button>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button variant="outline" onClick={() => fileRef.current?.click()}>
+            <FolderOpen className="h-4 w-4" /> Choose a video
+          </Button>
+          {/* For coaching in person: film the set here and analyse it straight after. */}
+          <Button variant="outline" onClick={() => setCamera(true)}>
+            <Video className="h-4 w-4" /> Record with a camera
+          </Button>
+        </div>
         <input
           ref={fileRef}
           type="file"

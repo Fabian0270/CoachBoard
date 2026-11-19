@@ -372,6 +372,15 @@ export default function VideoAnalysis() {
     return () => URL.revokeObjectURL(url)
   }, [source])
 
+  // A set recorded on the camera screen brings the athlete and lift picked
+  // there (BP41, D103), so saving afterwards is one click.
+  useEffect(() => {
+    if (source?.kind !== 'local' || !source.preset) return
+    const { athleteId, lift } = source.preset
+    if (athleteId) setAthleteChoice(athleteId)
+    setSetContext((c) => ({ ...c, lift, metric: null }))
+  }, [source])
+
   const videoSrc =
     source?.kind === 'local'
       ? source.url

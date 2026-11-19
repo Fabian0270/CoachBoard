@@ -67,6 +67,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: [['T']], does: 'Track the bar path (tracking page)' },
       { keys: [['S']], does: 'Set the scale (tracking page)' },
       { keys: [['Ctrl', 'S']], does: 'Save the analysis, or save what changed (tracking page)' },
+      { keys: [['Space']], does: 'Start / stop recording, on the Record with a camera screen' },
     ],
   },
   {
