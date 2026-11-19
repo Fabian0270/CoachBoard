@@ -34,10 +34,10 @@ import {
   MID_FOOT_LIFTS,
   applyCorrections,
   correctionsAtTimes,
-  smooth,
   type PoseFrame,
   type TimedCorrection,
 } from 'coachboard-shared/pose'
+import { displayPose } from 'coachboard-shared/poseRefine'
 import {
   analysePath,
   pixelsPerMetreFromPlate,
@@ -1063,7 +1063,7 @@ export default function VideoAnalysis() {
   const smoothedPose = (measured: PoseFrame[]): PoseFrame[] => {
     if (busyRef.current || measured.length < 3) return measured
     if (poseSmoothCache.current?.source === measured) return poseSmoothCache.current.result
-    const result = smooth(measured)
+    const result = displayPose(measured)
     poseSmoothCache.current = { source: measured, result }
     return result
   }

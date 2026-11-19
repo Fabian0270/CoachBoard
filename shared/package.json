@@ -16,6 +16,7 @@
     "./videoAnalysis": "./videoAnalysis.ts",
     "./vbt": "./vbt.ts",
     "./pose": "./pose.ts",
+    "./poseRefine": "./poseRefine.ts",
     "./vbtSession": "./vbtSession.ts",
     "./velocityTarget": "./velocityTarget.ts",
     "./units": "./units.ts",

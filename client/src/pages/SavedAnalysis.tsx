@@ -189,7 +189,9 @@ export default function SavedAnalysis() {
           ),
           { frameIndex, landmark, x, y },
         ]
-        const next = { ...prev, corrections, frames: applyCorrections(prev.measured, corrections) }
+        // Over the displayed track, as on load: layering over the raw measurement
+        // dropped the smoothing (and now the rebuilt legs) at the first drag.
+        const next = { ...prev, corrections, frames: applyCorrections(prev.display, corrections) }
         poseRef.current = next.frames
         return next
       })
