@@ -1078,10 +1078,9 @@ function ProgramPage() {
                       const onClipboard = days.clipboard?.date === cell.date ? days.clipboard.mode : null
                       const isToday = cell.date === today
                       // Logged: the athlete has filled in Load Used or RPE. A past
-                      // training day without either is flagged, so a missed
-                      // import (or a missed session) shows in the grid.
+                      // day without results is NOT marked (D114): results come
+                      // back with the sheet when the block is done.
                       const logged = dayHasResults(workout)
-                      const notLogged = !logged && exercises.length > 0 && cell.date < today
                       return (
                         <td
                           key={cell.date}
@@ -1120,7 +1119,7 @@ function ProgramPage() {
                             onMouseEnter={exercises.length > 0 || workout?.notes ? (e) => showPreviewSoon(cell.date, e.currentTarget) : undefined}
                             onMouseLeave={hidePreview}
                             onDragStart={hidePreview}
-                            aria-label={`${dayTitle(cell.date)}${isToday ? ', today' : ''}, ${exercises.length === 0 ? 'empty' : `${exercises.length} exercise${exercises.length === 1 ? '' : 's'}`}${logged ? ', logged' : notLogged ? ', not logged yet' : ''}${onClipboard ? `, ${onClipboard === 'cut' ? 'cut' : 'copied'}` : ''}`}
+                            aria-label={`${dayTitle(cell.date)}${isToday ? ', today' : ''}, ${exercises.length === 0 ? 'empty' : `${exercises.length} exercise${exercises.length === 1 ? '' : 's'}`}${logged ? ', logged' : ''}${onClipboard ? `, ${onClipboard === 'cut' ? 'cut' : 'copied'}` : ''}`}
                             className={`group/cell block h-full min-h-[92px] w-full px-2.5 py-2 text-left transition-colors duration-150 ease-smooth hover:bg-primary/[0.06] focus:bg-primary/[0.06] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary ${
                               exercises.length > 0 ? 'shadow-[inset_2px_0_0_hsl(var(--primary)/0.55)]' : ''
                             } ${isToday ? 'bg-primary/[0.04]' : ''} ${onClipboard ? 'outline-dashed outline-2 -outline-offset-2 outline-primary/70' : ''}`}
@@ -1139,13 +1138,6 @@ function ProgramPage() {
                                   <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-success" title="The athlete has logged results on this day">
                                     <Check className="h-2.5 w-2.5" />Logged
                                   </span>
-                                )}
-                                {notLogged && (
-                                  <span
-                                    aria-hidden
-                                    className="h-1.5 w-1.5 rounded-full border border-warning"
-                                    title="Past training day with nothing logged yet"
-                                  />
                                 )}
                                 {workout && (mediaByWorkoutId.get(workout.id)?.length ?? 0) > 0 && (
                                   <span

@@ -48,12 +48,13 @@ describe('Program calendar — what a cell shows', () => {
     expect(cell('2026-06-16').textContent).toMatch(/Bench 5×5 · 75%/)
   })
 
-  it('marks a logged day, and a past training day with nothing logged', async () => {
+  it('marks a logged day; a past day without results is not marked (D114)', async () => {
     await open()
     expect(cell('2026-06-15').getAttribute('aria-label')).toMatch(/, logged/)
     expect(cell('2026-06-15').textContent).toMatch(/Logged/)
-    expect(cell('2026-06-16').getAttribute('aria-label')).toMatch(/not logged yet/)
-    // A future day is not "not logged".
+    // Results come back with the sheet when the block is done: no warning on the way.
+    expect(cell('2026-06-16').getAttribute('aria-label')).not.toMatch(/logged/)
+    expect(cell('2026-06-16').querySelector('[title*="nothing logged"]')).toBeNull()
     expect(cell('2026-06-18').getAttribute('aria-label')).not.toMatch(/logged/)
   })
 
