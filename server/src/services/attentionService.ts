@@ -28,7 +28,8 @@ const shift = (iso: string, days: number): string => {
 
 export async function needsAttention(today: string): Promise<AttentionItem[]> {
   const db = getDb()
-  const athletes = await db.selectFrom('athletes').select(['id', 'name']).where('archived', '=', 0).execute()
+  // The tour's sample athlete never needs the coach's attention (T7).
+  const athletes = await db.selectFrom('athletes').select(['id', 'name']).where('archived', '=', 0).where('is_sample', '=', 0).execute()
   const nameOf = new Map(athletes.map((a) => [a.id, a.name]))
   const programs = await db.selectFrom('programs')
     .select(['id', 'athlete_id', 'name', 'start_date', 'end_date', 'status']).execute()

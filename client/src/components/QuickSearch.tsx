@@ -13,7 +13,7 @@ import { cn } from '../lib/utils'
 // field saves when the cursor leaves it, as it does for any click elsewhere,
 // and Esc puts the cursor back in it.
 
-interface AthleteRow { id: string; name: string; archived?: number }
+interface AthleteRow { id: string; name: string; archived?: number; is_sample?: number }
 interface ProgramRow { id: string; name: string; status: string; athlete_id: string | null; start_date: string | null }
 
 export interface Hit {
@@ -51,7 +51,7 @@ export function quickSearchHits(query: string, athletes: AthleteRow[], programs:
         .slice(0, LIMIT)
 
   return [
-    ...people.map((a): Hit => ({ kind: 'athlete', id: a.id, name: a.name, detail: a.archived ? 'Archived' : '' })),
+    ...people.map((a): Hit => ({ kind: 'athlete', id: a.id, name: a.name, detail: a.archived ? 'Archived' : a.is_sample ? 'Sample' : '' })),
     ...blocks.map((p): Hit => {
       const owner = p.athlete_id ? names.get(p.athlete_id) ?? '' : 'Template'
       return { kind: 'program', id: p.id, name: p.name, detail: [owner, p.status === 'active' ? '' : p.status].filter(Boolean).join(' · ') }

@@ -229,6 +229,11 @@ async function loadFingerprints(focus?: SuggestionGoal): Promise<ProgramFingerpr
     .selectFrom('programs')
     .select(['id'])
     .where('status', 'in', ['completed', 'archived'])
+    // The tour's sample athlete is not the coach's programming (T7).
+    .where((eb) => eb.or([
+      eb('athlete_id', 'is', null),
+      eb('athlete_id', 'not in', eb.selectFrom('athletes').select('id').where('is_sample', '=', 1)),
+    ]))
   if (focus) query = query.where('focus', '=', focus)
   const rows = await query.execute()
 

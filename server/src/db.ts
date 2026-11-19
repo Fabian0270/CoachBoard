@@ -20,6 +20,13 @@ export interface AthleteTable {
   archived: number   // 0/1 — archived athletes are hidden from the active roster
   /** 'kg' | 'lb' (S3, D76): the unit every load of this athlete is stored and shown in. */
   unit: Generated<string>
+  /**
+   * 1 for the sample athlete the first-start tour runs on (T7, D111): labelled
+   * "Sample" everywhere, left out of the learned style, the dashboard counts,
+   * the needs-attention list, revenue and payment reminders, and removed with
+   * everything it owns in one click.
+   */
+  is_sample: Generated<number>
   created_at: string
   updated_at: string
 }
@@ -547,6 +554,8 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   await addColumnIfMissing('athletes', 'height_cm', 'INTEGER')
   // S3 (D76): kg or lb per athlete. Everyone so far was kg.
   await addColumnIfMissing('athletes', 'unit', "TEXT NOT NULL DEFAULT 'kg'")
+  // T7 (D111): the tour's sample athlete.
+  await addColumnIfMissing('athletes', 'is_sample', 'INTEGER NOT NULL DEFAULT 0')
   await sql`
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,

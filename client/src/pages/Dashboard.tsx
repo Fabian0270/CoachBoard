@@ -151,11 +151,16 @@ export default function Dashboard() {
     setError(null)
     try {
       const [athletes, programs, alerts] = await Promise.all([
-        getList<unknown>('/api/athletes'),
-        getList<unknown>('/api/programs'),
+        getList<{ id: string; is_sample?: number }>('/api/athletes'),
+        getList<{ athlete_id: string | null }>('/api/programs'),
         getList<PaymentAlert>('/api/payments/alerts'),
       ])
-      setStats({ athletes: athletes.length, programs: programs.length })
+      // The tour's sample athlete is not part of the coach's business (T7).
+      const sample = new Set(athletes.filter((a) => a.is_sample).map((a) => a.id))
+      setStats({
+        athletes: athletes.length - sample.size,
+        programs: programs.filter((p) => !p.athlete_id || !sample.has(p.athlete_id)).length,
+      })
       setPaymentAlerts(alerts)
     } catch (err) {
       // Previously every one of these swallowed its failure and left the tiles

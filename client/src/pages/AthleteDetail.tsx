@@ -54,6 +54,8 @@ interface Athlete {
   email: string | null
   date_of_birth: string | null
   notes: string | null
+  /** The tour's sample athlete (T7). */
+  is_sample?: number
 }
 
 interface Program {
@@ -232,6 +234,7 @@ function AthletePage() {
         <div className="min-w-0 flex-1 space-y-1.5">
           <h1 className="truncate text-[26px] font-semibold leading-tight tracking-tight">{athlete.name}</h1>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+            {athlete.is_sample ? <Badge variant="outline" className="border-primary/40 text-primary" title="A made-up athlete for trying CoachBoard. Remove it from Settings → Help.">Sample</Badge> : null}
             {athlete.sport && <Badge variant="default">{athlete.sport}</Badge>}
             {isPowerlifting(athlete.sport) && athlete.weight_class && <span className="num">{athlete.weight_class} kg</span>}
             {athlete.email && <span className="truncate">{athlete.email}</span>}

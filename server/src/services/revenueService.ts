@@ -35,7 +35,10 @@ const asRecord = (m: Map<string, number>) => Object.fromEntries([...m].map(([c, 
 export async function revenueSummary(opts: { months?: number; today?: string; now?: Date; basis?: RevenueBasis } = {}): Promise<RevenueSummary> {
   const basis = opts.basis ?? 'paid'
   const today = opts.today ?? todayIso()
-  const payments = await getDb().selectFrom('payments').selectAll().execute()
+  // The tour's sample payment is not revenue (T7).
+  const payments = await getDb().selectFrom('payments').selectAll()
+    .where('athlete_id', 'not in', getDb().selectFrom('athletes').select('id').where('is_sample', '=', 1))
+    .execute()
   const info = await ratesIntoHome(opts.now)
   const byMonth = revenueByMonth(payments, basis)
   const current = today.slice(0, 7)
@@ -72,6 +75,7 @@ export async function paymentsCsv(): Promise<string> {
   const rows = await getDb().selectFrom('payments')
     .innerJoin('athletes', 'athletes.id', 'payments.athlete_id')
     .select(['athletes.name as athlete', 'payments.amount', 'payments.currency', 'payments.start_date', 'payments.paid_through', 'payments.paid', 'payments.paid_at', 'payments.notes'])
+    .where('athletes.is_sample', '=', 0)
     .orderBy('payments.paid_through', 'desc')
     .execute()
   const header = ['Athlete', 'Amount', 'Currency', 'From', 'Paid through', 'Paid', 'Paid on', 'Notes']

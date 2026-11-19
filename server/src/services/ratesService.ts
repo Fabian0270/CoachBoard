@@ -79,7 +79,9 @@ export async function ecbRates(now = new Date()): Promise<EcbCache | null> {
 export async function homeCurrency(): Promise<string> {
   const row = await getDb().selectFrom('app_settings').select('value').where('key', '=', HOME_KEY).executeTakeFirst()
   if (row?.value) return currencyCode(row.value)
-  const counts = await getDb().selectFrom('payments').select('currency').execute()
+  const counts = await getDb().selectFrom('payments').select('currency')
+    .where('athlete_id', 'not in', getDb().selectFrom('athletes').select('id').where('is_sample', '=', 1))
+    .execute()
   const tally = new Map<string, number>()
   for (const p of counts) tally.set(currencyCode(p.currency), (tally.get(currencyCode(p.currency)) ?? 0) + 1)
   return [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'EUR'
