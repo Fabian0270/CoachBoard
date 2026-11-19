@@ -16,6 +16,7 @@ import systemRouter from './routes/system.js'
 import backupRouter from './routes/backup.js'
 import analysisRouter, { ANALYSIS_JSON_LIMIT } from './routes/analysis.js'
 import recorderRouter from './routes/recorder.js'
+import phoneLinkRouter from './routes/phoneLink.js'
 import supportRouter, { REPORT_JSON_LIMIT } from './routes/support.js'
 
 export function createApp(staticDir?: string, logPath?: string) {
@@ -71,6 +72,7 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api/backup', backupRouter)
   // /api/analysis is mounted above, with its own body-size limit.
   app.use('/api/recorder', recorderRouter)
+  app.use('/api/phone-link', phoneLinkRouter)
 
   // Unknown API routes must 404 as JSON, not fall through to the static catch-all
   app.use('/api', (_req, res) => {

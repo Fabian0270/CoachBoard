@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Film, FolderOpen, Search, Upload, Video } from 'lucide-react'
+import { Check, Film, FolderOpen, Search, Smartphone, Upload, Video } from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import type { VbtLift } from 'coachboard-shared/vbt'
-import CameraCapture from './CameraCapture'
+import CameraCapture, { type CameraTake } from './CameraCapture'
+import PhoneLink from './PhoneLink'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { errorMessage, getJson } from '../../lib/api'
@@ -45,8 +46,8 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
   const [items, setItems] = useState<DiscordMediaItem[] | null>(null)
   const [query, setQuery] = useState('')
   const [dragging, setDragging] = useState(false)
-  /** Recording a set from a camera instead (BP41). */
-  const [camera, setCamera] = useState(false)
+  /** Recording a set from a camera, or receiving one from a phone, instead (BP41). */
+  const [camera, setCamera] = useState<'computer' | 'phone' | null>(null)
 
   /** Why the synced videos could not be read. Never shown as "no videos yet" (BP6). */
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -111,14 +112,11 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
   }, [items, query])
 
   if (camera) {
-    return (
-      <CameraCapture
-        onCancel={() => setCamera(false)}
-        onDone={({ file, athleteId, lift }) =>
-          onPick({ kind: 'local', name: file.name, url: URL.createObjectURL(file), file, preset: { athleteId, lift } })
-        }
-      />
-    )
+    const take = ({ file, athleteId, lift }: CameraTake) =>
+      onPick({ kind: 'local', name: file.name, url: URL.createObjectURL(file), file, preset: { athleteId, lift } })
+    return camera === 'phone'
+      ? <PhoneLink onCancel={() => setCamera(null)} onDone={take} />
+      : <CameraCapture onCancel={() => setCamera(null)} onDone={take} />
   }
 
   return (
@@ -151,8 +149,12 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
             <FolderOpen className="h-4 w-4" /> Choose a video
           </Button>
           {/* For coaching in person: film the set here and analyse it straight after. */}
-          <Button variant="outline" onClick={() => setCamera(true)}>
+          <Button variant="outline" onClick={() => setCamera('computer')}>
             <Video className="h-4 w-4" /> Record with a camera
+          </Button>
+          {/* D105: its own button. The phone films with its own camera app. */}
+          <Button variant="outline" onClick={() => setCamera('phone')}>
+            <Smartphone className="h-4 w-4" /> Send from my phone
           </Button>
         </div>
         <input

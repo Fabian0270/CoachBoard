@@ -36,7 +36,7 @@ const ID_PATTERN = /^[0-9a-f-]{36}$/
  */
 const ALLOWED_EXT = new Set(['.mp4', '.mov', '.webm', '.m4v', '.avi', '.mkv'])
 
-function extensionFor(filename: string | undefined): string {
+export function extensionFor(filename: string | undefined): string {
   const ext = path.extname(filename ?? '').toLowerCase()
   return ALLOWED_EXT.has(ext) ? ext : '.mp4'
 }

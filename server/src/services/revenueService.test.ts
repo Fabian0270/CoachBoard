@@ -99,7 +99,9 @@ describe('with a database', () => {
     expect(await homeCurrency()).toBe('EUR')
   })
 
-  it('Settings and the Revenue card change the same currency', async () => {
+  // Loads the whole app's routes the first time, which alone takes seconds on a
+  // busy machine: over the default 5 s limit in a full run (2026-11-19).
+  it('Settings and the Revenue card change the same currency', { timeout: 20_000 }, async () => {
     const { createApp } = await import('../app.js')
     const server = createApp().listen(0, '127.0.0.1')
     await new Promise((r) => server.once('listening', r))
