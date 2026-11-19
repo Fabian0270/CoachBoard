@@ -11,6 +11,7 @@ import { needsAttention } from './attentionService.js'
 import { revenueSummary, paymentsCsv } from './revenueService.js'
 import { computeStyleProfile } from './styleService.js'
 import { configureRatesFetcher, homeCurrency } from './ratesService.js'
+import { getAthleteProgress } from './athleteProgressService.js'
 
 // T7 (D9, D15, D111): the tour's sample athlete.
 
@@ -61,6 +62,19 @@ describe('the sample athlete', () => {
 
     const payments = await db.selectFrom('payments').selectAll().where('athlete_id', '=', athleteId!).execute()
     expect(payments).toHaveLength(1)
+  })
+
+  it('the athlete gets stronger over the block, so the Progress tab has something to show', async () => {
+    const { athleteId } = await loadSampleAthlete(TODAY)
+    const progress = await getAthleteProgress(athleteId!)
+    expect(progress!.e1rm.map((l) => l.liftKey).sort()).toEqual(['bench', 'deadlift', 'squat'])
+    for (const lift of progress!.e1rm) {
+      const pts = lift.points.map((p) => p.e1rm)
+      expect(pts.length, lift.liftKey).toBe(4)
+      // The latest week is the best one: no deload reading as getting weaker.
+      expect(pts.at(-1)!, lift.liftKey).toBe(Math.max(...pts))
+      expect(pts.at(-1)!, lift.liftKey).toBeGreaterThan(pts[0])
+    }
   })
 
   it('loading twice keeps one sample', async () => {

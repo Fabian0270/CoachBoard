@@ -9,7 +9,8 @@ import { todayIso } from './paymentService.js'
 //
 // The first-start tour runs on it, so every stop shows real content: a
 // fictional powerlifter in kg with maxes, a finished 4-week block with the
-// athlete's results logged, a drafted next block, and one payment. It is
+// athlete's results logged (getting stronger over it, so Progress has
+// something to show), a drafted next block, and one payment. It is
 // loaded only when asked for (D9), marked `is_sample`, labelled "Sample"
 // everywhere, and left out of everything that describes the coach's real
 // business: the learned style, the dashboard counts, the needs-attention list,
@@ -38,11 +39,16 @@ const plates = (kg: number) => Math.round(kg / 2.5) * 2.5
 
 interface Row { name: string; sets: string; reps: string; pct?: number; of?: keyof typeof MAXES; weight?: number; rpe?: (week: number) => string; note?: string }
 
-/** The block: 3 days a week, the competition lifts climbing over three weeks and a deload in the fourth. */
+/**
+ * The block: 3 days a week, the competition lifts climbing every week, the
+ * RPE with them. No deload at the end: the tour shows this block on the
+ * Progress tab, and a deload as the latest week read as the athlete getting
+ * weaker ("-16.5 kg since 19 Oct", seen in the packaged app).
+ */
 function day(dayIndex: number, week: number): Row[] {
-  const climb = [0, 0.03, 0.06, -0.1][week] // week 4 deloads
+  const climb = [0, 0.04, 0.08, 0.12][week]
   const pct = (base: number) => Math.round((base + climb) * 100) / 100
-  const rpe = (start: number) => (w: number) => String(w === 3 ? start - 1.5 : start + w * 0.5)
+  const rpe = (start: number) => (w: number) => String(start + w * 0.5)
   if (dayIndex === 0) return [
     { name: 'Squat', sets: '4', reps: '5', pct: pct(0.72), of: 'Squat', rpe: rpe(7) },
     { name: 'Bench Press', sets: '4', reps: '6', pct: pct(0.7), of: 'Bench Press', rpe: rpe(7) },
