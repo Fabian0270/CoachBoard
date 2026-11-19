@@ -242,7 +242,7 @@ export default function DataSettingsCard() {
   }
 
   return (
-    <Card>
+    <Card data-tour="your-data">
       <CardHeader>
         <CardTitle>Your data</CardTitle>
         <CardDescription>

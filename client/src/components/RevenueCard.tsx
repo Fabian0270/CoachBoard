@@ -119,7 +119,7 @@ export default function RevenueCard() {
   )
 
   return (
-    <Card>
+    <Card data-tour="revenue">
       <CardHeader className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2 text-base"><TrendingUp className="h-5 w-5 text-muted-foreground" />Revenue</CardTitle>

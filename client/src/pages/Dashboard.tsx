@@ -11,7 +11,8 @@ import PageHeader from '../components/PageHeader'
 import { Plus, AlertTriangle, ArrowUpRight, CalendarClock, FileInput, UserX, Film, Gauge } from 'lucide-react'
 import { isVbtLift, liftLabel } from 'coachboard-shared/vbt'
 import MyStyleCard from '../components/MyStyleCard'
-import Onboarding, { isOnboardingComplete } from '../components/Onboarding'
+import Onboarding, { checklistFrom } from '../components/Onboarding'
+import { getTourStatus, saveTour, type TourStatus } from '../tour/tourApi'
 import { PAYMENT_STATUS_META, formatAmount } from '../lib/paymentDisplay'
 import { humanBytes } from '../lib/formatBytes'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
@@ -108,7 +109,7 @@ function AttentionCard({ unreviewedVideos }: { unreviewedVideos: number }) {
   ]
 
   return (
-    <section className="rounded-lg border bg-card" aria-labelledby="attention-title">
+    <section className="rounded-lg border bg-card" aria-labelledby="attention-title" data-tour="dashboard-attention">
       <div className="flex items-center gap-2 px-5 pb-2 pt-4">
         <h2 id="attention-title" className="text-sm font-semibold">Needs attention</h2>
         {lines.length > 0 && <span className="num rounded-full bg-warning/15 px-1.5 text-[11px] text-warning">{lines.length}</span>}
@@ -141,7 +142,18 @@ interface Stats {
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats>({ athletes: 0, programs: 0 })
   const [paymentAlerts, setPaymentAlerts] = useState<PaymentAlert[]>([])
-  const [onboardingDone, setOnboardingDone] = useState(isOnboardingComplete())
+  /** The setup checklist as kept with the app's data (T8); null until read, so it never flashes. */
+  const [checklist, setChecklist] = useState<TourStatus['checklist'] | null>(null)
+  useEffect(() => {
+    getTourStatus().then((s) => {
+      const { checklist: c, migrate } = checklistFrom(s)
+      // Carried over once from where the browser kept it before.
+      if (migrate) void saveTour({ checklist: c }).catch(() => {})
+      setChecklist(c)
+    }, () => setChecklist({ completed: [], skipped: [], done: true }))
+  }, [])
+  const onboardingDone = checklist?.done ?? true
+  const setOnboardingDone = (done: boolean) => setChecklist((c) => (c ? { ...c, done } : c))
   const { configured: discordConfigured } = useDiscordConfigured()
   const inbox = useDiscordInboxCounts()
   const [storage, setStorage] = useState<{ bytes: number; files: number } | null>(null)
@@ -263,9 +275,9 @@ export default function Dashboard() {
           after. Inside the non-error branch because it keys off athleteCount:
           a failed load would otherwise show an established coach the
           "add your first athlete" walkthrough. */}
-      {onboardingDone
+      {checklist === null ? null : onboardingDone
         ? <MyStyleCard />
-        : <Onboarding athleteCount={stats.athletes} onFinish={() => setOnboardingDone(true)} />}
+        : <Onboarding athleteCount={stats.athletes} initial={checklist} onFinish={() => setOnboardingDone(true)} />}
       </>
       )}
     </div>

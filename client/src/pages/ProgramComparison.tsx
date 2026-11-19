@@ -233,7 +233,7 @@ export default function ProgramComparison() {
         description={programs.length > 0 ? `${programs.length} program${programs.length === 1 ? '' : 's'}` : undefined}
         actions={
         <>
-          <Button onClick={() => setNewMenuOpen(true)}>
+          <Button onClick={() => setNewMenuOpen(true)} data-tour="new-program">
             <Plus className="h-4 w-4 mr-2" />New program
           </Button>
         </>

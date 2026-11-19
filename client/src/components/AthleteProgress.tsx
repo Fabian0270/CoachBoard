@@ -118,7 +118,7 @@ export default function AthleteProgress({ athleteId, unit = 'kg' }: { athleteId:
 
   return (
     <div className="space-y-6">
-      <Card>
+      <Card data-tour="athlete-progress">
         <CardHeader>
           <CardTitle>Estimated 1RM across blocks</CardTitle>
           <p className="text-sm text-muted-foreground">

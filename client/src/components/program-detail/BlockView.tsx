@@ -116,7 +116,7 @@ export default function BlockView({
   const dayName = LONG_DAY[weekday]
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-tour="block-view">
       <div role="group" aria-label="Training day" className="flex flex-wrap items-center gap-1">
         {DAY_LABELS.map((label, i) => (
           <button

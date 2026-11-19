@@ -103,7 +103,7 @@ export default function AthletesList() {
   )
 
   const renderList = (list: Athlete[]) => (
-    <ul className="divide-y overflow-hidden rounded-xl border bg-card">{list.map(renderRow)}</ul>
+    <ul data-tour="athlete-list" className="divide-y overflow-hidden rounded-xl border bg-card">{list.map(renderRow)}</ul>
   )
 
   return (

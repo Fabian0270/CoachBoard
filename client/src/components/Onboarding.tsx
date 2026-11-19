@@ -1,15 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from './ui/card'
 import { Button } from './ui/button'
-import { UserPlus, Mail, FileUp, Sparkles, Repeat, Check, RotateCcw, MessageSquare } from 'lucide-react'
+import { UserPlus, Mail, FileUp, Check, RotateCcw, MessageSquare } from 'lucide-react'
+import { saveTour, type TourStatus } from '../tour/tourApi'
 
-// Guided first-run walkthrough shown on the dashboard. Each step that needs an
-// action drops the coach straight onto the right screen; the explain-only steps
-// make the training loop (import → style learned → smarter suggestions) visible
-// rather than something the coach has to discover. The checklist is interactive:
-// every step can be marked done or skipped, progress persists in localStorage,
-// and finishing (or skipping all) hides it for good.
+// The setup checklist on the dashboard: the four things to do to set
+// CoachBoard up for real (D17). Each drops the coach on the right screen. The
+// two explain-only steps it used to have — the style being learned and the
+// next block being drafted — are stops in the first-start tour now. Every step
+// can be marked done or skipped; finishing, or skipping all, puts it away, and
+// Settings → Help brings it back. Progress is kept with the app's data (T8),
+// so a restore does not reset it.
 interface Step {
   id: string
   icon: typeof UserPlus
@@ -52,72 +54,49 @@ const STEPS: Step[] = [
     body: 'Drop in your past Excel programs to build your library in one afternoon instead of waiting months for it to accumulate.',
     action: { label: 'Import programs', to: '/programs?import=1' },
   },
-  {
-    id: 'style',
-    icon: Sparkles,
-    title: 'CoachBoard learns your style',
-    body: "Those imports teach it your rep ranges, block lengths and RPE arcs — watch the “My Style” card fill in, so suggestions feel like your programming, not a generic template.",
-  },
-  {
-    id: 'loop',
-    icon: Repeat,
-    title: 'Generate the next block',
-    body: 'Email a program to your athlete → they fill in Load Used + Last Set RPE → import it back → CoachBoard drafts the next block, every weight explained and always yours to override.',
-  },
 ]
 
-// Bumped to v2 when the Discord step was added so coaches who finished the
-// earlier checklist see it again (with the new optional step).
-const STORAGE_KEY = 'coachboard.onboarding.v2'
+/** Where the checklist used to be kept, in the browser, before T8. Read once to carry it over. */
+const LEGACY_KEY = 'coachboard.onboarding.v2'
 
-interface Persisted {
-  completed: string[]
-  skipped: string[]
-  done: boolean
-}
+type Checklist = TourStatus['checklist']
 
-function load(): Persisted {
+/**
+ * The checklist as stored with the app's data — or, the first time, as the
+ * browser had it before (T8), so nobody's ticks are lost in the move. Returns
+ * whether the old copy should be written over.
+ */
+export function checklistFrom(status: TourStatus): { checklist: Checklist; migrate: boolean } {
+  const stored = status.checklist
+  const untouched = !stored.done && stored.completed.length === 0 && stored.skipped.length === 0
+  if (!untouched) return { checklist: stored, migrate: false }
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const p = JSON.parse(raw) as Partial<Persisted>
-      return {
-        completed: Array.isArray(p.completed) ? p.completed : [],
-        skipped: Array.isArray(p.skipped) ? p.skipped : [],
-        done: !!p.done,
-      }
-    }
+    const raw = localStorage.getItem(LEGACY_KEY)
+    if (!raw) return { checklist: stored, migrate: false }
+    const p = JSON.parse(raw) as Partial<Checklist>
+    const ids = new Set(STEPS.map((s) => s.id))
+    const keep = (a: unknown) => (Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string' && ids.has(x)) : [])
+    return { checklist: { completed: keep(p.completed), skipped: keep(p.skipped), done: !!p.done }, migrate: true }
   } catch {
-    /* ignore corrupt storage */
+    return { checklist: stored, migrate: false }
   }
-  return { completed: [], skipped: [], done: false }
-}
-
-function save(p: Persisted) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(p))
-  } catch {
-    /* ignore */
-  }
-}
-
-/** Whether the coach has finished (or dismissed) onboarding — drives the dashboard. */
-export function isOnboardingComplete(): boolean {
-  return load().done
 }
 
 interface Props {
   athleteCount: number
+  initial: Checklist
   onFinish: () => void
 }
 
-export default function Onboarding({ athleteCount, onFinish }: Props) {
-  const [completed, setCompleted] = useState<Set<string>>(() => new Set(load().completed))
-  const [skipped, setSkipped] = useState<Set<string>>(() => new Set(load().skipped))
+export default function Onboarding({ athleteCount, initial, onFinish }: Props) {
+  const [completed, setCompleted] = useState<Set<string>>(() => new Set(initial.completed))
+  const [skipped, setSkipped] = useState<Set<string>>(() => new Set(initial.skipped))
+  const first = useRef(true)
 
-  // Persist progress as the coach checks steps off.
+  // Kept as the coach checks steps off.
   useEffect(() => {
-    save({ completed: [...completed], skipped: [...skipped], done: false })
+    if (first.current) { first.current = false; return }
+    void saveTour({ checklist: { completed: [...completed], skipped: [...skipped], done: false } }).catch(() => {})
   }, [completed, skipped])
 
   // The first step completes itself once the coach actually has an athlete.
@@ -147,13 +126,13 @@ export default function Onboarding({ athleteCount, onFinish }: Props) {
   }
 
   const finish = () => {
-    save({ completed: [...completed], skipped: [...skipped], done: true })
+    void saveTour({ checklist: { completed: [...completed], skipped: [...skipped], done: true } }).catch(() => {})
     onFinish()
   }
   const skipAll = () => {
     const nextSkipped = new Set(skipped)
     STEPS.forEach((s) => { if (!isCompleted(s.id)) nextSkipped.add(s.id) })
-    save({ completed: [...completed], skipped: [...nextSkipped], done: true })
+    void saveTour({ checklist: { completed: [...completed], skipped: [...nextSkipped], done: true } }).catch(() => {})
     onFinish()
   }
 
@@ -161,9 +140,10 @@ export default function Onboarding({ athleteCount, onFinish }: Props) {
     <Card>
       <CardContent className="py-8 px-6">
         <div className="text-center mb-6">
-          <h2 className="text-xl font-semibold">Welcome to CoachBoard</h2>
+          <h2 className="text-xl font-semibold">Set up CoachBoard</h2>
           <p className="text-muted-foreground mt-1">
-            A few steps to set up the training loop. Mark each one done — or skip the ones you don't need.
+            Four things to get going with your own athletes. Mark each one done — or skip the ones you
+            don't need. Settings → Help brings this back.
           </p>
         </div>
 

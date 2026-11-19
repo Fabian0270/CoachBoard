@@ -189,7 +189,7 @@ export default function Calculators() {
     getJson<{ defaultUnit: LoadUnit }>('/api/settings/units').then((r) => setUnit(r.defaultUnit)).catch(() => { /* kg */ })
   }, [])
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div data-tour="calculators" className="mx-auto max-w-5xl space-y-6">
       <PageHeader
         title="Calculators"
         description="Meet scoring and warm-up ladders."

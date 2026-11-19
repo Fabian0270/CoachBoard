@@ -336,7 +336,7 @@ export default function ProgramReport() {
       )}
 
       {/* Stats row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div data-tour="program-report" className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-6">
             <div className="text-3xl font-bold">{completionPct}%</div>

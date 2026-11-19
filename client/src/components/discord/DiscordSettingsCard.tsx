@@ -250,7 +250,7 @@ export default function DiscordSettingsCard() {
   const running = status?.state === 'running'
 
   return (
-    <Card>
+    <Card data-tour="discord">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <MessageSquare className="h-5 w-5" /> Discord

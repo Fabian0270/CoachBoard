@@ -92,6 +92,10 @@ function AthletePage() {
   const [discordUsernames, setDiscordUsernames] = useState<string[]>([])
   const [searchParams] = useSearchParams()
   const initialTab = searchParams.get('tab') ?? 'info'
+  // Follows ?tab= when it changes on the same page — the tour goes from one
+  // tab to the next by address — and clicking a tab still just switches.
+  const [tab, setTab] = useState(initialTab)
+  useEffect(() => { setTab(searchParams.get('tab') ?? 'info') }, [searchParams])
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -224,7 +228,7 @@ function AthletePage() {
     <div className="mx-auto max-w-6xl space-y-6">
       <BackLink to="/athletes">Athletes</BackLink>
       {/* Profile header: who this is at a glance, on the same glow as the hero figures. */}
-      <section className="flex flex-wrap items-center gap-5 rounded-xl border bg-card bg-glow-hero px-6 py-5">
+      <section data-tour="athlete-header" className="flex flex-wrap items-center gap-5 rounded-xl border bg-card bg-glow-hero px-6 py-5">
         <span
           aria-hidden
           className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/15 text-lg font-semibold text-primary"
@@ -256,7 +260,7 @@ function AthletePage() {
         </div>
       </section>
       {/* Remounted after a unit switch, so every tab reads the numbers again. */}
-      <Tabs key={unitEpoch} defaultValue={initialTab}>
+      <Tabs key={unitEpoch} value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="programs">Programs ({programs.length})</TabsTrigger>
@@ -408,7 +412,7 @@ function AthletePage() {
         <TabsContent value="progress">
           <SlideIn>{id && <AthleteProgress athleteId={id} unit={unitOf(athlete.unit)} />}</SlideIn>
         </TabsContent>
-        <TabsContent value="maxes">
+        <TabsContent value="maxes" data-tour="athlete-maxes">
           <SlideIn>{id && <AthleteMaxes athleteId={id} unit={unitOf(athlete.unit)} />}</SlideIn>
         </TabsContent>
         <TabsContent value="barpath">

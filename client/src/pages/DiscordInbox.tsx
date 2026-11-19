@@ -178,7 +178,7 @@ export default function DiscordInbox() {
   }
 
   return (
-    <div className="space-y-4">
+    <div data-tour="discord" className="space-y-4">
       <Header unmatchedCount={unmatched.length} unreviewedCount={unreviewed.length} />
       {loadError && (
         <p className="text-sm text-destructive">

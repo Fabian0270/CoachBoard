@@ -17,6 +17,7 @@ import UnitSettingsCard from '../components/UnitSettingsCard'
 import DayEditorSettingsCard from '../components/DayEditorSettingsCard'
 import CurrencySettingsCard from '../components/CurrencySettingsCard'
 import ReportProblemCard from '../components/ReportProblemCard'
+import TourHelpCard from '../tour/TourHelpCard'
 import { useSearchParams } from 'react-router-dom'
 
 const TABS = ['email', 'discord', 'preferences', 'data', 'help']
@@ -69,6 +70,10 @@ interface PublicEmailSettings {
 export default function Settings() {
   const toast = useToast()
   const [searchParams] = useSearchParams()
+  // Follows ?tab= when it changes on this page (the tour moves between tabs by address).
+  const tabFromUrl = () => (TABS.includes(searchParams.get('tab') ?? '') ? searchParams.get('tab')! : 'email')
+  const [tab, setTab] = useState(tabFromUrl)
+  useEffect(() => { setTab(tabFromUrl()) }, [searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -177,8 +182,8 @@ export default function Settings() {
       <PageHeader title="Settings" />
 
       {/* ?tab=help and the like open a tab directly. */}
-      <Tabs defaultValue={TABS.includes(searchParams.get('tab') ?? '') ? searchParams.get('tab')! : 'email'}>
-        <TabsList>
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList data-tour="settings-tabs">
           <TabsTrigger value="email"><Mail className="h-4 w-4 mr-2" />Email delivery</TabsTrigger>
           <TabsTrigger value="discord"><MessageSquare className="h-4 w-4 mr-2" />Discord</TabsTrigger>
           <TabsTrigger value="preferences"><Scale className="h-4 w-4 mr-2" />Preferences</TabsTrigger>
@@ -325,6 +330,7 @@ export default function Settings() {
           <DataSettingsCard />
         </TabsContent>
         <TabsContent value="help" className="space-y-6">
+          <TourHelpCard />
           <ReportProblemCard />
           <HelpSettingsCard />
         </TabsContent>

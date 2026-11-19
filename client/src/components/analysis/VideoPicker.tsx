@@ -122,6 +122,7 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
   return (
     <div className="space-y-6">
       <div
+        data-tour="analysis-start"
         onDragOver={(e) => {
           e.preventDefault()
           setDragging(true)

@@ -867,7 +867,7 @@ function ProgramPage() {
               <Button variant="ghost" size="sm" onClick={handleChangeDuration} title="Dates (Ctrl+Shift+D)">
                 <CalendarRange className="h-4 w-4" />Dates
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)} title="Import results (Ctrl+I)">
+              <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)} title="Import results (Ctrl+I)" data-tour="import-results">
                 <Download className="h-4 w-4" />Import
               </Button>
               <Button variant="ghost" size="sm" asChild>
@@ -878,7 +878,7 @@ function ProgramPage() {
               <span aria-hidden className="mx-1 h-5 w-px bg-border" />
               <DropdownMenu open={exportMenuOpen} onOpenChange={setExportMenuOpen}>
                 <DropdownMenuTrigger asChild>
-                  <Button size="sm" title="Export (Ctrl+E)">
+                  <Button size="sm" title="Export (Ctrl+E)" data-tour="export">
                     <Upload className="h-4 w-4" />Export<ChevronDown className="h-4 w-4 -mr-0.5 opacity-70" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -974,7 +974,7 @@ function ProgramPage() {
                 ? 'Click any day to edit · drag a day to move it'
                 : 'One training day across every week · click a week to open that day'}
             </span>
-            <div role="group" aria-label="View" className="ml-auto inline-flex rounded-lg border bg-card p-0.5">
+            <div role="group" aria-label="View" data-tour="view-switch" className="ml-auto inline-flex rounded-lg border bg-card p-0.5">
               {([
                 { key: 'calendar', label: 'Calendar', icon: CalendarDays, title: 'Weeks × days, one day at a time' },
                 { key: 'block', label: 'Block', icon: Rows3, title: 'One training day across every week, every value editable' },
@@ -983,6 +983,8 @@ function ProgramPage() {
                   key={v.key}
                   type="button"
                   aria-pressed={view === v.key}
+                  // The tour switches views by this (T1).
+                  data-view={v.key}
                   onClick={() => { hidePreview(); setView(v.key) }}
                   title={v.title}
                   className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring/40 ${
@@ -1010,7 +1012,7 @@ function ProgramPage() {
               focusApi={blockFocus}
             />
           ) : (
-          <div ref={calendarRef} className="overflow-x-auto rounded-xl border border-border bg-card">
+          <div ref={calendarRef} data-tour="program-calendar" className="overflow-x-auto rounded-xl border border-border bg-card">
             <table className="w-full min-w-[640px] border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
               <colgroup>
                 <col style={{ width: 56 }} />
@@ -1232,6 +1234,7 @@ function ProgramPage() {
           }}
           // Marks the day editor for the page's Ctrl+Z, which works inside it.
           data-day-dialog=""
+          data-tour="day-editor"
         >
           <DialogHeader className="shrink-0 pr-8">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

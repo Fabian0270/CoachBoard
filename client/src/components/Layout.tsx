@@ -96,7 +96,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background md:flex-row">
-      <nav className="flex w-full shrink-0 border-b bg-sidebar bg-glow-side md:h-screen md:w-60 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r">
+      <nav data-tour="sidebar" className="flex w-full shrink-0 border-b bg-sidebar bg-glow-side md:h-screen md:w-60 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r">
         <Link to="/" className="hidden items-center gap-2.5 px-5 pb-5 pt-5 md:flex" aria-label="CoachBoard home">
           <BrandMark className="h-[18px] w-auto" />
           <span className="text-[15px] font-semibold tracking-tight">CoachBoard</span>

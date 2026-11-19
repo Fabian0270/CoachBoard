@@ -5,6 +5,7 @@ import { sendTestEmail } from '../services/emailService.js'
 import { getDefaultUnit, setDefaultUnit } from '../services/unitService.js'
 import { getPreferences, setPreferences } from '../services/preferencesService.js'
 import { homeCurrency, setHomeCurrency } from '../services/ratesService.js'
+import { tourStatus, updateTourState } from '../services/tourStateService.js'
 
 const router = Router()
 
@@ -72,6 +73,26 @@ router.put('/currency', async (req, res) => {
   }
   await setHomeCurrency(parsed.data.home)
   res.json({ home: await homeCurrency() })
+})
+
+// Where the first-start tour and the setup checklist stand (T8).
+router.get('/tour', async (_req, res) => {
+  res.json(await tourStatus())
+})
+
+router.put('/tour', async (req, res) => {
+  const ids = z.array(z.string().max(40)).max(20)
+  const parsed = z.object({
+    welcomeAnswered: z.boolean().optional(),
+    tourAt: z.number().int().min(0).max(200).nullable().optional(),
+    tourFinished: z.boolean().optional(),
+    checklist: z.object({ completed: ids.optional(), skipped: ids.optional(), done: z.boolean().optional() }).optional(),
+  }).safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid tour state' })
+    return
+  }
+  res.json(await updateTourState(parsed.data))
 })
 
 // Switches such as the day editor's suggested loads.

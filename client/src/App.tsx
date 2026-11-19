@@ -5,6 +5,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import { ToastProvider } from './components/ui/toast'
 import { ConfirmProvider } from './components/ui/confirm-dialog'
 import RecorderProvider from './components/recorder/RecorderProvider'
+import TourProvider from './tour/TourProvider'
 import Dashboard from './pages/Dashboard'
 import AthletesList from './pages/AthletesList'
 import AthleteDetail from './pages/AthleteDetail'
@@ -37,6 +38,8 @@ export default function App() {
             through the app, so a recorder owned by a route would unmount
             mid-take. See RecorderProvider. */}
         <RecorderProvider>
+        {/* Inside the router: the tour moves between pages itself (T1). */}
+        <TourProvider>
         <Layout>
           <Suspense fallback={<RouteLoading />}>
           <Routes>
@@ -61,6 +64,7 @@ export default function App() {
           </Routes>
           </Suspense>
         </Layout>
+        </TourProvider>
         </RecorderProvider>
         </ConfirmProvider>
         </ToastProvider>
