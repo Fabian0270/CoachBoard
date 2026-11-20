@@ -40,15 +40,31 @@ const ARMS_NOT_DRAWN: readonly string[] = ['back-squat', 'front-squat']
  * ones, and drawing both — plus the shoulder-to-shoulder and hip-to-hip lines,
  * which from the side are a few pixels long — cluttered the frame (Fabian,
  * 2026-11-20). On a side-on squat not even the near arm, which only holds the
- * bar; on a deadlift or a bench it is what lockout is judged on. From the
- * front, the whole skeleton.
+ * bar; on a deadlift it is what lockout is judged on. From the front, the
+ * whole skeleton.
+ *
+ * A bench is only the arms and shoulders, from any side (Fabian, 2026-11-20):
+ * the lifter lies on a bench under a rack, the legs say nothing about the
+ * press, and the elbows are what lockout is judged on. Side-on, where the
+ * shoulders sit on top of each other, the near arm alone.
  */
 export function visibleBones(frames: PoseFrame[], lift?: string | null): readonly Bone[] {
-  if (!isSideOn(frames)) return POSE_BONES
-  const s = LEG[cameraSide(frames)]
-  const arm = cameraSide(frames) === 'left'
+  const sideOn = isSideOn(frames)
+  const near = sideOn ? cameraSide(frames) : 'left'
+  const arm = near === 'left'
     ? { shoulder: LM.LEFT_SHOULDER, elbow: LM.LEFT_ELBOW, wrist: LM.LEFT_WRIST }
     : { shoulder: LM.RIGHT_SHOULDER, elbow: LM.RIGHT_ELBOW, wrist: LM.RIGHT_WRIST }
+  if (lift === 'bench-press') {
+    return sideOn
+      ? [[arm.shoulder, arm.elbow], [arm.elbow, arm.wrist]]
+      : [
+          [LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER],
+          [LM.LEFT_SHOULDER, LM.LEFT_ELBOW], [LM.LEFT_ELBOW, LM.LEFT_WRIST],
+          [LM.RIGHT_SHOULDER, LM.RIGHT_ELBOW], [LM.RIGHT_ELBOW, LM.RIGHT_WRIST],
+        ]
+  }
+  if (!sideOn) return POSE_BONES
+  const s = LEG[near]
   const bones: Bone[] = [
     [arm.shoulder, s.hip],
     [s.hip, s.knee],

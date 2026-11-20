@@ -62,9 +62,16 @@ describe('visibleBones', () => {
     expect(joints(visibleBones(frames, 'front-squat')).has(LM.LEFT_ELBOW)).toBe(false)
   })
 
-  it('side-on deadlift and bench keep the near arm: lockout is judged on it', () => {
+  it('bench: only the arms and shoulders, from any side', () => {
+    const front = joints(visibleBones(pull({ shoulderWidth: 260 }).frames, 'bench-press'))
+    expect([...front].sort((a, b) => a - b)).toEqual([LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER, LM.LEFT_ELBOW, LM.RIGHT_ELBOW, LM.LEFT_WRIST, LM.RIGHT_WRIST].sort((a, b) => a - b))
+    const side = joints(visibleBones(pull().frames, 'bench-press'))
+    expect([...side].sort((a, b) => a - b)).toEqual([LM.LEFT_SHOULDER, LM.LEFT_ELBOW, LM.LEFT_WRIST].sort((a, b) => a - b))
+  })
+
+  it('side-on deadlift keeps the near arm: lockout is judged on it', () => {
     const { frames } = pull()
-    for (const lift of ['deadlift-conventional', 'bench-press', null]) {
+    for (const lift of ['deadlift-conventional', null]) {
       const j = joints(visibleBones(frames, lift))
       expect(j.has(LM.LEFT_ELBOW) && j.has(LM.LEFT_WRIST), String(lift)).toBe(true)
       expect(j.has(LM.RIGHT_KNEE) || j.has(LM.RIGHT_SHOULDER), String(lift)).toBe(false)
