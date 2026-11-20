@@ -26,7 +26,40 @@
 // drawn and read.
 // ---------------------------------------------------------------------------
 
-import { LM, smooth, type Landmark, type PoseFrame, type Side } from './pose.js'
+import { LM, POSE_BONES, cameraSide, smooth, type Landmark, type PoseFrame, type Side } from './pose.js'
+
+type Bone = readonly [number, number]
+
+/** Lifts where the arms only hold the bar on the back: drawn side-on, they are clutter (Fabian, 2026-11-20). */
+const ARMS_NOT_DRAWN: readonly string[] = ['back-squat', 'front-squat']
+
+/**
+ * The bones worth drawing for a clip.
+ *
+ * Side-on, only the side facing the camera: the far limbs sit behind the near
+ * ones, and drawing both — plus the shoulder-to-shoulder and hip-to-hip lines,
+ * which from the side are a few pixels long — cluttered the frame (Fabian,
+ * 2026-11-20). On a side-on squat not even the near arm, which only holds the
+ * bar; on a deadlift or a bench it is what lockout is judged on. From the
+ * front, the whole skeleton.
+ */
+export function visibleBones(frames: PoseFrame[], lift?: string | null): readonly Bone[] {
+  if (!isSideOn(frames)) return POSE_BONES
+  const s = LEG[cameraSide(frames)]
+  const arm = cameraSide(frames) === 'left'
+    ? { shoulder: LM.LEFT_SHOULDER, elbow: LM.LEFT_ELBOW, wrist: LM.LEFT_WRIST }
+    : { shoulder: LM.RIGHT_SHOULDER, elbow: LM.RIGHT_ELBOW, wrist: LM.RIGHT_WRIST }
+  const bones: Bone[] = [
+    [arm.shoulder, s.hip],
+    [s.hip, s.knee],
+    [s.knee, s.ankle],
+    [s.ankle, s.heel],
+    [s.heel, s.toe],
+    [s.ankle, s.toe],
+  ]
+  if (!lift || !ARMS_NOT_DRAWN.includes(lift)) bones.push([arm.shoulder, arm.elbow], [arm.elbow, arm.wrist])
+  return bones
+}
 
 /**
  * What is drawn and read from a measured track: the legs rebuilt where the
@@ -163,30 +196,43 @@ export function refineLegs(frames: PoseFrame[]): LegRefinement {
     return (k1.x - mx) * forward > 0 ? k1 : k2
   }
 
-  let rebuilt = 0
-  const out = frames.map((f) => {
-    const hip = at(f, j.hip), knee = at(f, j.knee), ank = at(f, j.ankle)
-    const fits =
+  /** Whether a leg, as the model read it on this frame, stands on the planted foot with bones of the right length. */
+  const fits = (f: PoseFrame, leg: typeof j) => {
+    const hip = at(f, leg.hip), knee = at(f, leg.knee), ank = at(f, leg.ankle)
+    return (
       dist(ank, ankle) < radius &&
       Math.abs(dist(hip, knee) - thigh) <= thigh * BONE_TOLERANCE &&
       Math.abs(dist(knee, ank) - shin) <= shin * BONE_TOLERANCE
-    if (fits) return f
-    rebuilt++
-    const k = kneeFor(hip)
+    )
+  }
+
+  let rebuilt = 0
+  const out = frames.map((f) => {
+    const nearFits = fits(f, j)
+    // From the side the far leg stands where the near one does — same planted
+    // foot, same bones — so it is held to the same test. Measured: with the
+    // near leg read right at lockout, the far one still lay bent across the plate.
+    const farFits = fits(f, far)
+    if (nearFits && farFits) return f
     const landmarks = f.landmarks.slice()
-    const put = (i: number, p: Point) => { landmarks[i] = { x: p.x, y: p.y, visibility: Math.max(REBUILT_VISIBILITY, f.landmarks[i]?.visibility ?? 0) } }
-    put(j.knee, k)
-    put(j.ankle, ankle)
-    put(j.heel, heel)
-    put(j.toe, toe)
-    // The far leg is behind the near one from the side; on these frames the
-    // model was guessing at it too. Laid under the near leg and marked unseen.
-    for (const key of ['knee', 'ankle', 'heel', 'toe'] as const) {
-      const src = landmarks[j[key]]
-      landmarks[far[key]] = { x: src.x, y: src.y, visibility: 0 }
+    if (!nearFits) {
+      rebuilt++
+      const put = (i: number, p: Point) => { landmarks[i] = { x: p.x, y: p.y, visibility: Math.max(REBUILT_VISIBILITY, f.landmarks[i]?.visibility ?? 0) } }
+      put(j.knee, kneeFor(at(f, j.hip)))
+      put(j.ankle, ankle)
+      put(j.heel, heel)
+      put(j.toe, toe)
     }
-    // The 3D estimate of this frame put the knee where the picture does not,
-    // so it is dropped: side-on, the angles read true off the picture.
+    if (!nearFits || !farFits) {
+      // Laid under the near leg and marked unseen: behind it, where the model
+      // could not see it either.
+      for (const key of ['knee', 'ankle', 'heel', 'toe'] as const) {
+        const src = landmarks[j[key]]
+        landmarks[far[key]] = { x: src.x, y: src.y, visibility: 0 }
+      }
+    }
+    // The 3D estimate of this frame put a knee where the picture does not, so
+    // it is dropped: side-on, the angles read true off the picture.
     return { t: f.t, landmarks }
   })
   return { frames: out, sideOn: true, side: near.side, rebuilt }

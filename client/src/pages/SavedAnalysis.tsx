@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Columns2, FileDown, FileVideo, LineChart, Pencil, PersonStanding, Trophy } from 'lucide-react'
+import { ArrowLeft, Columns2, FileDown, FileVideo, LineChart, Loader2, Pencil, PersonStanding, Trophy } from 'lucide-react'
 import { RPE_VALUES } from 'coachboard-shared/rpe'
 import { num } from '../lib/num'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
@@ -46,7 +46,10 @@ import { lastTimeAtLoad, velocityPr } from '../components/analysis/setHistory'
 import { useReferenceRep } from '../components/analysis/referenceRep'
 import { localDay, readSessions, sessionMvt, SLOW_SESSION } from 'coachboard-shared/vbtSession'
 import ReferencePanel from '../components/analysis/ReferencePanel'
-import { loadPose, putCorrection, type LoadedPose } from '../components/analysis/poseApi'
+import { loadPose, putCorrection, savePose, type LoadedPose } from '../components/analysis/poseApi'
+import { usePose } from '../components/analysis/usePose'
+import { readClipPose } from '../components/analysis/clipPose'
+import { displayPose } from 'coachboard-shared/poseRefine'
 import { useShowAngles, useShowMidFoot, useTrackerColor } from '../components/analysis/trackerColor'
 import { midFootByRep } from '../components/analysis/midFoot'
 import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
@@ -154,9 +157,12 @@ export default function SavedAnalysis() {
   const [showAngles, setShowAngles] = useShowAngles()
   const [showMidFoot, setShowMidFoot] = useShowMidFoot()
 
+  /** The stored skeleton has been looked for; `pose` staying null then means there is none. */
+  const [poseChecked, setPoseChecked] = useState(false)
   useEffect(() => {
     if (!id) return
     let cancelled = false
+    setPoseChecked(false)
     loadPose(id)
       .then((loaded) => {
         if (cancelled) return
@@ -166,10 +172,67 @@ export default function SavedAnalysis() {
       // No skeleton is the ordinary case, and a failed fetch reads the same way:
       // the bar path is what this page is for.
       .catch(() => {})
+      .finally(() => !cancelled && setPoseChecked(true))
     return () => {
       cancelled = true
     }
   }, [id])
+
+  /**
+   * A set saved without a skeleton gets one on request (D117): the kept video
+   * is read whole, the way the analysis page reads a clip, and the skeleton is
+   * stored so it is read once. On request, not on opening: reading takes about
+   * as long as the clip, and most visits to a saved set are for its numbers.
+   */
+  const posePipeline = usePose()
+  const [readWanted, setReadWanted] = useState(false)
+  const [readProgress, setReadProgress] = useState<number | null>(null)
+  const [readFailed, setReadFailed] = useState(false)
+  useEffect(() => {
+    const src = localUrl ?? (analysis?.hasVideo ? `/api/analysis/${analysis.id}/video` : null)
+    const video = videoRef.current
+    if (!id || !readWanted || pose || !src || !video) return
+    const controller = new AbortController()
+    const start = async () => {
+      if (!video.videoWidth) {
+        await new Promise<void>((resolve) => video.addEventListener('loadedmetadata', () => resolve(), { once: true }))
+      }
+      if (controller.signal.aborted || !video.videoWidth) return
+      setReadFailed(false)
+      setReadProgress(0)
+      let lastShown = 0
+      try {
+        const measured = await readClipPose({
+          source: { url: src },
+          src,
+          duration: video.duration,
+          open: () => posePipeline.open({ videoWidth: video.videoWidth, videoHeight: video.videoHeight, mode: 'IMAGE' }),
+          signal: controller.signal,
+          onProgress: (fraction) => {
+            const now = performance.now()
+            if (now - lastShown > 250) { lastShown = now; setReadProgress(fraction) }
+          },
+        })
+        if (controller.signal.aborted) return
+        setReadProgress(null)
+        if (measured.length === 0) { setReadFailed(true); return }
+        const display = displayPose(measured)
+        poseRef.current = display
+        setPose({ measured, corrections: [], display, frames: display })
+        setShowPose(true)
+        // Stored so it is read once; the measurement, as the analysis page stores it.
+        savePose(id, measured).catch(() => toast.error('The skeleton is shown, but it could not be kept with the set.'))
+      } catch {
+        if (controller.signal.aborted) return
+        setReadProgress(null)
+        setReadFailed(true)
+      }
+    }
+    void start()
+    return () => controller.abort()
+    // posePipeline.open and toast are stable; re-running would drop a read in progress.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, readWanted, pose, analysis?.id, analysis?.hasVideo, localUrl])
 
   /**
    * Moves one landmark and keeps it.
@@ -454,6 +517,7 @@ export default function SavedAnalysis() {
           showAngles={showAngles}
           ghost={ghost}
           showMidFoot={showMidFoot && MID_FOOT_LIFTS.includes(lift)}
+          poseLift={lift}
           onCorrectLandmark={correctLandmark}
           strokes={strokes}
           onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
@@ -475,6 +539,28 @@ export default function SavedAnalysis() {
         <div className="space-y-2 rounded-md border p-4">
           <h2 className="text-sm font-medium">Bar speed</h2>
           <BarSpeedChart track={analysis.track} reps={metrics} pixelsPerMetre={pixelsPerMetre} currentTime={videoSrc ? currentTime : undefined} />
+        </div>
+      )}
+
+      {/* No skeleton stored, but the video is here: it can be read (D117). */}
+      {poseChecked && !pose && videoSrc && (
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <label className="flex items-center gap-1.5" title="Read the lifter’s skeleton from the video — it is kept with the set">
+            <input
+              type="checkbox"
+              checked={readWanted}
+              onChange={(e) => setReadWanted(e.target.checked)}
+              className="h-3.5 w-3.5 accent-cyan-400"
+            />
+            <PersonStanding className="h-4 w-4 text-muted-foreground" />
+            Skeleton
+          </label>
+          {readWanted && readProgress != null && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading the lifter… {Math.round(readProgress * 100)}%
+            </span>
+          )}
+          {readWanted && readFailed && <span className="text-xs text-destructive">The skeleton could not be read from this video.</span>}
         </div>
       )}
 

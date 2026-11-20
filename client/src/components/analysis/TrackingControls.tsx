@@ -33,6 +33,10 @@ export interface TrackingControlsProps {
   onShowPose: (on: boolean) => void
   poseStatus: string
   poseError: string | null
+  /** 0-1 while the clip's skeleton is being read (D117), null otherwise. */
+  poseReading?: number | null
+  /** Reading the clip's skeleton failed. */
+  poseReadFailed?: boolean
   correctionsCount: number
   showAngles: boolean
   onShowAngles: (next: boolean) => void
@@ -84,18 +88,15 @@ export default function TrackingControls(p: TrackingControlsProps) {
           </>
         )}
 
-        {/* Locked only WHILE a run is under way — the fan-out that feeds pose is
-            set up at the start of that pass, so switching it mid-track would
-            silently do nothing. Otherwise it takes effect at once: the preview
-            runs on whatever frame is on screen. */}
+        {/* Switching it on reads the whole clip first (D117), then draws the
+            skeleton; a tracking run gets the CPU and the reading waits for it. */}
         <label
-          className={`flex items-center gap-1.5 text-sm ${p.busy ? 'opacity-50' : ''}`}
-          title={p.busy ? 'Pose cannot be switched during a tracking run' : 'Draw the lifter’s skeleton — drag a joint to correct it'}
+          className="flex items-center gap-1.5 text-sm"
+          title="Draw the lifter’s skeleton — the clip is read first, then drag a joint to correct it"
         >
           <input
             type="checkbox"
             checked={p.showPose}
-            disabled={p.busy}
             onChange={(e) => p.onShowPose(e.target.checked)}
             className="h-3.5 w-3.5 accent-cyan-400"
           />
@@ -126,12 +127,19 @@ export default function TrackingControls(p: TrackingControlsProps) {
             Mid-foot
           </label>
         )}
-        {p.poseStatus === 'loading' && (
+        {p.showPose && p.poseReading != null && (
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {p.busy ? 'Skeleton waits for the tracking…' : `Reading the lifter… ${Math.round(p.poseReading * 100)}%`}
+          </span>
+        )}
+        {p.showPose && p.poseReading == null && p.poseStatus === 'loading' && (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading the pose model…
           </span>
         )}
         {p.poseStatus === 'error' && <span className="text-xs text-destructive">Skeleton unavailable: {p.poseError}</span>}
+        {p.poseStatus !== 'error' && p.poseReadFailed && <span className="text-xs text-destructive">The skeleton could not be read from this clip.</span>}
         {p.correctionsCount > 0 && (
           <span className="text-xs text-muted-foreground">
             {p.correctionsCount} joint{p.correctionsCount === 1 ? '' : 's'} corrected

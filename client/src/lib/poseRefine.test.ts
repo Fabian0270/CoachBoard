@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { LM, LANDMARK_COUNT, frameAngles, type Landmark, type PoseFrame } from 'coachboard-shared/pose'
-import { isSideOn, refineLegs } from 'coachboard-shared/poseRefine'
+import { LM, LANDMARK_COUNT, POSE_BONES, frameAngles, type Landmark, type PoseFrame } from 'coachboard-shared/pose'
+import { isSideOn, refineLegs, visibleBones } from 'coachboard-shared/poseRefine'
 
 // BP32, D117: the legs rebuilt from what the whole clip agrees on. Every pose
 // here is built from known joint angles, so where the knee truly is, is known.
@@ -53,6 +53,29 @@ function pull(opts: { shoulderWidth?: number } = {}) {
   return { truth, frames }
 }
 
+describe('visibleBones', () => {
+  const joints = (bones: readonly (readonly [number, number])[]) => new Set(bones.flat())
+  it('side-on: only the side facing the camera — on a squat without the arm', () => {
+    const { frames } = pull()
+    const squat = joints(visibleBones(frames, 'back-squat'))
+    expect([...squat].sort((a, b) => a - b)).toEqual([LM.LEFT_SHOULDER, LM.LEFT_HIP, LM.LEFT_KNEE, LM.LEFT_ANKLE, LM.LEFT_HEEL, LM.LEFT_FOOT_INDEX].sort((a, b) => a - b))
+    expect(joints(visibleBones(frames, 'front-squat')).has(LM.LEFT_ELBOW)).toBe(false)
+  })
+
+  it('side-on deadlift and bench keep the near arm: lockout is judged on it', () => {
+    const { frames } = pull()
+    for (const lift of ['deadlift-conventional', 'bench-press', null]) {
+      const j = joints(visibleBones(frames, lift))
+      expect(j.has(LM.LEFT_ELBOW) && j.has(LM.LEFT_WRIST), String(lift)).toBe(true)
+      expect(j.has(LM.RIGHT_KNEE) || j.has(LM.RIGHT_SHOULDER), String(lift)).toBe(false)
+    }
+  })
+
+  it('from the front, the whole skeleton', () => {
+    expect(visibleBones(pull({ shoulderWidth: 260 }).frames, 'back-squat')).toBe(POSE_BONES)
+  })
+})
+
 describe('refineLegs', () => {
   it('rebuilds a hidden knee where the bones say it is, on the planted foot', () => {
     const { truth, frames } = pull()
@@ -100,6 +123,17 @@ describe('refineLegs', () => {
     const r = refineLegs(pull().frames)
     const f = r.frames[1]
     expect(f.landmarks[LM.RIGHT_KNEE]).toMatchObject({ x: f.landmarks[LM.LEFT_KNEE].x, visibility: 0 })
+  })
+
+  it('a far leg read onto the plate is laid under the near one, even when the near leg was read right', () => {
+    const { frames } = pull()
+    const f = { ...frames[0], landmarks: frames[0].landmarks.slice() }
+    f.landmarks[LM.RIGHT_KNEE] = at(f.landmarks[LM.LEFT_HIP].x - 120, f.landmarks[LM.LEFT_HIP].y + 40, 0.8)
+    f.landmarks[LM.RIGHT_ANKLE] = at(f.landmarks[LM.LEFT_HIP].x - 140, f.landmarks[LM.LEFT_HIP].y + 160, 0.8)
+    const r = refineLegs([f, ...frames.slice(1)])
+    expect(r.rebuilt).toBe(20) // the near leg on this frame is as measured
+    expect(r.frames[0].landmarks[LM.LEFT_KNEE]).toBe(f.landmarks[LM.LEFT_KNEE])
+    expect(r.frames[0].landmarks[LM.RIGHT_KNEE]).toMatchObject({ x: f.landmarks[LM.LEFT_KNEE].x, y: f.landmarks[LM.LEFT_KNEE].y, visibility: 0 })
   })
 
   it('a hip farther away than the leg is long means a straight leg, not a guess', () => {

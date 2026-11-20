@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Maximize, Minimize } from 'lucide-react'
 import { pictureRect } from 'coachboard-shared/videoAnalysis'
+import { isSideOn, visibleBones } from 'coachboard-shared/poseRefine'
 import {
-  POSE_BONES,
   cameraSide,
   frameAngles,
   frameIndexAt,
@@ -150,6 +150,8 @@ interface Props {
   ghost?: { path: { x: number; y: number }[]; pixelsPerMetre: number } | null
   /** The line straight up from mid-foot (BP31). Only drawn with the skeleton on. */
   showMidFoot?: boolean
+  /** The lift, which decides the bones drawn side-on (no arm on a squat). */
+  poseLift?: string | null
 }
 
 // Kept importable from here, where the pages have always found it.
@@ -197,9 +199,23 @@ export default function AnalysisStage({
   showAngles = false,
   ghost = null,
   showMidFoot = false,
+  poseLift = null,
 }: Props) {
   /** Which side the camera sees, worked out once per skeleton rather than every frame. */
   const sideCacheRef = useRef<{ frames: PoseFrame[]; side: Side } | null>(null)
+  /**
+   * The bones drawn, and their joints — side-on only the side facing the camera
+   * (visibleBones). Worked out once per skeleton and lift; the joints are also
+   * the only ones that can be grabbed, since only they are on screen.
+   */
+  const bonesCacheRef = useRef<{ frames: PoseFrame[]; lift: string | null; bones: readonly (readonly [number, number])[]; joints: Set<number>; sideOn: boolean } | null>(null)
+  const bonesFor = useCallback((frames: PoseFrame[]) => {
+    const c = bonesCacheRef.current
+    if (c?.frames === frames && c.lift === poseLift) return c
+    const bones = visibleBones(frames, poseLift)
+    bonesCacheRef.current = { frames, lift: poseLift, bones, joints: new Set(bones.flat()), sideOn: isSideOn(frames) }
+    return bonesCacheRef.current
+  }, [poseLift])
   /**
    * The joint under the pointer, and whether it has actually been dragged yet.
    *
@@ -455,10 +471,11 @@ export default function AnalysisStage({
       const pose = nearest && Math.abs(nearest.t - playhead) <= POSE_MAX_STALE_S ? nearest : null
       if (pose) {
         const lm = pose.landmarks
+        const { bones, joints: drawn, sideOn } = bonesFor(poseFrames)
         ctx.lineJoin = 'round'
         ctx.lineCap = 'round'
 
-        for (const [from, to] of POSE_BONES) {
+        for (const [from, to] of bones) {
           const a = lm[from]
           const b = lm[to]
           if (!a || !b) continue
@@ -480,8 +497,7 @@ export default function AnalysisStage({
 
         // Joints only where a bone actually reaches them, so the parked
         // landmarks of a partly-seen body do not scatter dots across the frame.
-        const jointed = new Set(POSE_BONES.flat())
-        for (const i of jointed) {
+        for (const i of drawn) {
           const l = lm[i]
           if (!l) continue
           ctx.fillStyle = isVisible(l) ? 'rgba(224, 242, 254, 0.95)' : 'rgba(161, 161, 170, 0.6)'
@@ -495,8 +511,9 @@ export default function AnalysisStage({
         }
 
         // The line straight up from mid-foot (BP31, D58): where the bar should
-        // stack on a squat or a deadlift. Only where the model saw the foot.
-        const mf = showMidFoot ? midFootAt(pose, sideCacheRef.current!.side) : null
+        // stack on a squat or a deadlift. Only where the model saw the foot, and
+        // only side-on: from the front a vertical line through one foot says nothing.
+        const mf = showMidFoot && sideOn ? midFootAt(pose, sideCacheRef.current!.side) : null
         if (mf) {
           ctx.save()
           ctx.setLineDash([6, 5])
@@ -528,7 +545,8 @@ export default function AnalysisStage({
             ctx.fillText(text, x + 4, y)
           }
           const deg = (v: number | null) => (v == null ? null : `${Math.round(v)}°`)
-          const put = (v: number | null, i: number) => { const t = deg(v); if (t && isVisible(lm[i])) label(t, lm[i]) }
+          // Only at joints that are drawn: no degrees floating over an arm left out.
+          const put = (v: number | null, i: number) => { const t = deg(v); if (t && drawn.has(i) && isVisible(lm[i])) label(t, lm[i]) }
           put(a.knee, j.knee)
           put(a.hip, j.hip)
           put(a.ankle, j.ankle)
@@ -686,7 +704,7 @@ export default function AnalysisStage({
     // poseRef is a ref like livePathRef, so it is not a dependency — its
     // contents change every inference without the identity ever changing, and
     // the loop below redraws every animation frame regardless.
-  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps, mode, disabled, showAngles, ghost, showMidFoot])
+  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps, mode, disabled, showAngles, ghost, showMidFoot, bonesFor])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
   // once on any state change so it is right while paused too.
@@ -790,9 +808,10 @@ export default function AnalysisStage({
     const reach = GRAB_PX / scale
     let best: number | null = null
     let bestDist = reach
-    // Only joints a bone actually reaches — the parked landmarks of a partly
-    // seen body are not on screen and must not be grabbable.
-    for (const i of new Set(POSE_BONES.flat())) {
+    // Only joints that are drawn — the parked landmarks of a partly seen body,
+    // and the far side of a side-on lifter, are not on screen and must not be
+    // grabbable.
+    for (const i of bonesFor(frames).joints) {
       const l = lm[i]
       if (!l) continue
       const d = Math.hypot(l.x - point.x, l.y - point.y)

@@ -28,7 +28,8 @@ import { captureInto } from '../components/analysis/captureFrames'
 import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
 import { usePlateMm, useShowAngles, useShowMidFoot, useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
 import { midFootByRep } from '../components/analysis/midFoot'
-import { usePose, type PoseStream } from '../components/analysis/usePose'
+import { usePose } from '../components/analysis/usePose'
+import { readClipPose } from '../components/analysis/clipPose'
 import { savePose, putCorrection } from '../components/analysis/poseApi'
 import {
   MID_FOOT_LIFTS,
@@ -113,33 +114,6 @@ const MIN_EFFECTIVE_FPS = 12
 /** The tracker's own floor (tracker.core DEFAULTS.minPoints): fewer and it gives up. */
 const MIN_SEED_POINTS = 6
 const MIN_SURVIVAL = 0.4
-
-/**
- * Capture width for the live pose preview.
- *
- * 512, and the number was measured. The 11e-0 spike found input width barely
- * affected SPEED and I wrongly carried that over to accuracy — it does not
- * follow. MediaPipe detects the person and then runs the landmark model on a
- * CROP of them, so a lifter who is a quarter of the frame becomes a tiny,
- * upsampled crop when the frame is small. On a real squat clip, mean lower-body
- * visibility went 0.83 at 256 to 0.88 at 384-512, and inference time was FLAT at
- * 70-80 ms across every width from 256 to 1080. So 256 was giving away accuracy
- * for nothing.
- *
- * Past ~512 it stops improving: 720 and 1080 measured no better, and cost a
- * larger readback on the main thread each time.
- */
-const POSE_PREVIEW_WIDTH = 512
-
-/**
- * Floor on the gap between preview inferences WHILE PLAYING.
- *
- * Roughly six a second. Enough that the skeleton visibly follows the lift, far
- * short of the per-frame rate that made playback stutter — every read is a full
- * canvas readback on the main thread with an inference behind it. Paused and
- * seeking are not throttled at all: that is where the coach reads a position.
- */
-const PREVIEW_MIN_INTERVAL_MS = 160
 
 export default function VideoAnalysis() {
   const { mediaId } = useParams()
@@ -661,38 +635,8 @@ export default function VideoAnalysis() {
     // halve the effective frame rate — 15 fps out of 30 fps footage, which the
     // quality gate then correctly rejected. The overlay reads this ref directly.
     livePathRef.current = []
-    // The measurement is rebuilt by this pass; the CORRECTIONS deliberately are
-    // not cleared. A coach who fixed a knee on the preview has not withdrawn
-    // that opinion by tracking the bar, and the fixes are pinned to a time, so
-    // they land correctly on the new frames.
-    poseMeasuredRef.current = []
-    poseRef.current = []
-
-    // Opened BEFORE capture, not during: loading the model is ~0.3 s plus a
-    // 5.8 MB fetch on first use, and doing that inside the first frame callback
-    // would stall the capture loop long enough to trip its own stall timeout.
-    // A pose failure is reported and then ignored — the bar path is the
-    // measurement and must not go down with the commentary on it.
-    let poseStream: PoseStream | null = null
-    if (showPose) {
-      try {
-        poseStream = await pose.open({
-          videoWidth: video.videoWidth,
-          videoHeight: video.videoHeight,
-          // VIDEO here, unlike the preview: this pass plays the clip forwards
-          // once, which is exactly the case the region-of-interest reuse was
-          // chosen for. No seed — this pass rebuilds the track.
-          mode: 'VIDEO',
-        })
-      } catch {
-        if (!stale()) toast.error('Could not start pose estimation — tracking the bar path only.')
-      }
-    }
-    // Loading the model can take long enough for the coach to have moved on.
-    if (stale()) {
-      poseStream?.close()
-      return
-    }
+    // The skeleton is not touched: it was read from the whole clip on its own
+    // (D117), and tracking the bar changes nothing about the body.
 
     try {
       // Frames are read off the playing video, so the coach watches the lift
@@ -730,20 +674,6 @@ export default function VideoAnalysis() {
               setProgress(fraction)
             }
           },
-          // The fan-out: pose reads the frames the tracker is already pulling,
-          // so the coach waits exactly as long as tracking takes today. The ref
-          // is filled by the stream itself, and the overlay reads it directly —
-          // same reason livePathRef is a ref.
-          alsoPush: poseStream
-            ? async (frame) => {
-                await poseStream!.push(frame)
-                poseMeasuredRef.current = poseStream!.frames
-                // Corrections made on the preview are pinned to a moment, so
-                // they land on the right frames of the rebuilt track without
-                // anything having to migrate them.
-                redrawPose()
-              }
-            : undefined,
         },
       )
 
@@ -813,10 +743,6 @@ export default function VideoAnalysis() {
       }
       setSamples(null)
       setPhase('idle')
-    } finally {
-      // The model heap is not reclaimed by dropping the reference, and the
-      // skeleton already found stays drawable from poseRef without it.
-      poseStream?.close()
     }
   }
 
@@ -871,24 +797,9 @@ export default function VideoAnalysis() {
         }
       }
 
-      // The skeleton rides along in its own request. Separate because it is
-      // ~238 KB against the analysis's ~10 KB and almost every read of an
-      // analysis does not want it — and because failing to store it must not
-      // cost the coach the bar path, which is the actual measurement.
-      if (poseMeasuredRef.current.length > 0) {
-        try {
-          // The MEASUREMENT is stored, never the corrected copy — the whole
-          // point of keeping them in two layers is that re-running the model
-          // cannot destroy a fix, and that only holds if the fix was never
-          // baked into what the model said.
-          await savePose(saved.id, poseMeasuredRef.current)
-          for (const c of correctionsAtTimes(poseMeasuredRef.current, poseCorrections)) {
-            await putCorrection(saved.id, c)
-          }
-        } catch {
-          toast.error('The analysis was saved, but the skeleton could not be.')
-        }
-      }
+      // The skeleton, if the clip has been read; if it is still being read it
+      // goes up the moment that finishes (see the reading effect).
+      await storePose(saved.id)
 
       // Last, because it can open a dialog and wait on the coach. Everything
       // above is a write that should already have landed by the time a modal
@@ -970,11 +881,11 @@ export default function VideoAnalysis() {
   const reset = () => {
     abandonRun()
     livePathRef.current = []
-    // Clear is "start this clip over", so the corrections go too.
-    poseMeasuredRef.current = []
-    poseRef.current = []
+    // Clear is "start this clip over", so the corrections go too. The skeleton
+    // read from the clip stays: reading it again would give the same thing.
     poseCorrectionsRef.current = []
     setPoseCorrections([])
+    redrawPose()
     setSeed(null)
     setSamples(null)
     setQuality(null)
@@ -1047,21 +958,18 @@ export default function VideoAnalysis() {
   busyRef.current = busy
 
   /**
-   * Jitter-filtered copy of a finished track, memoised on the source array.
+   * The displayed copy of the clip's skeleton (legs rebuilt, jitter-filtered),
+   * memoised on the source array.
    *
-   * `smooth` costs 19 ms for a 300-frame track and 55 ms for 900 — measured —
-   * so running it per redraw would eat most of a core at thirty redraws a
-   * second, which is exactly the rebuild the note on redrawPose warns about.
-   * The source array is replaced wholesale rather than mutated, so identity is a
-   * sound cache key.
-   *
-   * Skipped while frames are still arriving, and not only to save the work: a
-   * median window needs neighbours on BOTH sides, so the newest frame — the one
-   * being drawn during live tracking — is the one it can do least for.
+   * `smooth` alone costs 19 ms for a 300-frame track and 55 ms for 900 —
+   * measured — so running it per redraw would eat most of a core at thirty
+   * redraws a second. The skeleton is read whole before it is shown (D117) and
+   * replaced, never mutated, so identity is a sound cache key and every redraw
+   * after the first is a lookup.
    */
   const poseSmoothCache = useRef<{ source: PoseFrame[]; result: PoseFrame[] } | null>(null)
   const smoothedPose = (measured: PoseFrame[]): PoseFrame[] => {
-    if (busyRef.current || measured.length < 3) return measured
+    if (measured.length < 3) return measured
     if (poseSmoothCache.current?.source === measured) return poseSmoothCache.current.result
     const result = displayPose(measured)
     poseSmoothCache.current = { source: measured, result }
@@ -1108,11 +1016,114 @@ export default function VideoAnalysis() {
     [redrawPose],
   )
 
+  // ── The skeleton, read from the whole clip first (D117) ─────────────────
   /**
-   * Joint angles against the bar on this page too (BP13), once a run has
-   * finished: the capture awaits every pose frame, so the skeleton is complete
-   * by then. poseRef is read rather than depended on — a correction is what
-   * changes it, and poseCorrections is the state that says so.
+   * Where reading the clip's skeleton stands. `progress` is 0-1 while reading.
+   *
+   * The skeleton used to be read live — the frame on screen, and the frames the
+   * tracker pulled — with the model carrying its search region frame to frame.
+   * Filmed from the side, a loaded bar hides the legs and that region drifted
+   * onto the plate. Now the whole clip is read first, every frame on its own,
+   * and the clip as a whole puts the hidden legs right (poseRefine.ts); the
+   * coach waits a little and then sees the best limbs it allows.
+   */
+  const [poseRead, setPoseRead] = useState<{ status: 'idle' | 'reading' | 'done' | 'error'; progress: number }>({ status: 'idle', progress: 0 })
+  /** The clip whose skeleton poseMeasuredRef holds in full. */
+  const poseReadFor = useRef<string | null>(null)
+  /** The analysis the skeleton has been stored against, so it goes up once. */
+  const poseStoredFor = useRef<string | null>(null)
+  const videoSrcRef = useRef(videoSrc)
+  videoSrcRef.current = videoSrc
+  const savedIdRef = useRef(savedId)
+  savedIdRef.current = savedId
+
+  /**
+   * Stores the clip's skeleton against a saved analysis, once it has been read.
+   *
+   * The MEASUREMENT is stored, never the displayed or corrected copy — the
+   * whole point of keeping them in layers is that re-reading cannot destroy a
+   * fix, and that only holds if the fix was never baked into what the model
+   * said. In its own request, and failing it must not cost the coach the bar
+   * path, which is the actual measurement.
+   */
+  const storePose = async (id: string) => {
+    if (poseStoredFor.current === id) return
+    if (poseReadFor.current !== videoSrcRef.current || poseMeasuredRef.current.length === 0) return
+    poseStoredFor.current = id
+    try {
+      await savePose(id, poseMeasuredRef.current)
+      for (const c of correctionsAtTimes(poseMeasuredRef.current, poseCorrectionsRef.current)) {
+        await putCorrection(id, c)
+      }
+    } catch {
+      poseStoredFor.current = null
+      toast.error('The analysis was saved, but the skeleton could not be.')
+    }
+  }
+
+  useEffect(() => {
+    // A different clip, or none: what was read belongs to the last one.
+    if (poseReadFor.current !== videoSrc) {
+      poseReadFor.current = null
+      poseStoredFor.current = null
+      poseMeasuredRef.current = []
+      poseRef.current = []
+      setPoseRead({ status: 'idle', progress: 0 })
+    }
+    const video = videoRef.current
+    if (!showPose || !source || !videoSrc || !video || poseReadFor.current === videoSrc) return
+
+    const controller = new AbortController()
+    const forSrc = videoSrc
+    const start = async () => {
+      if (!video.videoWidth) {
+        await new Promise<void>((resolve) => video.addEventListener('loadedmetadata', () => resolve(), { once: true }))
+      }
+      if (controller.signal.aborted || !video.videoWidth) return
+      setPoseRead({ status: 'reading', progress: 0 })
+      let lastShown = 0
+      try {
+        const frames = await readClipPose({
+          source: source.kind === 'local' ? { blob: source.file } : { url: forSrc },
+          src: forSrc,
+          duration: video.duration,
+          // Each frame on its own (IMAGE): nothing carried from one to the next.
+          open: () => pose.open({ videoWidth: video.videoWidth, videoHeight: video.videoHeight, mode: 'IMAGE' }),
+          signal: controller.signal,
+          // Tracking reads the playing video and has a frame-rate floor; it gets the CPU.
+          hold: () => busyRef.current,
+          onProgress: (fraction) => {
+            const now = performance.now()
+            if (now - lastShown > 250) {
+              lastShown = now
+              setPoseRead({ status: 'reading', progress: fraction })
+            }
+          },
+        })
+        if (controller.signal.aborted) return
+        poseMeasuredRef.current = frames
+        poseReadFor.current = forSrc
+        redrawPose()
+        setPoseRead({ status: 'done', progress: 1 })
+        // Saved while it was still being read: it goes up now.
+        if (savedIdRef.current) void storePose(savedIdRef.current)
+      } catch {
+        if (controller.signal.aborted) return
+        setPoseRead({ status: 'error', progress: 0 })
+      }
+    }
+    void start()
+    return () => controller.abort()
+    // Deliberately not depending on pose, redrawPose or storePose: re-running
+    // this would throw away a read in progress on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPose, source, videoSrc])
+
+  /**
+   * Joint angles against the bar on this page too (BP13), once the bar is
+   * tracked and the clip's skeleton read. poseRef is read rather than depended
+   * on — a correction is what changes it, and poseCorrections is the state that
+   * says so; poseRead says the skeleton itself arrived.
    */
   const poseSeries = useMemo(() => {
     if (busy || !showPose || !samples || samples.length < 2) return null
@@ -1120,158 +1131,7 @@ export default function VideoAnalysis() {
     if (frames.length < 2) return null
     return angleSeries(frames, samples, pixelsPerMetre)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, showPose, samples, poseCorrections, pixelsPerMetre])
-
-  /**
-   * The skeleton before any tracking has happened.
-   *
-   * Pose used to run ONLY inside the tracking pass, which meant switching it on
-   * did nothing until the coach placed a point and tracked the bar — and there
-   * was no way to fix a joint before committing to a run. This reads whatever
-   * frame is on screen instead: switch it on and the lifter has a skeleton,
-   * scrub and it follows, drag a joint and the fix sticks.
-   *
-   * Frames come off requestVideoFrameCallback, which fires when the compositor
-   * presents one — on load, on every seek, and continuously during playback. So
-   * a paused clip costs one inference and a played one costs the same as
-   * tracking would.
-   *
-   * Stops while tracking, which opens its own stream and reads the same frames
-   * through captureInto's fan-out. Two model instances competing for one CPU
-   * would slow the pass the fan-out exists to keep free.
-   */
-  useEffect(() => {
-    const video = videoRef.current
-    if (!showPose || busy || !source || !video) return
-
-    let cancelled = false
-    let stream: PoseStream | null = null
-    let pending: number | null = null
-    /** Removes the seek listener; only set once the loop is actually running. */
-    let detach: (() => void) | null = null
-
-    const start = async () => {
-      // Metadata may not have landed yet; without dimensions there is nothing to
-      // normalise landmarks against.
-      if (!video.videoWidth) {
-        await new Promise<void>((resolve) => {
-          video.addEventListener('loadedmetadata', () => resolve(), { once: true })
-        })
-      }
-      if (cancelled || !video.videoWidth) return
-
-      try {
-        stream = await pose.open({
-          videoWidth: video.videoWidth,
-          videoHeight: video.videoHeight,
-          // IMAGE, not VIDEO. The coach scrubs, and VIDEO mode carries a region
-          // of interest forward and demands rising timestamps — so a jump
-          // backwards hands it an image from elsewhere while the clock says a
-          // millisecond passed, and the skeleton comes back stale or bent onto
-          // the wrong part of the frame. IMAGE treats each frame on its own.
-          mode: 'IMAGE',
-          // Seeded with what the preview already found, so switching the
-          // skeleton off and back on continues rather than starting over.
-          seed: poseMeasuredRef.current,
-        })
-      } catch {
-        return // usePose has already reported it; the toolbar shows why.
-      }
-      if (cancelled) {
-        stream.close()
-        return
-      }
-
-      const width = POSE_PREVIEW_WIDTH
-      const height = Math.round((width / video.videoWidth) * video.videoHeight)
-      const canvas = document.createElement('canvas')
-      canvas.width = width
-      canvas.height = height
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })
-      if (!ctx) return
-
-      let working = false
-
-      /** Reads whatever the video is showing right now, at time `t`. */
-      const readCurrentFrame = (t: number) => {
-        // Frames arriving while the previous one is still in the model are
-        // skipped, not queued — the same rule captureInto's fan-out follows.
-        if (cancelled || !stream || working) return
-        working = true
-        // Drawn from the video element, never createImageBitmap: the bitmap path
-        // applies its resize before the clip's rotation metadata and hands back
-        // sideways content for a portrait clip.
-        ctx.drawImage(video, 0, 0, width, height)
-        const data = ctx.getImageData(0, 0, width, height).data
-        void stream
-          .push({ t, width, height, data })
-          .then(() => {
-            if (cancelled || !stream) return
-            poseMeasuredRef.current = stream.frames
-            redrawPose()
-          })
-          .finally(() => {
-            working = false
-          })
-      }
-
-      /**
-       * Throttled DURING PLAYBACK, and not at all when paused or seeking.
-       *
-       * Reading a frame costs a full getImageData off the main thread, and
-       * running one on every presented frame — plus an inference behind it —
-       * made playback visibly stutter. The preview is for looking at a position,
-       * not for building a dense track; that is what the tracking pass is for,
-       * where the frames are wanted anyway.
-       *
-       * So while the clip is playing the skeleton refreshes a few times a second
-       * and the video plays smoothly. Pausing or scrubbing gets an immediate
-       * read, because that is where the coach is actually reading a position and
-       * correcting a joint.
-       */
-      let lastRunAt = 0
-      const onFrame = (_now: number, meta: { mediaTime: number }) => {
-        if (cancelled || !stream) return
-        const now = performance.now()
-        if (now - lastRunAt >= PREVIEW_MIN_INTERVAL_MS) {
-          lastRunAt = now
-          readCurrentFrame(meta.mediaTime)
-        }
-        pending = video.requestVideoFrameCallback(onFrame)
-      }
-
-      /**
-       * A CLIP IS PAUSED WHEN IT LOADS, AND THAT IS THE WHOLE POINT.
-       *
-       * requestVideoFrameCallback fires when the compositor PRESENTS a frame. A
-       * paused video that has already painted presents nothing further, so a
-       * loop built only on rVFC never runs a single inference — switch the
-       * skeleton on and it sits there looking broken until you happen to press
-       * play. That is what shipped, and every check here passed because the
-       * probe played the clip first.
-       *
-       * So the frame on screen is read immediately, and again after every seek,
-       * with rVFC covering playback.
-       */
-      readCurrentFrame(video.currentTime)
-      const onSeeked = () => readCurrentFrame(video.currentTime)
-      video.addEventListener('seeked', onSeeked)
-      detach = () => video.removeEventListener('seeked', onSeeked)
-
-      pending = video.requestVideoFrameCallback(onFrame)
-    }
-
-    void start()
-    return () => {
-      cancelled = true
-      if (pending !== null) video.cancelVideoFrameCallback?.(pending)
-      detach?.()
-      stream?.close()
-    }
-    // Deliberately NOT depending on redrawPose or pose: both are stable, and
-    // re-running this would tear the model down and rebuild it — a ~0.3 s stall
-    // and a lost preview — on every render.
-  }, [showPose, busy, source])
+  }, [busy, showPose, samples, poseCorrections, pixelsPerMetre, poseRead.status])
 
   // ── Keys (BP15, D37) ────────────────────────────────────────────────────
   // The stage takes Space, ← / →, F and 1–9; these are the page's own.
@@ -1442,6 +1302,7 @@ export default function VideoAnalysis() {
           showPose={showPose}
           showAngles={showAngles}
           showMidFoot={showMidFoot && MID_FOOT_LIFTS.includes(setContext.lift)}
+          poseLift={setContext.lift}
           ghost={reference.shape && pixelsPerMetre ? { path: reference.shape.path, pixelsPerMetre } : null}
           onCorrectLandmark={correctPoseLandmark}
           onPlaceSeed={placeSeed}
@@ -1514,6 +1375,8 @@ export default function VideoAnalysis() {
               onShowPose={setShowPose}
               poseStatus={pose.status}
               poseError={pose.error}
+              poseReading={poseRead.status === 'reading' ? poseRead.progress : null}
+              poseReadFailed={poseRead.status === 'error'}
               correctionsCount={poseCorrections.length}
               showAngles={showAngles}
               onShowAngles={setShowAngles}
