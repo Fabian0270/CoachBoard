@@ -39,6 +39,7 @@ import {
   type TimedCorrection,
 } from 'coachboard-shared/pose'
 import { displayPose } from 'coachboard-shared/poseRefine'
+import { repLockouts } from 'coachboard-shared/lockout'
 import {
   analysePath,
   pixelsPerMetreFromPlate,
@@ -1571,6 +1572,7 @@ export default function VideoAnalysis() {
                   onToggle={toggleRep}
                   target={tableTarget(setTarget)}
                   midFoot={busy ? null : midFootByRep(setContext.lift, poseRef.current, samples, trackedReps, pixelsPerMetre)}
+                  lockout={busy || !showPose ? null : repLockouts(poseRef.current, trackedReps, setContext.lift)}
                   onJump={(index) => {
                     const at = repTops[trackedReps.findIndex((r) => r.index === index)]
                     const v = videoRef.current

@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { Star, Undo2, X } from 'lucide-react'
 import { looksMistracked, repDrift, repTempos, type RepDrift, type RepMetrics, type Sample } from 'coachboard-shared/videoAnalysis'
 import type { RepMidFoot } from 'coachboard-shared/pose'
+import type { RepLockout } from 'coachboard-shared/lockout'
 import type { RepMark, TargetVerdict } from 'coachboard-shared/velocityTarget'
 import {
   readRep,
@@ -45,6 +46,23 @@ interface RepTableProps {
   midFoot?: Map<number, RepMidFoot | null> | null
   /** The set against its row's velocity target (BP39, D74). Absent: no column. */
   target?: { verdict: TargetVerdict; hasSpeed: boolean; hasLoss: boolean } | null
+  /** Lockout at the top per rep, by rep index (BP32, D118). Absent: no column. */
+  lockout?: Map<number, RepLockout | null> | null
+}
+
+const LOCKOUT_TITLE = 'Advice only, from the skeleton: the straightest the knee and hip got at the top. Flagged only when one is clearly still bent (knee under 150°, hip under 150° on a deadlift or 140° on a squat). You decide.'
+
+/** One rep's lockout: "locked out" or "check", with the angles on hover. */
+function LockoutCell({ reading }: { reading: RepLockout | null | undefined }) {
+  if (!reading) return <td className="py-1 pr-4 text-muted-foreground">—</td>
+  const angles = `knee ${Math.round(reading.knee!)}°, hip ${Math.round(reading.hip!)}° at the top`
+  return (
+    <td className="whitespace-nowrap py-1 pr-4">
+      <span className={`text-xs ${reading.locked ? 'text-success' : 'text-destructive'}`} title={`${angles}. ${LOCKOUT_TITLE}`}>
+        {reading.locked ? 'locked out' : 'check'}
+      </span>
+    </td>
+  )
 }
 
 const MARK_LABEL: Record<RepMark, { label: string; tone: string }> = {
@@ -97,7 +115,7 @@ export function fmtDrift(d: RepDrift): string {
   return `${val(d.maxPx, d.maxM)} ${unit}, ends ${ends}`
 }
 
-export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump, referenceIndex = null, onReference, midFoot = null, target = null }: RepTableProps) {
+export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump, referenceIndex = null, onReference, midFoot = null, target = null, lockout = null }: RepTableProps) {
   // The way down and the pause at the bottom (BP12), from the path like the drift.
   const tempos = useMemo(() => (track ? repTempos(track, reps) : null), [track, reps])
   const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
@@ -132,6 +150,7 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
                 <th className="py-1 pr-4 font-medium" title="How long the bar sat at the bottom before it moved up again; 0.0 s is touch-and-go">Pause</th>
               </>
             )}
+            {lockout && <th className="py-1 pr-4 font-medium" title={LOCKOUT_TITLE}>Lockout</th>}
             <th className="py-1 pr-4 font-medium" title="How long the bar took on the way up">Duration</th>
             {/* Dropped without a scale rather than shown as dashes: neither an
                 RPE table nor a velocity zone means anything in px/s. */}
@@ -218,6 +237,7 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
                     </td>
                   </>
                 )}
+                {lockout && (out ? <td className="py-1 pr-4" /> : <LockoutCell reading={lockout.get(r.index)} />)}
                 <td className="py-1 pr-4">{(r.durationMs / 1000).toFixed(2)} s</td>
                 {calibrated && (
                   <>

@@ -50,6 +50,7 @@ import { loadPose, putCorrection, savePose, type LoadedPose } from '../component
 import { usePose } from '../components/analysis/usePose'
 import { readClipPose } from '../components/analysis/clipPose'
 import { displayPose } from 'coachboard-shared/poseRefine'
+import { repLockouts } from 'coachboard-shared/lockout'
 import { useShowAngles, useShowMidFoot, useTrackerColor } from '../components/analysis/trackerColor'
 import { midFootByRep } from '../components/analysis/midFoot'
 import { useAthleteMaxes, useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
@@ -688,6 +689,7 @@ export default function SavedAnalysis() {
               v.currentTime = at
             } : undefined}
             midFoot={midFootByRep(analysis.lift, pose?.frames, analysis.track, metrics, pixelsPerMetre)}
+            lockout={showPose ? repLockouts(pose?.frames, metrics, analysis.lift) : null}
             target={tableTarget(setTarget)}
             referenceIndex={isReferenceSet ? reference.pointer!.repIndex : null}
             onReference={athleteId && lift !== 'other' && calibrated ? (index) => {
