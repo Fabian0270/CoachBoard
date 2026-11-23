@@ -367,6 +367,12 @@ export interface RepMetrics {
   meanPropulsiveVelocity: number | null
   /** How much of the concentric was propulsive, 0-1. Null when MPV is. */
   propulsiveFraction: number | null
+  /**
+   * How long the BAR was motionless at the bottom before this rep went up, ms
+   * (barPause.ts, D122). Only when the coach marked the bar; stored with the
+   * saved set, since measuring it needs the video. Never computed from the path.
+   */
+  barPauseMs?: number | null
 }
 
 /**

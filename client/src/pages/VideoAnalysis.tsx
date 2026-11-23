@@ -30,6 +30,8 @@ import { usePlateMm, useShowAngles, useShowMidFoot, useShowPose, useTrackerColor
 import { midFootByRep } from '../components/analysis/midFoot'
 import { usePose } from '../components/analysis/usePose'
 import { readClipPose } from '../components/analysis/clipPose'
+import { BarNotFoundError, BarUnreadableError, measureBarMotion } from '../components/analysis/barMeasure'
+import { barPause } from 'coachboard-shared/barPause'
 import { savePose, putCorrection } from '../components/analysis/poseApi'
 import {
   MID_FOOT_LIFTS,
@@ -482,9 +484,25 @@ export default function VideoAnalysis() {
     setExcludedReps(new Set())
   }, [samples])
 
+  /**
+   * The bench pause measured on the bar (D122, D123), ms per rep index; null
+   * until the coach marks the bar. Belongs to one track, like the exclusions.
+   */
+  const [barPauses, setBarPauses] = useState<Map<number, number | null> | null>(null)
+  const [barMeasure, setBarMeasure] = useState<{ status: 'idle' | 'measuring' | 'error'; progress: number; message?: string }>({ status: 'idle', progress: 0 })
+  const barAbortRef = useRef<AbortController | null>(null)
+  useEffect(() => {
+    barAbortRef.current?.abort()
+    setBarPauses(null)
+    setBarMeasure({ status: 'idle', progress: 0 })
+  }, [samples])
+
   const reps: RepMetrics[] = useMemo(
-    () => trackedReps.filter((r) => !excludedReps.has(r.index)),
-    [trackedReps, excludedReps],
+    () => trackedReps
+      .filter((r) => !excludedReps.has(r.index))
+      // Carried with the reps so the saved set keeps it: measuring needs the video.
+      .map((r) => (barPauses?.has(r.index) ? { ...r, barPauseMs: barPauses.get(r.index) ?? null } : r)),
+    [trackedReps, excludedReps, barPauses],
   )
 
   /**
@@ -744,6 +762,53 @@ export default function VideoAnalysis() {
       }
       setSamples(null)
       setPhase('idle')
+    }
+  }
+
+  /**
+   * Measures the bench pause on the bar from the coach's click on it (D123):
+   * the bar's movement over the tracked stretch, guided by the plate's path,
+   * then each rep's pause on the powerlifting rule (barPause.ts).
+   */
+  const measureBarFrom = async (point: { x: number; y: number }) => {
+    setMode('seed')
+    const video = videoRef.current
+    if (!video || !samples || samples.length < 2 || !source || !videoSrc) return
+    barAbortRef.current?.abort()
+    const controller = new AbortController()
+    barAbortRef.current = controller
+    const repsNow = trackedReps
+    setBarMeasure({ status: 'measuring', progress: 0 })
+    let lastShown = 0
+    try {
+      const motion = await measureBarMotion({
+        source: source.kind === 'local' ? { blob: source.file } : { url: videoSrc },
+        videoWidth: video.videoWidth,
+        click: { t: video.currentTime, x: point.x, y: point.y },
+        plate: samples,
+        from: samples[0].t,
+        to: samples[samples.length - 1].t,
+        signal: controller.signal,
+        onProgress: (fraction) => {
+          const now = performance.now()
+          if (now - lastShown > 250) { lastShown = now; setBarMeasure({ status: 'measuring', progress: fraction }) }
+        },
+      })
+      if (controller.signal.aborted) return
+      const measured = new Map(repsNow.map((r) => [r.index, barPause(motion, r)?.pauseMs ?? null] as const))
+      setBarPauses(measured)
+      setBarMeasure({ status: 'idle', progress: 1 })
+      // Already saved: the saved set gets the pauses too.
+      if (savedId) {
+        const withPauses = repsNow
+          .filter((r) => !excludedReps.has(r.index))
+          .map((r) => ({ ...r, barPauseMs: measured.get(r.index) ?? null }))
+        sendJson('PATCH', `/api/analysis/${encodeURIComponent(savedId)}`, { metrics: withPauses })
+          .catch(() => toast.error('The pause was measured, but could not be kept with the saved set.'))
+      }
+    } catch (err) {
+      if (controller.signal.aborted) return
+      setBarMeasure({ status: 'error', progress: 0, message: err instanceof BarNotFoundError || err instanceof BarUnreadableError ? err.message : 'The bar could not be measured in this clip.' })
     }
   }
 
@@ -1314,6 +1379,7 @@ export default function VideoAnalysis() {
           mode={mode}
           calibration={calibration}
           onCalibratePoint={addCalibrationPoint}
+          onBarPoint={(p) => void measureBarFrom(p)}
           onCalibrationChange={(line) => {
             setCalibration(line)
             setAwaitingSecondPoint(false)
@@ -1560,6 +1626,39 @@ export default function VideoAnalysis() {
                   skews everything measured from the set. Strike it off and every number below is
                   recalculated without it.
                 </p>
+                {/* The bench pause, measured on the bar itself (D122, D123). */}
+                {setContext.lift === 'bench-press' && !busy && (
+                  <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="bar-pause">
+                    {mode === 'bar' ? (
+                      <>
+                        <span className="font-medium text-primary">Click the bar between the hands.</span>
+                        <Button size="sm" variant="ghost" onClick={() => setMode('seed')}>Cancel</Button>
+                      </>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={barMeasure.status === 'measuring'}
+                        title="The pause is measured on the bar — completely still on the chest until it moves up — not on the plates, which wobble on the sleeves"
+                        onClick={() => {
+                          setMode('bar')
+                          videoRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                        }}
+                      >
+                        {barPauses ? 'Mark the bar again' : 'Mark the bar for the pause'}
+                      </Button>
+                    )}
+                    {barMeasure.status === 'measuring' && (
+                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Measuring the bar… {Math.round(barMeasure.progress * 100)}%
+                      </span>
+                    )}
+                    {barMeasure.status === 'error' && <span className="text-xs text-destructive">{barMeasure.message}</span>}
+                    {barMeasure.status === 'idle' && !barPauses && mode !== 'bar' && (
+                      <span className="text-xs text-muted-foreground">The pause is read from the bar: completely still on the chest until it moves up.</span>
+                    )}
+                  </div>
+                )}
                 <RepTable
                   reps={trackedReps}
                   lift={setContext.lift}
@@ -1573,6 +1672,7 @@ export default function VideoAnalysis() {
                   target={tableTarget(setTarget)}
                   midFoot={busy ? null : midFootByRep(setContext.lift, poseRef.current, samples, trackedReps, pixelsPerMetre)}
                   lockout={busy || !showPose ? null : repLockouts(poseRef.current, trackedReps, setContext.lift)}
+                  barPauses={barPauses}
                   onJump={(index) => {
                     const at = repTops[trackedReps.findIndex((r) => r.index === index)]
                     const v = videoRef.current

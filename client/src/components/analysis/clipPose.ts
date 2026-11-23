@@ -80,8 +80,15 @@ export async function readFrames(frames: AsyncIterable<DecodedFrame>, opts: Read
   return opts.stream.frames
 }
 
+/** Which frames, and how wide. Defaults: the whole clip at POSE_READ_WIDTH. */
+export interface DecodeRange {
+  width?: number
+  from?: number
+  to?: number
+}
+
 /** Every frame of a clip, decoded off screen with mediabunny. Throws when it cannot read the file. */
-export async function* decodeWithMediabunny(source: { blob: Blob } | { url: string }): AsyncGenerator<DecodedFrame> {
+export async function* decodeWithMediabunny(source: { blob: Blob } | { url: string }, range: DecodeRange = {}): AsyncGenerator<DecodedFrame> {
   const { ALL_FORMATS, BlobSource, CanvasSink, Input, UrlSource } = await import('mediabunny')
   const input = new Input({
     formats: ALL_FORMATS,
@@ -91,8 +98,8 @@ export async function* decodeWithMediabunny(source: { blob: Blob } | { url: stri
     const track = await input.getPrimaryVideoTrack()
     if (!track || !(await track.canDecode())) throw new Error('This clip cannot be decoded here')
     // Turned the right way up from the clip's rotation metadata, as the player shows it.
-    const sink = new CanvasSink(track, { width: POSE_READ_WIDTH, poolSize: 2 })
-    for await (const wrapped of sink.canvases()) {
+    const sink = new CanvasSink(track, { width: range.width ?? POSE_READ_WIDTH, poolSize: 2 })
+    for await (const wrapped of sink.canvases(range.from, range.to)) {
       yield { t: wrapped.timestamp, canvas: wrapped.canvas }
     }
   } finally {
@@ -104,7 +111,7 @@ export async function* decodeWithMediabunny(source: { blob: Blob } | { url: stri
  * Every frame POSE_READ_FPS apart, by seeking a video element. Slower, but it
  * reads whatever the player can play — the fallback when mediabunny cannot.
  */
-export async function* decodeBySeeking(src: string, duration: number): AsyncGenerator<DecodedFrame> {
+export async function* decodeBySeeking(src: string, duration: number, range: DecodeRange & { fps?: number } = {}): AsyncGenerator<DecodedFrame> {
   const video = document.createElement('video')
   video.muted = true
   video.preload = 'auto'
@@ -113,7 +120,7 @@ export async function* decodeBySeeking(src: string, duration: number): AsyncGene
     video.onloadedmetadata = () => resolve()
     video.onerror = () => reject(new Error('This clip cannot be played'))
   })
-  const width = POSE_READ_WIDTH
+  const width = range.width ?? POSE_READ_WIDTH
   const height = Math.round((width / video.videoWidth) * video.videoHeight)
   const canvas = document.createElement('canvas')
   canvas.width = width
@@ -121,7 +128,8 @@ export async function* decodeBySeeking(src: string, duration: number): AsyncGene
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
   if (!ctx) return
   try {
-    for (let t = 0; t < (duration || video.duration); t += 1 / POSE_READ_FPS) {
+    const end = Math.min(range.to ?? Infinity, duration || video.duration)
+    for (let t = range.from ?? 0; t < end; t += 1 / (range.fps ?? POSE_READ_FPS)) {
       await new Promise<void>((resolve) => {
         video.onseeked = () => resolve()
         video.currentTime = t
