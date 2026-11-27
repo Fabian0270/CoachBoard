@@ -6,10 +6,12 @@
   "scripts": {
     "build": "tsc && npm run bundle",
     "bundle": "esbuild src/electron-entry.ts --bundle --platform=node --target=node24 --outfile=dist/electron-bundle.cjs --external:better-sqlite3 --format=cjs",
+    "build:phone-crypto": "node scripts/build-phone-crypto.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@noble/ciphers": "2.4.0",
     "better-sqlite3": "^13.1.1",
     "exceljs": "^4.4.0",
     "express": "^5.0.1",
