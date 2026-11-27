@@ -49,6 +49,25 @@ describe('repTempos', () => {
     }
   })
 
+  it('a pause where the plate creeps a little still reads as the pause', () => {
+    // Measured on a real bench: the plate sank 4-5 px halfway through the pause of a 210 px rep,
+    // briefly faster than a tenth of the descent's top speed — it used to get no reading at all.
+    const { track, metrics } = squat({ down: 1.2, pause: 0.6 })
+    const crept = track.map((s) => {
+      const k = (s.t - 0.6) % (1.2 + 0.6 + 0.9 + 0.6)
+      if (s.t < 0.6) return s
+      if (k < 1.2) return { ...s, y: 140 + 195 * (k / 1.2) }
+      if (k < 1.5) return { ...s, y: 335 }
+      if (k < 1.58) return { ...s, y: 335 + 5 * ((k - 1.5) / 0.08) }
+      return k < 1.8 ? { ...s, y: 340 } : s
+    })
+    for (const t of repTempos(crept, metrics)) {
+      expect(t).not.toBeNull()
+      expect(Math.abs(t!.pauseMs - 600)).toBeLessThan(150)
+      expect(Math.abs(t!.descentMs - 1200)).toBeLessThan(200)
+    }
+  })
+
   it('nothing for a first pull that starts on the floor', () => {
     // A deadlift: at the bottom from the start, then up.
     const track: Sample[] = []

@@ -367,12 +367,6 @@ export interface RepMetrics {
   meanPropulsiveVelocity: number | null
   /** How much of the concentric was propulsive, 0-1. Null when MPV is. */
   propulsiveFraction: number | null
-  /**
-   * How long the BAR was motionless at the bottom before this rep went up, ms
-   * (barPause.ts, D122). Only when the coach marked the bar; stored with the
-   * saved set, since measuring it needs the video. Never computed from the path.
-   */
-  barPauseMs?: number | null
 }
 
 /**
@@ -577,6 +571,12 @@ export function repStickingPoints(track: Sample[], reps: { startT: number; endT:
   })
 }
 
+/**
+ * How near its lowest point the bar counts as still at the bottom, as a share
+ * of the rep's range: about a centimetre on a bench.
+ */
+export const PAUSE_BAND = 0.03
+
 /** A rep's tempo (BP12): how long the way down took, and the pause at the bottom. No lockout time (D36). */
 export interface RepTempo {
   descentMs: number
@@ -589,13 +589,18 @@ export interface RepTempo {
  * stored track like the sideways drift, so older sets get it too.
  *
  * Walked BACK from where the rep starts up (`startT`, already past the pause
- * — see the trim in repMetrics): samples not moving down are the pause, the
- * run moving down before them is the descent. "Moving down" is the same rule
- * as the trim, a tenth of the descent's own top speed, so it holds at any zoom.
- * The search stops at the top before the rep (the previous rep's end, or the
- * start of the path for the first). Null when there is no descent there — the
- * first pull of a deadlift starts on the floor — or it covers under a quarter
- * of the rep's range, which is a wobble, not the way down.
+ * — see the trim in repMetrics). The pause is the time the bar spends within
+ * PAUSE_BAND of the rep's range of its lowest point. It used to be "not moving
+ * down faster than a tenth of the descent's top speed", and on a real bench
+ * (filmed from the foot end, no collars) the plate crept 4 px over half a
+ * second during the pause — over that line for two frames — so the pause read
+ * as part of the way down and the rep got no reading at all. The run moving
+ * down before the pause (the same tenth-of-top-speed rule, so it holds at any
+ * zoom) is the descent. The search stops at the top before the rep (the
+ * previous rep's end, or the start of the path for the first). Null when there
+ * is no descent there — the first pull of a deadlift starts on the floor — or
+ * it covers under a quarter of the rep's range, which is a wobble, not the way
+ * down.
  */
 export function repTempos(track: Sample[], reps: { startT: number; endT: number; romPx: number }[]): (RepTempo | null)[] {
   if (track.length < 3) return reps.map(() => null)
@@ -614,10 +619,16 @@ export function repTempos(track: Sample[], reps: { startT: number; endT: number;
     const down = velocities.slice(lower, up + 1).map((v) => v.vy).filter((vy) => vy > 0)
     if (down.length < 2) return
     const moving = percentile(down, PEAK_PERCENTILE) * 0.1
-    let arrive = up - 1
-    while (arrive > lower && velocities[arrive].vy < moving) arrive--
+    // The bottom: the lowest the bar got before this rep went up (y grows downward).
+    let bottomY = -Infinity
+    for (let i = lower; i <= up; i++) bottomY = Math.max(bottomY, track[i].y)
+    const band = Math.max(2, rep.romPx * PAUSE_BAND)
+    let arrive = up
+    while (arrive - 1 > lower && track[arrive - 1].y >= bottomY - band) arrive--
     if (arrive <= lower) return
+    // Back past the slow last of the way down to the fast part, then to where it began.
     let top = arrive
+    while (top > lower && velocities[top].vy < moving) top--
     while (top > lower && velocities[top].vy >= moving) top--
     if (track[arrive].y - track[top].y < rep.romPx * 0.25) return
     result[ri] = {

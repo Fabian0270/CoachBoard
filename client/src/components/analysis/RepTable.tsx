@@ -48,8 +48,6 @@ interface RepTableProps {
   target?: { verdict: TargetVerdict; hasSpeed: boolean; hasLoss: boolean } | null
   /** Lockout at the top per rep, by rep index (BP32, D118). Absent: no column. */
   lockout?: Map<number, RepLockout | null> | null
-  /** The bar's pause per rep, ms, by rep index, measured on this page (D122). Saved sets carry it in their reps. */
-  barPauses?: Map<number, number | null> | null
 }
 
 const LOCKOUT_TITLE = 'Advice only, from the skeleton: the straightest the knee and hip got at the top. Flagged only when one is clearly still bent (knee under 150°, hip under 150° on a deadlift or 140° on a squat). You decide.'
@@ -90,51 +88,23 @@ function TargetCell({ index, target }: { index: number; target: NonNullable<RepT
 }
 
 /**
- * The bench pause, judged (BP32, D124): advice only, on how long the BAR was
- * motionless on the chest (barPause.ts). The competition rule is "motionless"
- * with no fixed time; Fabian's lines, from his own pauses: 0.6 s or more looks
- * good, any pause shorter is borderline, and no pause at all — touch-and-go —
- * reads check. (D64's 1 s / 0.5 s were set on the plate's path, which counted
- * a bar still sinking into the chest as paused.)
+ * The bench pause, judged (BP32, D124/D125): advice only, from the measured
+ * pause. The competition rule is "motionless on the chest" with no fixed time;
+ * Fabian's lines, from his own pauses: 0.6 s or more looks good, any shorter
+ * pause is borderline, and no pause at all — touch-and-go — reads check.
+ * Judged on the figure shown, to the tenth, so 0.57 s never shows as
+ * "0.6 s borderline". Touch-and-go is 0.1 s or less: measured from the path,
+ * the turn at the bottom always lasts a frame or two (0.07 s on a real one),
+ * and no real pause is that short.
  */
 export function pauseVerdict(pauseMs: number): { label: 'looks good' | 'borderline' | 'check'; tone: string } {
-  if (pauseMs >= 600) return { label: 'looks good', tone: 'text-success' }
-  // Under a frame and a half is no pause: the bar turned on the chest.
-  if (pauseMs >= 50) return { label: 'borderline', tone: 'text-warning' }
+  const shown = Math.round(pauseMs / 100) * 100
+  if (shown >= 600) return { label: 'looks good', tone: 'text-success' }
+  if (shown > 100) return { label: 'borderline', tone: 'text-warning' }
   return { label: 'check', tone: 'text-destructive' }
 }
 
-const PAUSE_ADVICE = 'Advice only: from the moment the bar was completely still on the chest until it moved up. 0.6 s or more looks good, a shorter pause is borderline, and no pause at all (touch-and-go) reads check. You decide.'
-
-/**
- * The pause at the bottom. On a bench it is judged only from the BAR (D122):
- * the plate's path counts a bar still sinking into the chest as paused, and an
- * unclipped plate wobbles on its own. Until the bar is marked, the path's
- * figure is shown greyed, without a verdict.
- */
-function PauseCell({ bench, barPauseMs, pathPauseMs }: { bench: boolean; barPauseMs: number | null; pathPauseMs: number | null }) {
-  const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
-  if (bench && barPauseMs != null) {
-    // Judged on the figure shown, to the tenth (the measurement is good to about a frame):
-    // 0.57 s shows as 0.6 s and must not read "borderline" beside it.
-    const shown = Math.round(barPauseMs / 100) * 100
-    const v = pauseVerdict(shown)
-    return (
-      <td className="whitespace-nowrap py-1 pr-4" title="Measured on the bar: completely still on the chest until it moved up">
-        {secs(shown)}
-        <span className={`ml-1.5 text-xs ${v.tone}`} title={PAUSE_ADVICE}>{v.label}</span>
-      </td>
-    )
-  }
-  if (bench) {
-    return (
-      <td className="whitespace-nowrap py-1 pr-4 text-muted-foreground" title="From the plate's path, which counts a bar still sinking into the chest as paused. Mark the bar to measure the pause the rules count.">
-        {pathPauseMs != null ? secs(pathPauseMs) : '—'}
-      </td>
-    )
-  }
-  return <td className="whitespace-nowrap py-1 pr-4">{pathPauseMs != null ? secs(pathPauseMs) : '—'}</td>
-}
+const PAUSE_ADVICE = 'Advice only: 0.6 s or more still on the chest looks good, a shorter pause is borderline, and touch-and-go (0.1 s or less) reads check. You decide.'
 
 /** "4 cm front · 1 cm behind": the furthest the bar went either side of mid-foot. */
 function fmtMidFoot(m: RepMidFoot): string {
@@ -152,7 +122,7 @@ export function fmtDrift(d: RepDrift): string {
   return `${val(d.maxPx, d.maxM)} ${unit}, ends ${ends}`
 }
 
-export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump, referenceIndex = null, onReference, midFoot = null, target = null, lockout = null, barPauses = null }: RepTableProps) {
+export default function RepTable({ reps, lift, metric, calibrated, anchors, track, pixelsPerMetre = null, excluded, onToggle, onJump, referenceIndex = null, onReference, midFoot = null, target = null, lockout = null }: RepTableProps) {
   // The way down and the pause at the bottom (BP12), from the path like the drift.
   const tempos = useMemo(() => (track ? repTempos(track, reps) : null), [track, reps])
   const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
@@ -260,7 +230,18 @@ export default function RepTable({ reps, lift, metric, calibrated, anchors, trac
                 {track && (
                   <>
                     <td className="py-1 pr-4">{tempo ? secs(tempo.descentMs) : '—'}</td>
-                    <PauseCell bench={lift === 'bench-press'} barPauseMs={r.barPauseMs ?? barPauses?.get(r.index) ?? null} pathPauseMs={tempo ? tempo.pauseMs : null} />
+                    <td className="whitespace-nowrap py-1 pr-4">
+                      {tempo ? secs(tempo.pauseMs) : '—'}
+                      {/* The bench pause, judged (BP32, D125) — advice only. */}
+                      {tempo && lift === 'bench-press' && (() => {
+                        const v = pauseVerdict(tempo.pauseMs)
+                        return (
+                          <span className={`ml-1.5 text-xs ${v.tone}`} title={PAUSE_ADVICE}>
+                            {v.label}
+                          </span>
+                        )
+                      })()}
+                    </td>
                   </>
                 )}
                 {lockout && (out ? <td className="py-1 pr-4" /> : <LockoutCell reading={lockout.get(r.index)} />)}

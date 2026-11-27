@@ -71,7 +71,7 @@ export interface CalibrationLine {
 }
 
 /** Which control the next click on the video drives. */
-export type StageMode = 'seed' | 'calibrate' | 'draw' | 'bar'
+export type StageMode = 'seed' | 'calibrate' | 'draw'
 
 interface Props {
   src: string
@@ -99,8 +99,6 @@ interface Props {
   calibration: CalibrationLine | null
   /** Called with each click while in 'calibrate' mode. */
   onCalibratePoint: (point: { x: number; y: number }) => void
-  /** Called with the click while in 'bar' mode: a point on the bar, to measure the pause from (D123). */
-  onBarPoint?: (point: { x: number; y: number }) => void
   /**
    * Called when the coach drags an end of the scale line (BP18). Its presence
    * is what makes the ends draggable — the saved page passes nothing.
@@ -188,7 +186,6 @@ export default function AnalysisStage({
   mode,
   calibration,
   onCalibratePoint,
-  onBarPoint,
   onCalibrationChange,
   strokes,
   onDrawStroke,
@@ -765,7 +762,6 @@ export default function AnalysisStage({
     }
     if (mode === 'draw') return // strokes are built from pointer events, not clicks
     if (mode === 'calibrate') onCalibratePoint(point)
-    else if (mode === 'bar') onBarPoint?.(point)
     else onPlaceSeed(point)
   }
 
