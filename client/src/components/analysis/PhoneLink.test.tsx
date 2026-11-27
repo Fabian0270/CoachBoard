@@ -56,7 +56,8 @@ describe('Send a set from your phone', () => {
     const view = renderScreen(<PhoneLink onDone={vi.fn()} onCancel={vi.fn()} />)
     await screen.findByAltText('QR code for your phone')
     view.unmount()
-    await waitFor(() => expect(server.calls).toContain('DELETE /api/phone-link'))
+    // Only its own link, by code — never a newer visit's.
+    await waitFor(() => expect(server.calls).toContain('DELETE /api/phone-link?code=abc'))
   })
 
   it('no network a phone can reach: says so, with Try again', async () => {

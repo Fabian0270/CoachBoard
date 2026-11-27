@@ -184,8 +184,13 @@ function closeServer(why: string | null): void {
   log(`Phone link closed${why ? `: ${why}` : ''}`)
 }
 
-/** Stop the link. A clip that arrived but was never opened is deleted. */
-export function stopPhoneLink(): PhoneLinkStatus {
+/**
+ * Stop the link. A clip that arrived but was never opened is deleted. Given a
+ * code, only the link with that code is stopped: the screen closing its own
+ * visit's link must never close the next visit's, if the two cross on the way.
+ */
+export function stopPhoneLink(code?: string): PhoneLinkStatus {
+  if (link && code !== undefined && !tokenMatches(link, code)) return phoneLinkStatus()
   if (link) {
     dropUpload(link, 'the link was closed')
     closeServer(null)
@@ -206,9 +211,12 @@ export function claimPhoneClip(): void {
   stopPhoneLink()
 }
 
-/** Start the link, or return the one already running (the same QR keeps working). */
+/**
+ * Start a new link: a new code and key every time the phone screen opens
+ * (Fabian, 2026-11-27). Any older one is closed first — after a window reload
+ * the last screen never said goodbye, and its listener must not linger.
+ */
 export async function startPhoneLink(opts: { addresses?: string[] } = {}): Promise<PhoneLinkStatus> {
-  if (link && !link.clip) return phoneLinkStatus()
   stopPhoneLink()
   sweepClips()
   const addresses = opts.addresses ?? lanAddresses(os.networkInterfaces())

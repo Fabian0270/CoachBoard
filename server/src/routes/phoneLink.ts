@@ -51,9 +51,11 @@ router.post('/claim', (_req: Request, res: Response): void => {
   res.json(phoneLinkStatus())
 })
 
-// DELETE /api/phone-link — close the link; an unopened clip is deleted.
-router.delete('/', (_req: Request, res: Response): void => {
-  res.json(stopPhoneLink())
+// DELETE /api/phone-link[?code=] — close the link; an unopened clip is deleted.
+// With a code, only that link: a screen closing its own visit's link.
+router.delete('/', (req: Request, res: Response): void => {
+  const code = typeof req.query.code === 'string' ? req.query.code : undefined
+  res.json(stopPhoneLink(code))
 })
 
 export default router

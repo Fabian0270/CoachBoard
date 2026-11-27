@@ -45,7 +45,9 @@ export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraT
     let stopped = false
     setError(null)
     setStatus(null)
-    sendJson<Status>('POST', '/api/phone-link')
+    // A new code and key every time this screen opens.
+    const opened = sendJson<Status>('POST', '/api/phone-link')
+    opened
       .then((s) => { if (!stopped) setStatus(s) })
       .catch((err) => { if (!stopped) setError(errorMessage(err)) })
 
@@ -78,7 +80,16 @@ export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraT
     return () => {
       stopped = true
       window.clearInterval(timer)
-      if (!handedOver.current) void sendJson('DELETE', '/api/phone-link').catch(() => {})
+      // Only this visit's link, by its code: reopened quickly, this goodbye can
+      // land after the next visit's link opened, and must not close that one.
+      if (!handedOver.current) {
+        void opened
+          .then((s) => {
+            const code = s.url ? new URL(s.url).pathname.split('/')[2] : null
+            if (code) return sendJson('DELETE', `/api/phone-link?code=${encodeURIComponent(code)}`)
+          })
+          .catch(() => {})
+      }
     }
     // onDone is read once, when the clip arrives; re-running for it would reopen the link.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -252,10 +252,24 @@ describe('the phone link', () => {
     await expect(request(local(again.url!))).rejects.toThrow()
   })
 
-  it('opening the screen twice keeps the same code, so a QR already scanned still works', async () => {
+  it('every opening of the screen makes a new code and key, and the old link stops answering (even after a reload left it open)', async () => {
     const a = await startPhoneLink({ addresses: ['192.168.1.34'] })
+    // The window reloads: nobody closed `a`, and the screen opens again.
     const b = await startPhoneLink({ addresses: ['192.168.1.34'] })
-    expect(b.url).toBe(a.url)
+    expect(local(b.url!)).not.toBe(local(a.url!))
+    expect(keyOf(b.url!).equals(keyOf(a.url!))).toBe(false)
+    await expect(request(local(a.url!))).rejects.toThrow()
+    expect((await request(local(b.url!))).status).toBe(200)
+  })
+
+  it("closing by code closes only that visit's link, never a newer one", async () => {
+    const a = await startPhoneLink({ addresses: ['192.168.1.34'] })
+    const codeA = new URL(a.url!).pathname.split('/')[2]
+    const b = await startPhoneLink({ addresses: ['192.168.1.34'] })
+    // The old screen's goodbye arrives after the new screen opened.
+    expect(stopPhoneLink(codeA).active).toBe(true)
+    expect((await request(local(b.url!))).status).toBe(200)
+    expect(stopPhoneLink(new URL(b.url!).pathname.split('/')[2]).active).toBe(false)
   })
 })
 
