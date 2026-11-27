@@ -8,10 +8,19 @@ import {
 } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
-import { Mail, Send, ExternalLink, AlertTriangle, Lock, MessageSquare, Database } from 'lucide-react'
+import { Mail, Send, ExternalLink, AlertTriangle, Lock, MessageSquare, Database, Keyboard, Scale } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import DiscordSettingsCard from '../components/discord/DiscordSettingsCard'
 import DataSettingsCard from '../components/DataSettingsCard'
+import HelpSettingsCard from '../components/HelpSettingsCard'
+import UnitSettingsCard from '../components/UnitSettingsCard'
+import DayEditorSettingsCard from '../components/DayEditorSettingsCard'
+import CurrencySettingsCard from '../components/CurrencySettingsCard'
+import ReportProblemCard from '../components/ReportProblemCard'
+import TourHelpCard from '../tour/TourHelpCard'
+import { useSearchParams } from 'react-router-dom'
+
+const TABS = ['email', 'discord', 'preferences', 'data', 'help']
 import { errorMessage, getJson } from '../lib/api'
 
 type Provider = 'gmail' | 'outlook' | 'custom'
@@ -60,6 +69,11 @@ interface PublicEmailSettings {
 
 export default function Settings() {
   const toast = useToast()
+  const [searchParams] = useSearchParams()
+  // Follows ?tab= when it changes on this page (the tour moves between tabs by address).
+  const tabFromUrl = () => (TABS.includes(searchParams.get('tab') ?? '') ? searchParams.get('tab')! : 'email')
+  const [tab, setTab] = useState(tabFromUrl)
+  useEffect(() => { setTab(tabFromUrl()) }, [searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -93,7 +107,7 @@ export default function Settings() {
       // and saving the form would then overwrite it.
       .catch((err) => toast.error(`Could not read your saved email settings. ${errorMessage(err)}`))
       .finally(() => setLoading(false))
-  }, [])
+  }, [toast])
 
   const preset = PRESETS[provider]
   const isCustom = provider === 'custom'
@@ -167,11 +181,14 @@ export default function Settings() {
     <div className="mx-auto max-w-3xl space-y-6">
       <PageHeader title="Settings" />
 
-      <Tabs defaultValue="email">
-        <TabsList>
+      {/* ?tab=help and the like open a tab directly. */}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList data-tour="settings-tabs">
           <TabsTrigger value="email"><Mail className="h-4 w-4 mr-2" />Email delivery</TabsTrigger>
           <TabsTrigger value="discord"><MessageSquare className="h-4 w-4 mr-2" />Discord</TabsTrigger>
+          <TabsTrigger value="preferences"><Scale className="h-4 w-4 mr-2" />Preferences</TabsTrigger>
           <TabsTrigger value="data"><Database className="h-4 w-4 mr-2" />Your data</TabsTrigger>
+          <TabsTrigger value="help"><Keyboard className="h-4 w-4 mr-2" />Help</TabsTrigger>
         </TabsList>
         <TabsContent value="email">
       <Card>
@@ -304,8 +321,18 @@ export default function Settings() {
         <TabsContent value="discord">
           <DiscordSettingsCard />
         </TabsContent>
+        <TabsContent value="preferences" className="space-y-6">
+          <UnitSettingsCard />
+          <CurrencySettingsCard />
+          <DayEditorSettingsCard />
+        </TabsContent>
         <TabsContent value="data">
           <DataSettingsCard />
+        </TabsContent>
+        <TabsContent value="help" className="space-y-6">
+          <TourHelpCard />
+          <ReportProblemCard />
+          <HelpSettingsCard />
         </TabsContent>
       </Tabs>
     </div>

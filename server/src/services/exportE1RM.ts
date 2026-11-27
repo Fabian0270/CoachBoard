@@ -1,4 +1,4 @@
-import { mainLiftKey } from 'coachboard-shared/vbt'
+import { competitionLiftKey } from 'coachboard-shared/vbt'
 
 // ---------------------------------------------------------------------------
 // Helper for the "Modern" export template's per-lift e1RM badge.
@@ -13,6 +13,6 @@ import { mainLiftKey } from 'coachboard-shared/vbt'
 
 /** e1RM reference for a given exercise name, or null when the lift has no reference. */
 export function e1rmForExerciseName(name: string, ref: Record<string, number>): number | null {
-  const key = mainLiftKey(name)
+  const key = competitionLiftKey(name)
   return key && ref[key] != null ? ref[key] : null
 }

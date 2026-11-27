@@ -1,5 +1,6 @@
 import type { SelectableAthlete, SelectableProgram } from './types'
 import BackButton from './BackButton'
+import { Star } from 'lucide-react'
 
 interface SourceStepProps {
   pickingSourceAthlete: boolean
@@ -78,7 +79,10 @@ export default function SourceStep({
           className="w-full text-left rounded-lg border p-3 hover:bg-accent transition-colors"
         >
           <div className="font-medium flex items-center justify-between gap-2">
-            <span>{p.name}</span>
+            <span className="flex items-center gap-1.5">
+              {p.bookmarked === 1 && <Star className="h-3.5 w-3.5 fill-warning text-warning" aria-label="Bookmarked" />}
+              {p.name}
+            </span>
             {p.status === 'archived' && (
               <span className="text-xs font-normal rounded bg-muted px-1.5 py-0.5 text-muted-foreground">archived</span>
             )}

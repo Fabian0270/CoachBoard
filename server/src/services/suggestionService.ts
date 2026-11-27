@@ -6,6 +6,8 @@ import { findTemplate } from '../lib/suggestionTemplates.js'
 import { SUGGESTION_TEMPLATES } from 'coachboard-shared'
 import { ACCESSORY_POOLS } from 'coachboard-shared/knowledge'
 import { bestStoredMax, mainLiftKey, type MainLiftKey } from 'coachboard-shared/vbt'
+import { convertLoad, unitOf, type LoadUnit } from 'coachboard-shared/units'
+import { programUnit } from './unitService.js'
 import type { SuggestProgramBody, SuggestProgramResult, WeekSlot } from 'coachboard-shared'
 
 type LiftKey = MainLiftKey
@@ -37,10 +39,12 @@ const liftKeyFor = mainLiftKey
 const MAIN_LIFTS: LiftKey[] = ['squat', 'bench', 'deadlift']
 
 /** The stored max per main lift — plain lift name first, then most recent. */
-function storedMaxMap(rows: { lift_name: string; weight: number; recorded_at: string }[]): Map<LiftKey, number> {
+// In `unit` (S3): a max recorded in the other unit is converted.
+function storedMaxMap(rows: { lift_name: string; weight: number; unit?: string; recorded_at: string }[], unit: LoadUnit): Map<LiftKey, number> {
   const map = new Map<LiftKey, number>()
+  const inUnit = rows.map((r) => ({ ...r, weight: convertLoad(r.weight, unitOf(r.unit), unit) }))
   for (const key of MAIN_LIFTS) {
-    const best = bestStoredMax(key, rows)
+    const best = bestStoredMax(key, inUnit)
     if (best) map.set(key, best.weight)
   }
   return map
@@ -49,13 +53,13 @@ function storedMaxMap(rows: { lift_name: string; weight: number; recorded_at: st
 // Stored 1RM per main lift for an athlete, keyed by lift. Used to scale a
 // draft's loads to the athlete it's being generated for — essential when the
 // source program belongs to a different athlete.
-async function storedMaxE1rmMap(athleteId: string): Promise<Map<LiftKey, number>> {
+async function storedMaxE1rmMap(athleteId: string, unit: LoadUnit): Promise<Map<LiftKey, number>> {
   const rows = await getDb()
     .selectFrom('athlete_maxes')
     .selectAll()
     .where('athlete_id', '=', athleteId)
     .execute()
-  return storedMaxMap(rows)
+  return storedMaxMap(rows, unit)
 }
 
 function toIso(d: Date): string {
@@ -307,17 +311,22 @@ export async function generateDraftProgram(
   // athlete's), and the source athlete's RPE deviation must not nudge them.
   const crossAthlete = source.athlete_id !== body.athleteId
 
+  // S3: the draft is in the athlete it is for's unit, whatever the source was
+  // in. Their maxes drive the loads, so a kg block generated for a lb athlete
+  // comes out in lb, rounded to 5 lb.
+  const unit = await programUnit(body.athleteId)
+
   // Build the e1RM map that scales each main lift's loads.
   const e1rmMap = new Map<LiftKey, number>()
   if (crossAthlete) {
-    for (const [key, weight] of await storedMaxE1rmMap(body.athleteId)) e1rmMap.set(key, weight)
+    for (const [key, weight] of await storedMaxE1rmMap(body.athleteId, unit)) e1rmMap.set(key, weight)
   } else {
     // Same athlete: the finished program's measured e1RM, with their stored maxes
     // as a fallback for lifts that lack a usable in-program estimate.
     for (const trend of report.e1rmTrends) {
       if (trend.latestE1RM !== null) e1rmMap.set(trend.liftKey as LiftKey, trend.latestE1RM)
     }
-    for (const [key, weight] of storedMaxMap(report.storedMaxes)) {
+    for (const [key, weight] of storedMaxMap(report.storedMaxes, unit)) {
       if (!e1rmMap.has(key)) e1rmMap.set(key, weight)
     }
   }
@@ -344,7 +353,7 @@ export async function generateDraftProgram(
 
   const slotsByLift = new Map<LiftKey, WeekSlot[]>()
   for (const [liftKey, e1rm] of e1rmMap) {
-    slotsByLift.set(liftKey, template.generate(body.weeks, e1rm, rpeAdjustment, body.style))
+    slotsByLift.set(liftKey, template.generate(body.weeks, e1rm, rpeAdjustment, body.style, unit))
   }
 
   const now = new Date().toISOString()

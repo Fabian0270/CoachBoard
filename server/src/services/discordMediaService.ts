@@ -5,6 +5,7 @@ import { clearSettings } from './discordSettingsService.js'
 import { deleteAllFilesFor } from './mediaStore.js'
 import { countAnalysesForMedia } from './videoAnalysisService.js'
 import { parseCaption } from './captionMatcher.js'
+import { unitOf } from 'coachboard-shared/units'
 import type {
   DiscordMediaItem,
   DiscordUserItem,
@@ -34,12 +35,14 @@ type MediaJoinRow = DiscordMediaTable & {
   author_display_name: string | null
   author_avatar_url: string | null
   athlete_name: string | null
+  athlete_unit?: string | null
   workout_name: string | null
   workout_date: string | null
   workout_program_id: string | null
   program_name: string | null
   suggested_name: string | null
   suggested_date: string | null
+  analysis_count: number | null
 }
 
 function toItem(row: MediaJoinRow): DiscordMediaItem {
@@ -68,7 +71,8 @@ function toItem(row: MediaJoinRow): DiscordMediaItem {
     width: row.width,
     height: row.height,
     caption: row.message_content,
-    parsedCaption: row.message_content ? parseCaption(row.message_content) : null,
+    // In the athlete's unit (S3); kg while the clip is nobody's.
+    parsedCaption: row.message_content ? parseCaption(row.message_content, unitOf(row.athlete_unit)) : null,
     postedAt: row.posted_at,
     downloadStatus: row.download_status as DiscordMediaItem['downloadStatus'],
     downloadError: row.download_error,
@@ -85,6 +89,7 @@ function toItem(row: MediaJoinRow): DiscordMediaItem {
     thumbUrl: row.thumb_path ? `/api/discord/media/${row.id}/thumb` : null,
     thumbStatus: row.thumb_status as DiscordMediaItem['thumbStatus'],
     durationMs: row.duration_ms,
+    analysisCount: Number(row.analysis_count ?? 0),
   }
 }
 
@@ -102,12 +107,20 @@ function baseMediaQuery() {
       'discord_users.display_name as author_display_name',
       'discord_users.avatar_url as author_avatar_url',
       'athletes.name as athlete_name',
+      'athletes.unit as athlete_unit',
       'confirmed_w.name as workout_name',
       'confirmed_w.scheduled_date as workout_date',
       'confirmed_w.program_id as workout_program_id',
       'confirmed_p.name as program_name',
       'suggested_w.name as suggested_name',
       'suggested_w.scheduled_date as suggested_date',
+      // How many saved bar path analyses use the clip (BP19). Indexed on media_id.
+      (eb) =>
+        eb
+          .selectFrom('video_analyses')
+          .select((e) => e.fn.countAll<number>().as('n'))
+          .whereRef('video_analyses.media_id', '=', 'discord_media.id')
+          .as('analysis_count'),
     ])
 }
 

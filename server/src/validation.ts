@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { Response } from 'express'
 
 const isoDate = z.iso.date('Expected YYYY-MM-DD')
-const enabledColumnEnum = z.enum(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe'])
+const enabledColumnEnum = z.enum(['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'notes', 'velocity'])
 const statusEnum = z.enum(['active', 'completed', 'archived', 'draft'])
 const focusEnum = z.enum(['hypertrophy', 'strength', 'peaking'])
 
@@ -15,6 +15,41 @@ const optionalString = (max: number) => z.preprocess(emptyToNull, z.string().max
 const optionalIsoDate = z.preprocess(emptyToNull, isoDate.nullable().optional())
 const optionalFocus = z.preprocess(emptyToNull, focusEnum.nullable().optional())
 const optionalEmail = z.preprocess(emptyToNull, z.email().max(200).nullable().optional())
+
+/** The cells a paste from a spreadsheet can fill. */
+const pastedFields = z.object({
+  name: z.string().max(200).optional(),
+  notes: optionalString(2000),
+  sets: optionalString(50),
+  reps: optionalString(50),
+  weight: z.number().min(0).nullable().optional(),
+  rest_time: optionalString(50),
+  intensity: optionalString(100),
+  load_used: optionalString(100),
+  rpe: optionalString(50),
+  velocity: optionalString(100),
+})
+
+/** One exercise row exactly as it was stored, id included — what an undo puts back. */
+const restoredExercise = z.object({
+  id: z.uuid(),
+  name: z.string().max(200),
+  sets: optionalString(50),
+  reps: optionalString(50),
+  weight: z.number().min(0).nullable().optional(),
+  duration: z.number().int().min(0).nullable().optional(),
+  distance: z.number().min(0).nullable().optional(),
+  notes: optionalString(2000),
+  order_index: z.number().int().min(0),
+  rest_time: optionalString(50),
+  intensity: optionalString(100),
+  load_used: optionalString(100),
+  rpe: optionalString(50),
+  velocity: optionalString(100),
+  reps_done: optionalString(50),
+  group_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
+  suggestion_note: optionalString(2000),
+})
 
 /**
  * Standing height in whole centimetres.
@@ -53,6 +88,9 @@ export const schemas = {
       notes: optionalString(2000),
       // Set when creating a minimal owner for a historical back-catalogue import.
       archived: z.boolean().optional(),
+      // kg or lb (S3); the Settings default when left out. Changed later only
+      // through POST /athletes/:id/unit, which can convert the numbers.
+      unit: z.enum(['kg', 'lb']).optional(),
     }),
     update: z.object({
       name: z.string().min(1).max(200).optional(),
@@ -67,7 +105,8 @@ export const schemas = {
 
   program: {
     create: z.object({
-      athlete_id: z.uuid(),
+      // null: a template with no athlete (Feature G8).
+      athlete_id: z.uuid().nullable(),
       name: z.string().min(1).max(200),
       description: optionalString(2000),
       start_date: optionalIsoDate,
@@ -101,6 +140,8 @@ export const schemas = {
     duration: z.object({
       start_date: isoDate,
       weeks: z.number().int().min(1).max(52),
+      // The coach has agreed that training days outside the new dates go.
+      remove_outside: z.boolean().optional(),
     }),
   },
 
@@ -131,6 +172,7 @@ export const schemas = {
       intensity: optionalString(100),
       load_used: optionalString(100),
       rpe: optionalString(50),
+      velocity: optionalString(100),
       group_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
     }),
     update: z.object({
@@ -146,6 +188,7 @@ export const schemas = {
       intensity: optionalString(100),
       load_used: optionalString(100),
       rpe: optionalString(50),
+      velocity: optionalString(100),
       group_id: z.preprocess(emptyToNull, z.uuid().nullable().optional()),
     }),
   },
@@ -158,6 +201,63 @@ export const schemas = {
   moveDay: z.object({
     sourceDate: isoDate,
     targetDate: isoDate,
+    // false/absent: an occupied target swaps places with the source (dragging).
+    // true: the target is replaced by the source (cut and paste).
+    replace: z.boolean().optional(),
+  }),
+
+  // Undo. A day, or some of its exercises, put back exactly as they were —
+  // same ids, same order. See restoreDays / restoreExercises.
+  restoreDays: z.object({
+    days: z.array(z.object({
+      date: isoDate,
+      workout: z.object({
+        id: z.uuid(),
+        name: z.string().max(200),
+        notes: optionalString(2000),
+        completed_at: z.string().max(40).nullable().optional(),
+        created_at: z.string().max(40).optional(),
+        // Discord videos that were attached to the day, to attach again.
+        mediaIds: z.array(z.uuid()).max(500).optional(),
+        exercises: z.array(restoredExercise).max(300),
+      }).nullable(),
+    })).min(1).max(120),
+  }),
+
+  duplicateProgram: z.object({
+    // null keeps the copy as a template with no athlete.
+    athlete_id: z.uuid().nullable(),
+    name: z.string().trim().min(1).max(200),
+    start_date: isoDate,
+    keep_results: z.boolean().optional(),
+    scale_loads: z.boolean().optional(),
+  }),
+
+  renameExercise: z.object({
+    from: z.string().trim().min(1).max(200),
+    to: z.string().trim().min(1).max(200),
+    from_date: optionalIsoDate,
+  }),
+
+  restoreExercises: z.object({
+    exercises: z.array(restoredExercise).min(1).max(300),
+  }),
+
+  updateExercises: z.object({
+    updates: z.array(z.object({
+      id: z.uuid(),
+      patch: z.object({
+        weight: z.number().min(0).nullable().optional(),
+        intensity: optionalString(100),
+        reps: optionalString(50),
+      }),
+    })).min(1).max(2000),
+  }),
+
+  pasteExercises: z.object({
+    anchorId: z.uuid().nullable().optional(),
+    anchorPatch: pastedFields.nullable().optional(),
+    rows: z.array(pastedFields).max(200),
   }),
 
   reorderExercises: z.object({
@@ -173,6 +273,16 @@ export const schemas = {
     }),
   },
 
+  // The rep an athlete's sets of a lift are drawn against (BP28). A null
+  // analysisId clears it.
+  referenceRep: {
+    set: z.object({
+      lift: z.string().min(1).max(60),
+      analysisId: z.string().min(1).max(64).nullable(),
+      repIndex: z.number().int().min(0).max(1000).optional(),
+    }),
+  },
+
   athleteMax: {
     create: z.object({
       lift_name: z.string().min(1).max(100),
@@ -180,6 +290,8 @@ export const schemas = {
       unit: z.preprocess(emptyToNull, z.string().max(20).nullable().optional()),
       recorded_at: z.preprocess(emptyToUndefined, isoDate.optional()),
       notes: optionalString(2000),
+      // A bar path estimate the coach confirmed (BP34), not a lifted max.
+      estimated: z.boolean().optional(),
     }),
   },
 

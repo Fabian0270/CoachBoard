@@ -5,7 +5,7 @@ import type {
   ToggleableColumn,
 } from 'coachboard-shared'
 
-export { TOGGLEABLE_COLUMNS } from 'coachboard-shared'
+export { TOGGLEABLE_COLUMNS, DEFAULT_ENABLED_COLUMNS } from 'coachboard-shared'
 export type { Exercise, Workout, ToggleableColumn }
 
 // The program detail API always includes workouts, so narrow the shared type.
@@ -19,6 +19,8 @@ export const COLUMN_LABELS: Record<ToggleableColumn, string> = {
   load_cap: 'Load Cap',
   load_used: 'Load Used',
   rpe: 'Last Set RPE',
+  notes: 'Notes (your cues)',
+  velocity: 'Velocity (target speed)',
 }
 
 export type ColKey = 'name' | 'sets' | 'reps' | ToggleableColumn
@@ -85,6 +87,8 @@ export function exerciseValue(ex: Exercise, key: ColKey): string {
     case 'intensity': return ex.intensity ?? ''
     case 'load_used': return ex.load_used ?? ''
     case 'rpe': return ex.rpe ?? ''
+    case 'notes': return ex.notes ?? ''
+    case 'velocity': return ex.velocity ?? ''
     default: {
       const _exhaustive: never = key
       void _exhaustive
@@ -102,6 +106,8 @@ export const DEFAULT_COL_WIDTH: Record<ColKey, number> = {
   load_cap: 90,
   load_used: 90,
   rpe: 90,
+  notes: 200,
+  velocity: 110,
 }
 
 export function buildColumns(enabled: ToggleableColumn[]): ColDef[] {
@@ -113,7 +119,37 @@ export function buildColumns(enabled: ToggleableColumn[]): ColDef[] {
   if (enabled.includes('load_cap')) cols.push({ key: 'load_cap', label: 'Load Cap', width: 90, numeric: true })
   if (enabled.includes('load_used')) cols.push({ key: 'load_used', label: 'Load Used', width: 90 })
   if (enabled.includes('rpe')) cols.push({ key: 'rpe', label: 'Last Set RPE', width: 90, placeholder: 'e.g. 8' })
+  // Last, as in the exported sheet.
+  if (enabled.includes('notes')) cols.push({ key: 'notes', label: 'Notes', width: 200, placeholder: 'e.g. pause 2 s' })
+  // BP39 (D71, D72): a speed, a range or a loss cut-off, as the coach types them.
+  if (enabled.includes('velocity')) cols.push({ key: 'velocity', label: 'Velocity', width: 110, placeholder: 'e.g. 0.50, VL 20%' })
   return cols
+}
+
+/**
+ * What changing a program's start date and length would do to its training days.
+ *
+ * Mirrors setProgramDuration on the server, so the page can tell the coach
+ * before anything is sent: the days move with the first Monday, and any that
+ * then fall outside the new dates are the ones a shorter program removes.
+ */
+export function planDurationChange(
+  program: { start_date: string | null; workouts: Workout[] },
+  startDate: string,
+  weeks: number,
+): { shiftDays: number; outside: Workout[]; newStart: string; newEnd: string } {
+  const monday = mondayOf(parseIsoDate(startDate))
+  const newStart = toIsoDate(monday)
+  const newEnd = toIsoDate(addDays(monday, weeks * 7 - 1))
+  const shiftDays = program.start_date
+    ? Math.round((monday.getTime() - mondayOf(parseIsoDate(program.start_date)).getTime()) / 86_400_000)
+    : 0
+  const outside = program.workouts.filter((w) => {
+    if (!w.scheduled_date) return false
+    const moved = toIsoDate(addDays(parseIsoDate(w.scheduled_date), shiftDays))
+    return moved < newStart || moved > newEnd
+  })
+  return { shiftDays, outside, newStart, newEnd }
 }
 
 export const pendingWorkoutCreations = new Map<string, Promise<Workout | null>>()

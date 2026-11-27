@@ -60,10 +60,41 @@ export interface GuildMemberHit {
 
 /** Values parsed out of a message caption like "180 kg for 2 @8". */
 export interface ParsedCaption {
-  weightKg: number | null
+  /**
+   * The load, in `unit` — the athlete's (S3). A caption without a unit ("225x3")
+   * is taken to be in it; one naming the other unit ("100 kg x 3" from a lb
+   * athlete) is converted.
+   */
+  weight: number | null
+  unit: 'kg' | 'lb'
   reps: number | null
   rpe: number | null
   liftKeywords: string[]
+}
+
+/**
+ * A row of a training day the result in a caption ("180x3 @8") could be
+ * logged on (L1, D66). Rows that already hold a Load Used or RPE are never
+ * overwritten; they come back with `alreadyLogged` so the picker can say so.
+ */
+export interface CaptionLogRow {
+  exerciseId: string
+  name: string
+  sets: string | null
+  reps: string | null
+  /** The planned load (Load Cap), when there is one. */
+  weight: number | null
+  intensity: string | null
+  loadUsed: string | null
+  rpe: string | null
+  alreadyLogged: boolean
+  /** The lift and load agree with the caption. */
+  fits: boolean
+}
+
+export interface CaptionLogCandidates {
+  caption: ParsedCaption
+  rows: CaptionLogRow[]
 }
 
 export type DownloadStatus = 'pending' | 'downloaded' | 'failed' | 'skipped_too_large'
@@ -114,6 +145,8 @@ export interface DiscordMediaItem {
   thumbStatus: 'ok' | 'unsupported' | 'failed' | null
   /** Video length, captured in the same pass as the thumbnail. */
   durationMs: number | null
+  /** Saved bar path analyses of this clip (BP19): the picker marks the ones already done. */
+  analysisCount: number
 }
 
 export interface DiscordUserItem {

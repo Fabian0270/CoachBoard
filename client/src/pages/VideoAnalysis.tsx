@@ -2,49 +2,47 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
+  ArrowRight,
   Check,
   Columns2,
-  Crosshair,
+  FileDown,
   Loader2,
-  Palette,
-  PersonStanding,
-  RotateCcw,
-  Ruler,
   Save,
-  Target,
-  Undo2,
+  Smartphone,
   UserRound,
-  X,
 } from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
+import { ApiError, errorMessage, getJson, getList, sendJson } from '../lib/api'
 import AnalysisStage, {
+  repWindows,
   type CalibrationLine,
   type SeedPoint,
   type StageMode,
 } from '../components/analysis/AnalysisStage'
 import VideoPicker, { type AnalysisSource } from '../components/analysis/VideoPicker'
-import DrawControls from '../components/analysis/DrawControls'
 import type { Stroke } from '../components/analysis/annotations'
 import { useTracker, type TrackStream } from '../components/analysis/useTracker'
 import { captureInto } from '../components/analysis/captureFrames'
 import type { Sample, TrackQuality } from '../components/analysis/tracker.core'
-import { TRACKER_COLORS, useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
-import { usePose, type PoseStream } from '../components/analysis/usePose'
+import { usePlateMm, useShowAngles, useShowMidFoot, useShowPose, useTrackerColor } from '../components/analysis/trackerColor'
+import { midFootByRep } from '../components/analysis/midFoot'
+import { usePose } from '../components/analysis/usePose'
+import { readClipPose } from '../components/analysis/clipPose'
 import { savePose, putCorrection } from '../components/analysis/poseApi'
 import {
+  MID_FOOT_LIFTS,
   applyCorrections,
   correctionsAtTimes,
-  smooth,
   type PoseFrame,
   type TimedCorrection,
 } from 'coachboard-shared/pose'
+import { displayPose } from 'coachboard-shared/poseRefine'
+import { repLockouts } from 'coachboard-shared/lockout'
 import {
   analysePath,
-  looksMistracked,
   pixelsPerMetreFromPlate,
-  PLATE_DIAMETERS_MM,
   type RepMetrics,
 } from 'coachboard-shared/videoAnalysis'
 import {
@@ -52,19 +50,37 @@ import {
   lastRepVelocity,
   liftLabel,
   measuredMvt,
-  readRep,
-  rpeFromLastRepVelocity,
-  zoneFor,
+  type VbtLift,
 } from 'coachboard-shared/vbt'
+import RepTable from '../components/analysis/RepTable'
+import PathPlot from '../components/analysis/PathPlot'
+import BarSpeedChart from '../components/analysis/BarSpeedChart'
+import PathClipButton from '../components/analysis/PathClipButton'
+import PathImageButtons from '../components/analysis/PathImageButtons'
+import { downloadCsv, repCsv } from '../components/analysis/repCsv'
+import { velocityPr } from '../components/analysis/setHistory'
+import { useReferenceRep } from '../components/analysis/referenceRep'
+import ReferencePanel from '../components/analysis/ReferencePanel'
+import JointAngleChart, { angleSeries } from '../components/analysis/JointAngleChart'
+import { captionFill, type CaptionField } from '../components/analysis/captionFill'
+import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
+import TrackingControls from '../components/analysis/TrackingControls'
+import LoadError from '../components/LoadError'
 import VelocityPanel, {
+  rememberLift,
   rememberedLift,
   type SetContextState,
 } from '../components/analysis/VelocityPanel'
+import LiftPrompt, { type KnownLift } from '../components/analysis/LiftPrompt'
 import {
   useVbtHistory,
   useAthleteMaxes,
   useAthleteMvt,
 } from '../components/analysis/useVbtHistory'
+import TrainingDayLink, { NO_LINK, type DayLink } from '../components/analysis/TrainingDayLink'
+import VelocityTargetLine, { tableTarget, useSetTarget } from '../components/analysis/VelocityTarget'
+import { localDay } from 'coachboard-shared/vbtSession'
+import { unitOf } from 'coachboard-shared/units'
 import { useConfirm } from '../components/ui/confirm-dialog'
 import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import { num } from '../lib/num'
@@ -72,6 +88,21 @@ import { uploadVideo } from '../lib/uploadAnalysisVideo'
 import { useUnsavedWork } from '../lib/unsavedWork'
 
 type Phase = 'idle' | 'capturing' | 'tracking' | 'done'
+
+/**
+ * The name an estimated max is stored under (BP34): the plain lift name where
+ * there is one, so the load hints rank it like a lifted max of that lift (the
+ * newest wins) rather than as a variation.
+ */
+function maxNameFor(lift: VbtLift): string {
+  const plain: Partial<Record<VbtLift, string>> = {
+    'back-squat': 'Back squat',
+    'bench-press': 'Bench press',
+    'deadlift-conventional': 'Deadlift',
+    'deadlift-sumo': 'Sumo deadlift',
+  }
+  return plain[lift] ?? liftLabel(lift)
+}
 
 /**
  * Below this the numbers stop meaning anything, so no path is shown at all.
@@ -86,35 +117,6 @@ const MIN_EFFECTIVE_FPS = 12
 /** The tracker's own floor (tracker.core DEFAULTS.minPoints): fewer and it gives up. */
 const MIN_SEED_POINTS = 6
 const MIN_SURVIVAL = 0.4
-
-/**
- * Capture width for the live pose preview.
- *
- * 512, and the number was measured. The 11e-0 spike found input width barely
- * affected SPEED and I wrongly carried that over to accuracy — it does not
- * follow. MediaPipe detects the person and then runs the landmark model on a
- * CROP of them, so a lifter who is a quarter of the frame becomes a tiny,
- * upsampled crop when the frame is small. On a real squat clip, mean lower-body
- * visibility went 0.83 at 256 to 0.88 at 384-512, and inference time was FLAT at
- * 70-80 ms across every width from 256 to 1080. So 256 was giving away accuracy
- * for nothing.
- *
- * Past ~512 it stops improving: 720 and 1080 measured no better, and cost a
- * larger readback on the main thread each time.
- */
-const POSE_PREVIEW_WIDTH = 512
-
-/**
- * Floor on the gap between preview inferences WHILE PLAYING.
- *
- * Roughly six a second. Enough that the skeleton visibly follows the lift, far
- * short of the per-frame rate that made playback stutter — every read is a full
- * canvas readback on the main thread with an inference behind it. Paused and
- * seeking are not throttled at all: that is where the coach reads a position.
- */
-const PREVIEW_MIN_INTERVAL_MS = 160
-
-const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 
 export default function VideoAnalysis() {
   const { mediaId } = useParams()
@@ -163,6 +165,9 @@ export default function VideoAnalysis() {
 
   const [source, setSource] = useState<AnalysisSource | null>(null)
   const [notFound, setNotFound] = useState(false)
+  /** A deep link that failed for another reason than the clip being gone. */
+  const [linkError, setLinkError] = useState<string | null>(null)
+  const [linkAttempt, setLinkAttempt] = useState(0)
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [range, setRange] = useState<{ from: number; to: number } | null>(null)
@@ -173,7 +178,9 @@ export default function VideoAnalysis() {
   const [progress, setProgress] = useState(0)
   const [color, setColor] = useTrackerColor()
   const [showPose, setShowPose] = useShowPose()
-  const [plateMm, setPlateMm] = useState<number>(PLATE_DIAMETERS_MM[0].value)
+  const [showAngles, setShowAngles] = useShowAngles()
+  const [showMidFoot, setShowMidFoot] = useShowMidFoot()
+  const [plateMm, setPlateMm] = usePlateMm()
   const [mode, setMode] = useState<StageMode>('seed')
   /**
    * Freehand marks the coach has drawn over the lift.
@@ -191,6 +198,11 @@ export default function VideoAnalysis() {
   const [savedId, setSavedId] = useState<string | null>(null)
   /** contextNow() as of the last save or update — see contextNow. */
   const [savedContext, setSavedContext] = useState<string | null>(null)
+  /**
+   * The scale as of the last save. A scale changed after saving is not saved
+   * (D50) — the page says so instead, since every number here moves with it.
+   */
+  const [savedScale, setSavedScale] = useState<string | null>(null)
   const [updatingSaved, setUpdatingSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   // Saving a local clip uploads it in chunks; closing midway loses the save.
@@ -204,8 +216,10 @@ export default function VideoAnalysis() {
    * 'none' is the coach explicitly saying this is a throwaway look.
    */
   const [athleteChoice, setAthleteChoice] = useState<string | null>(null)
-  const [roster, setRoster] = useState<{ id: string; name: string; height_cm: number | null }[]>([])
+  const [roster, setRoster] = useState<{ id: string; name: string; height_cm: number | null; unit?: string }[]>([])
   const [savedCount, setSavedCount] = useState(0)
+  /** The coach's note on the set (BP23): the cue they would give, kept with the analysis. */
+  const [note, setNote] = useState('')
   /** What the set was — the lift and load every velocity readout is judged against. */
   const [setContext, setSetContext] = useState<SetContextState>({
     lift: rememberedLift(),
@@ -246,43 +260,85 @@ export default function VideoAnalysis() {
     // clip; the lift is kept, because a coach reviews a whole inbox of squats.
     setSetContext((c) => ({ ...c, loadText: '', calledRpe: null, repsText: '', metric: null }))
     setAthleteChoice(null)
+    forgetSave()
+    setNote('')
     // Leaving the deep link entirely (back to /analysis) means no video at all,
     // so the picker takes over. A locally-imported file has no id and must
     // survive this, hence only clearing when the param is genuinely absent.
     if (!mediaId) setSource(null)
   }, [mediaId])
 
+  // The Discord caption ("180 kg for 2 @8, bänk") fills in what the set was
+  // (BP14). Every field started empty although the clip carried the answer.
+  // Marked "from caption" until the coach changes it.
+  const [fromCaption, setFromCaption] = useState<ReadonlySet<CaptionField>>(new Set())
+  useEffect(() => {
+    const cap = source?.kind === 'discord' ? source.item.parsedCaption : null
+    const fill = captionFill(cap)
+    setFromCaption(new Set(Object.keys(fill) as CaptionField[]))
+    if (Object.keys(fill).length === 0) return
+    setSetContext((c) => ({
+      ...c,
+      ...(fill.lift ? { lift: fill.lift, metric: null } : {}),
+      ...(fill.load != null ? { loadText: String(fill.load) } : {}),
+      ...(fill.reps != null ? { repsText: String(fill.reps) } : {}),
+      ...(fill.rpe != null ? { calledRpe: fill.rpe } : {}),
+    }))
+  }, [source])
+  /** The panel's changes, dropping the "from caption" mark from whatever the coach changed. */
+  const changeSetContext = (next: SetContextState) => {
+    setFromCaption((marks) => {
+      const kept = new Set(marks)
+      if (next.lift !== setContext.lift) kept.delete('lift')
+      if (next.loadText !== setContext.loadText) kept.delete('load')
+      if (next.repsText !== setContext.repsText) kept.delete('reps')
+      if (next.calledRpe !== setContext.calledRpe) kept.delete('rpe')
+      return kept.size === marks.size ? marks : kept
+    })
+    setSetContext(next)
+  }
+
   // The roster, for attaching a local clip to whoever is in it.
   useEffect(() => {
     let cancelled = false
-    fetch('/api/athletes')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: { id: string; name: string; height_cm: number | null; archived?: number }[]) => {
+    getList<{ id: string; name: string; height_cm: number | null; unit?: string; archived?: number }>('/api/athletes')
+      .then((data) => {
         if (cancelled) return
         setRoster(
-          (Array.isArray(data) ? data : [])
+          data
             .filter((a) => !a.archived)
-            .map((a) => ({ id: a.id, name: a.name, height_cm: a.height_cm ?? null })),
+            .map((a) => ({ id: a.id, name: a.name, height_cm: a.height_cm ?? null, unit: a.unit })),
         )
       })
-      .catch(() => !cancelled && setRoster([]))
+      // An empty athlete picker with no reason looked like having no athletes.
+      .catch((err) => {
+        if (cancelled) return
+        setRoster([])
+        toast.error(`Could not load your athletes, so a clip cannot be attached to one. ${errorMessage(err)}`)
+      })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [toast])
 
   // Deep-linked from a video's player dialog: resolve that one and skip the picker.
   useEffect(() => {
     if (!mediaId) return
     let cancelled = false
-    fetch(`/api/discord/media/${mediaId}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('not found'))))
-      .then((data: DiscordMediaItem) => !cancelled && setSource({ kind: 'discord', item: data }))
-      .catch(() => !cancelled && setNotFound(true))
+    setLinkError(null)
+    // Only a 404 means the video is gone (BP6). Every failure used to say so,
+    // sending a coach to look for a clip that was there all along.
+    getJson<DiscordMediaItem>(`/api/discord/media/${encodeURIComponent(mediaId)}`)
+      .then((data) => !cancelled && setSource({ kind: 'discord', item: data }))
+      .catch((err) => {
+        if (cancelled) return
+        if (err instanceof ApiError && err.status === 404) setNotFound(true)
+        else setLinkError(errorMessage(err))
+      })
     return () => {
       cancelled = true
     }
-  }, [mediaId])
+  }, [mediaId, linkAttempt])
 
   // A local file is held as an object URL for as long as it is being analysed.
   // Revoked on swap or unmount, or the bytes stay pinned in memory for the life
@@ -292,6 +348,37 @@ export default function VideoAnalysis() {
     const url = source.url
     return () => URL.revokeObjectURL(url)
   }, [source])
+
+  // A set recorded on the camera screen or sent from the phone brings the
+  // athlete and lift picked there (BP41, D103), so saving afterwards is one click.
+  useEffect(() => {
+    if (source?.kind !== 'local' || !source.preset) return
+    const { athleteId, lift } = source.preset
+    if (athleteId) setAthleteChoice(athleteId)
+    rememberLift(lift)
+    setSetContext((c) => ({ ...c, lift, metric: null }))
+  }, [source])
+
+  /**
+   * The lift, asked first thing for every clip (D126): the plate cannot be
+   * clicked until the coach has said which lift it is. A caption's lift is
+   * picked out for one click. A lift picked before filming — on the camera
+   * screen or the phone, where it is required — is gone by without asking
+   * (D127); "Change" still asks, with it picked out.
+   */
+  const [liftConfirmed, setLiftConfirmed] = useState(false)
+  useEffect(() => setLiftConfirmed(source?.kind === 'local' && !!source.preset), [source])
+  const knownLift: KnownLift | null = useMemo(() => {
+    if (source?.kind === 'local' && source.preset) return { lift: source.preset.lift, from: 'recording' }
+    const fromCap = source?.kind === 'discord' ? captionFill(source.item.parsedCaption).lift : undefined
+    return fromCap ? { lift: fromCap, from: 'caption' } : null
+  }, [source])
+  const confirmLift = (lift: VbtLift) => {
+    rememberLift(lift)
+    // The metric belongs to a lift; a leftover from the last one is silently wrong (see the panel).
+    changeSetContext({ ...setContext, lift, metric: lift === setContext.lift ? setContext.metric : null })
+    setLiftConfirmed(true)
+  }
 
   const videoSrc =
     source?.kind === 'local'
@@ -326,6 +413,11 @@ export default function VideoAnalysis() {
   const placeSeed = (point: { x: number; y: number }) => {
     const video = videoRef.current
     if (!video) return
+    // The lift first (D126): it decides what the page reads off the set.
+    if (!liftConfirmed) {
+      toast.info('Pick the lift above the video first.')
+      return
+    }
     // The click starts a tracking run, and before the analyser has compiled
     // that run plays the clip with nothing consuming its frames.
     if (cvStatus !== 'ready') {
@@ -430,6 +522,38 @@ export default function VideoAnalysis() {
    * the fields stay editable, and a load typed after saving used to go nowhere
    * while the page still said "Saved."
    */
+  /** A save belongs to one clip: none of it may show on the next one. */
+  const forgetSave = () => {
+    setSavedId(null)
+    setSavedContext(null)
+    setSavedScale(null)
+    setOfferSave(false)
+    setMaxOffer('open')
+  }
+
+  /** The estimate on screen, offered as a max after saving (BP34, D60). */
+  const [estimateKg, setEstimateKg] = useState<number | null>(null)
+  const [maxOffer, setMaxOffer] = useState<'open' | 'saving' | 'done' | 'declined'>('open')
+  const recordEstimatedMax = async () => {
+    if (!athleteId || estimateKg == null) return
+    setMaxOffer('saving')
+    try {
+      await sendJson('POST', `/api/athletes/${encodeURIComponent(athleteId)}/maxes`, {
+        lift_name: maxNameFor(setContext.lift),
+        weight: estimateKg,
+        estimated: true,
+        notes: `Estimated from bar speed (${sourceLabel || 'a saved set'})`,
+      })
+      setMaxOffer('done')
+      toast.success(`Recorded ${estimateKg} ${loadUnit} as an estimated ${liftLabel(setContext.lift).toLowerCase()} max. It is used for load hints, not counted as a PR.`)
+    } catch (err) {
+      setMaxOffer('open')
+      toast.error(`Could not record the max. ${errorMessage(err)}`)
+    }
+  }
+
+  const scaleNow = () => JSON.stringify(calibration ? { ...calibration, plateMm } : null)
+
   const contextNow = () =>
     JSON.stringify({
       athleteId,
@@ -437,6 +561,7 @@ export default function VideoAnalysis() {
       loadKg,
       calledRpe: setContext.calledRpe,
       metric: reps.length > 0 ? metric : null,
+      notes: note.trim() || null,
     })
 
   const toggleRep = (index: number) =>
@@ -465,8 +590,18 @@ export default function VideoAnalysis() {
   // Lets the panel judge the plate scale against how far this lifter's bar
   // should actually travel, instead of a band wide enough to cover everyone.
   const athleteHeightCm = roster.find((a) => a.id === athleteId)?.height_cm ?? null
+  // The athlete's unit (S3, D79): the load, the estimate and the offer use it.
+  const loadUnit = unitOf(roster.find((a) => a.id === athleteId)?.unit)
+  // The training day and row the set was (L2, D67). Follows the clip until the
+  // coach picks; a new clip or another athlete starts over.
+  const [linkChoice, setLinkChoice] = useState<DayLink | null>(null)
+  const [dayLink, setDayLink] = useState<DayLink>(NO_LINK)
+  useEffect(() => { setLinkChoice(null) }, [athleteId, source])
+  const liftedDay = source?.kind === 'discord' ? localDay(source.item.postedAt) : localDay(new Date().toISOString())
   const metric = setContext.metric ?? defaultVelocityMetric(setContext.lift)
-  const { anchors: savedAnchors, points: savedPoints } = useVbtHistory(
+  // The linked row's velocity target, and the set against it (BP39, D74).
+  const setTarget = useSetTarget(dayLink.velocity, reps, metric, pixelsPerMetre !== null)
+  const { anchors: savedAnchors, points: savedPoints, rows: historyRows } = useVbtHistory(
     athleteId,
     setContext.lift,
     metric,
@@ -484,6 +619,8 @@ export default function VideoAnalysis() {
         : savedAnchors,
     [savedAnchors, setContext.calledRpe, lastV],
   )
+  // The athlete's reference rep for this lift (BP28), drawn over this set.
+  const reference = useReferenceRep(athleteId, setContext.lift === 'other' ? null : setContext.lift)
 
   const resizeSeed = (delta: number) => {
     const video = videoRef.current
@@ -528,40 +665,13 @@ export default function VideoAnalysis() {
     // halve the effective frame rate — 15 fps out of 30 fps footage, which the
     // quality gate then correctly rejected. The overlay reads this ref directly.
     livePathRef.current = []
-    // The measurement is rebuilt by this pass; the CORRECTIONS deliberately are
-    // not cleared. A coach who fixed a knee on the preview has not withdrawn
-    // that opinion by tracking the bar, and the fixes are pinned to a time, so
-    // they land correctly on the new frames.
-    poseMeasuredRef.current = []
-    poseRef.current = []
-
-    // Opened BEFORE capture, not during: loading the model is ~0.3 s plus a
-    // 5.8 MB fetch on first use, and doing that inside the first frame callback
-    // would stall the capture loop long enough to trip its own stall timeout.
-    // A pose failure is reported and then ignored — the bar path is the
-    // measurement and must not go down with the commentary on it.
-    let poseStream: PoseStream | null = null
-    if (showPose) {
-      try {
-        poseStream = await pose.open({
-          videoWidth: video.videoWidth,
-          videoHeight: video.videoHeight,
-          // VIDEO here, unlike the preview: this pass plays the clip forwards
-          // once, which is exactly the case the region-of-interest reuse was
-          // chosen for. No seed — this pass rebuilds the track.
-          mode: 'VIDEO',
-        })
-      } catch {
-        if (!stale()) toast.error('Could not start pose estimation — tracking the bar path only.')
-      }
-    }
-    // Loading the model can take long enough for the coach to have moved on.
-    if (stale()) {
-      poseStream?.close()
-      return
-    }
+    // The skeleton is not touched: it was read from the whole clip on its own
+    // (D117), and tracking the bar changes nothing about the body.
 
     try {
+      // Frames are read off the playing video, so the coach watches the lift
+      // with the dot on the bar. An every-frame decoder was tried (BP21) and
+      // taken back out (D62): it made the video lag behind the dot.
       const handle = await captureInto(
         video,
         async (frame, isFirst) => {
@@ -594,20 +704,6 @@ export default function VideoAnalysis() {
               setProgress(fraction)
             }
           },
-          // The fan-out: pose reads the frames the tracker is already pulling,
-          // so the coach waits exactly as long as tracking takes today. The ref
-          // is filled by the stream itself, and the overlay reads it directly —
-          // same reason livePathRef is a ref.
-          alsoPush: poseStream
-            ? async (frame) => {
-                await poseStream!.push(frame)
-                poseMeasuredRef.current = poseStream!.frames
-                // Corrections made on the preview are pinned to a moment, so
-                // they land on the right frames of the rebuilt track without
-                // anything having to migrate them.
-                redrawPose()
-              }
-            : undefined,
         },
       )
 
@@ -677,10 +773,6 @@ export default function VideoAnalysis() {
       }
       setSamples(null)
       setPhase('idle')
-    } finally {
-      // The model heap is not reclaimed by dropping the reference, and the
-      // skeleton already found stays drawable from poseRef without it.
-      poseStream?.close()
     }
   }
 
@@ -699,62 +791,53 @@ export default function VideoAnalysis() {
       // better a save the coach can retry than a row pointing at no video.
       const stored = source?.kind === 'local' ? await uploadVideo(source.file) : null
 
-      const res = await fetch('/api/analysis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mediaId: source?.kind === 'discord' ? source.item.id : null,
-          athleteId,
-          sourceLabel: sourceLabel,
-          track: samples,
-          calibration: calibration ? { ...calibration, plateDiameterMm: plateMm } : null,
-          metrics: reps,
-          notes: null,
-          // Only when the velocity panel was actually on screen. With no reps
-          // detected it is hidden, and storing the lift it happens to remember
-          // would be recording a guess the coach never saw.
-          lift: reps.length > 0 ? setContext.lift : null,
-          loadKg: loadKg,
-          calledRpe: setContext.calledRpe,
-          // Stored so reopening reads the set the same way this page did.
-          metric: reps.length > 0 ? metric : null,
-          videoPath: stored?.relPath ?? null,
-          videoBytes: stored?.bytes ?? null,
-        }),
+      const saved = await sendJson<{ id: string }>('POST', '/api/analysis', {
+        mediaId: source?.kind === 'discord' ? source.item.id : null,
+        athleteId,
+        sourceLabel: sourceLabel,
+        track: samples,
+        calibration: calibration ? { ...calibration, plateDiameterMm: plateMm } : null,
+        metrics: reps,
+        notes: note.trim() || null,
+        // Only when the velocity panel was actually on screen. With no reps
+        // detected it is hidden, and storing the lift it happens to remember
+        // would be recording a guess the coach never saw.
+        lift: reps.length > 0 ? setContext.lift : null,
+        loadKg: loadKg,
+        calledRpe: setContext.calledRpe,
+        // Stored so reopening reads the set the same way this page did.
+        metric: reps.length > 0 ? metric : null,
+        videoPath: stored?.relPath ?? null,
+        videoBytes: stored?.bytes ?? null,
+        workoutId: athleteId ? dayLink.workoutId : null,
+        exerciseId: athleteId && dayLink.workoutId ? dayLink.exerciseId : null,
       })
-      if (!res.ok) throw new Error('Save failed')
-      const saved = (await res.json()) as { id: string }
       setSavedId(saved.id)
       setSavedContext(contextNow())
+      setSavedScale(scaleNow())
       setOfferSave(false)
       setSavedCount((n) => n + 1)
       toast.success('Analysis saved')
-
-      // The skeleton rides along in its own request. Separate because it is
-      // ~238 KB against the analysis's ~10 KB and almost every read of an
-      // analysis does not want it — and because failing to store it must not
-      // cost the coach the bar path, which is the actual measurement.
-      if (poseMeasuredRef.current.length > 0) {
-        try {
-          // The MEASUREMENT is stored, never the corrected copy — the whole
-          // point of keeping them in two layers is that re-running the model
-          // cannot destroy a fix, and that only holds if the fix was never
-          // baked into what the model said.
-          await savePose(saved.id, poseMeasuredRef.current)
-          for (const c of correctionsAtTimes(poseMeasuredRef.current, poseCorrections)) {
-            await putCorrection(saved.id, c)
-          }
-        } catch {
-          toast.error('The analysis was saved, but the skeleton could not be.')
+      // The fastest set at this load so far (BP35, D54), against the athlete's
+      // earlier sets as they stood before this save.
+      if (athleteId && reps.length > 0 && loadKg != null) {
+        const pr = velocityPr(historyRows, { id: saved.id, lift: setContext.lift, loadKg, createdAt: new Date().toISOString(), metrics: reps }, metric)
+        if (pr?.kind === 'pr') {
+          toast.success(`Velocity PR — the fastest ${loadKg} ${loadUnit} ${liftLabel(setContext.lift).toLowerCase()} so far: ${pr.best.toFixed(2)} m/s (was ${pr.previous.toFixed(2)}).`)
         }
       }
+
+      // The skeleton, if the clip has been read; if it is still being read it
+      // goes up the moment that finishes (see the reading effect).
+      await storePose(saved.id)
 
       // Last, because it can open a dialog and wait on the coach. Everything
       // above is a write that should already have landed by the time a modal
       // takes over the window.
       await offerMeasuredMvt()
-    } catch {
-      toast.error('Could not save that analysis.')
+    } catch (err) {
+      // The reason used to be dropped, leaving the coach nothing to act on (BP6).
+      toast.error(`Could not save that analysis. ${errorMessage(err)}`)
     } finally {
       setSaving(false)
     }
@@ -828,11 +911,11 @@ export default function VideoAnalysis() {
   const reset = () => {
     abandonRun()
     livePathRef.current = []
-    // Clear is "start this clip over", so the corrections go too.
-    poseMeasuredRef.current = []
-    poseRef.current = []
+    // Clear is "start this clip over", so the corrections go too. The skeleton
+    // read from the clip stays: reading it again would give the same thing.
     poseCorrectionsRef.current = []
     setPoseCorrections([])
+    redrawPose()
     setSeed(null)
     setSamples(null)
     setQuality(null)
@@ -851,7 +934,42 @@ export default function VideoAnalysis() {
     setCurrentTime(0)
     setSource(null)
     setNotFound(false)
+    setLinkError(null)
+    setNote('')
+    forgetSave()
     if (mediaId) navigate('/analysis', { replace: true })
+  }
+
+  /**
+   * "Next clip" after saving (BP19, D48): the next one down the picker's list
+   * — older — that has no saved analysis yet, so an inbox can be worked
+   * through without going back to the picker each time.
+   */
+  const [findingNext, setFindingNext] = useState(false)
+  const openNextClip = async () => {
+    if (source?.kind !== 'discord') return
+    const currentId = source.item.id
+    setFindingNext(true)
+    try {
+      let seen = false
+      for (let offset = 0; ; ) {
+        const page = await getJson<{ items: DiscordMediaItem[]; total: number }>(`/api/discord/media?filter=all&limit=200&offset=${offset}`)
+        for (const m of page.items) {
+          if (seen && m.isVideo && m.playable && m.analysisCount === 0) {
+            navigate(`/analysis/${m.id}`)
+            return
+          }
+          if (m.id === currentId) seen = true
+        }
+        offset += page.items.length
+        if (page.items.length === 0 || offset >= page.total) break
+      }
+      toast.info('No older clip is waiting for an analysis.')
+    } catch (err) {
+      toast.error(`Could not find the next clip. ${errorMessage(err)}`)
+    } finally {
+      setFindingNext(false)
+    }
   }
 
   // ------------------------------------------------------------------
@@ -870,23 +988,20 @@ export default function VideoAnalysis() {
   busyRef.current = busy
 
   /**
-   * Jitter-filtered copy of a finished track, memoised on the source array.
+   * The displayed copy of the clip's skeleton (legs rebuilt, jitter-filtered),
+   * memoised on the source array.
    *
-   * `smooth` costs 19 ms for a 300-frame track and 55 ms for 900 — measured —
-   * so running it per redraw would eat most of a core at thirty redraws a
-   * second, which is exactly the rebuild the note on redrawPose warns about.
-   * The source array is replaced wholesale rather than mutated, so identity is a
-   * sound cache key.
-   *
-   * Skipped while frames are still arriving, and not only to save the work: a
-   * median window needs neighbours on BOTH sides, so the newest frame — the one
-   * being drawn during live tracking — is the one it can do least for.
+   * `smooth` alone costs 19 ms for a 300-frame track and 55 ms for 900 —
+   * measured — so running it per redraw would eat most of a core at thirty
+   * redraws a second. The skeleton is read whole before it is shown (D117) and
+   * replaced, never mutated, so identity is a sound cache key and every redraw
+   * after the first is a lookup.
    */
   const poseSmoothCache = useRef<{ source: PoseFrame[]; result: PoseFrame[] } | null>(null)
   const smoothedPose = (measured: PoseFrame[]): PoseFrame[] => {
-    if (busyRef.current || measured.length < 3) return measured
+    if (measured.length < 3) return measured
     if (poseSmoothCache.current?.source === measured) return poseSmoothCache.current.result
-    const result = smooth(measured)
+    const result = displayPose(measured)
     poseSmoothCache.current = { source: measured, result }
     return result
   }
@@ -911,7 +1026,6 @@ export default function VideoAnalysis() {
     poseRef.current = timed.length
       ? applyCorrections(measured, correctionsAtTimes(measured, timed))
       : measured
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   /** Records a joint the coach has moved, against the moment it belongs to. */
@@ -932,157 +1046,166 @@ export default function VideoAnalysis() {
     [redrawPose],
   )
 
+  // ── The skeleton, read from the whole clip first (D117) ─────────────────
   /**
-   * The skeleton before any tracking has happened.
+   * Where reading the clip's skeleton stands. `progress` is 0-1 while reading.
    *
-   * Pose used to run ONLY inside the tracking pass, which meant switching it on
-   * did nothing until the coach placed a point and tracked the bar — and there
-   * was no way to fix a joint before committing to a run. This reads whatever
-   * frame is on screen instead: switch it on and the lifter has a skeleton,
-   * scrub and it follows, drag a joint and the fix sticks.
-   *
-   * Frames come off requestVideoFrameCallback, which fires when the compositor
-   * presents one — on load, on every seek, and continuously during playback. So
-   * a paused clip costs one inference and a played one costs the same as
-   * tracking would.
-   *
-   * Stops while tracking, which opens its own stream and reads the same frames
-   * through captureInto's fan-out. Two model instances competing for one CPU
-   * would slow the pass the fan-out exists to keep free.
+   * The skeleton used to be read live — the frame on screen, and the frames the
+   * tracker pulled — with the model carrying its search region frame to frame.
+   * Filmed from the side, a loaded bar hides the legs and that region drifted
+   * onto the plate. Now the whole clip is read first, every frame on its own,
+   * and the clip as a whole puts the hidden legs right (poseRefine.ts); the
+   * coach waits a little and then sees the best limbs it allows.
    */
+  const [poseRead, setPoseRead] = useState<{ status: 'idle' | 'reading' | 'done' | 'error'; progress: number }>({ status: 'idle', progress: 0 })
+  /** The clip whose skeleton poseMeasuredRef holds in full. */
+  const poseReadFor = useRef<string | null>(null)
+  /** The analysis the skeleton has been stored against, so it goes up once. */
+  const poseStoredFor = useRef<string | null>(null)
+  const videoSrcRef = useRef(videoSrc)
+  videoSrcRef.current = videoSrc
+  const savedIdRef = useRef(savedId)
+  savedIdRef.current = savedId
+
+  /**
+   * Stores the clip's skeleton against a saved analysis, once it has been read.
+   *
+   * The MEASUREMENT is stored, never the displayed or corrected copy — the
+   * whole point of keeping them in layers is that re-reading cannot destroy a
+   * fix, and that only holds if the fix was never baked into what the model
+   * said. In its own request, and failing it must not cost the coach the bar
+   * path, which is the actual measurement.
+   */
+  const storePose = async (id: string) => {
+    if (poseStoredFor.current === id) return
+    if (poseReadFor.current !== videoSrcRef.current || poseMeasuredRef.current.length === 0) return
+    poseStoredFor.current = id
+    try {
+      await savePose(id, poseMeasuredRef.current)
+      for (const c of correctionsAtTimes(poseMeasuredRef.current, poseCorrectionsRef.current)) {
+        await putCorrection(id, c)
+      }
+    } catch {
+      poseStoredFor.current = null
+      toast.error('The analysis was saved, but the skeleton could not be.')
+    }
+  }
+
   useEffect(() => {
+    // A different clip, or none: what was read belongs to the last one.
+    if (poseReadFor.current !== videoSrc) {
+      poseReadFor.current = null
+      poseStoredFor.current = null
+      poseMeasuredRef.current = []
+      poseRef.current = []
+      setPoseRead({ status: 'idle', progress: 0 })
+    }
     const video = videoRef.current
-    if (!showPose || busy || !source || !video) return
+    if (!showPose || !source || !videoSrc || !video || poseReadFor.current === videoSrc) return
 
-    let cancelled = false
-    let stream: PoseStream | null = null
-    let pending: number | null = null
-    /** Removes the seek listener; only set once the loop is actually running. */
-    let detach: (() => void) | null = null
-
+    const controller = new AbortController()
+    const forSrc = videoSrc
     const start = async () => {
-      // Metadata may not have landed yet; without dimensions there is nothing to
-      // normalise landmarks against.
       if (!video.videoWidth) {
-        await new Promise<void>((resolve) => {
-          video.addEventListener('loadedmetadata', () => resolve(), { once: true })
-        })
+        await new Promise<void>((resolve) => video.addEventListener('loadedmetadata', () => resolve(), { once: true }))
       }
-      if (cancelled || !video.videoWidth) return
-
+      if (controller.signal.aborted || !video.videoWidth) return
+      setPoseRead({ status: 'reading', progress: 0 })
+      let lastShown = 0
       try {
-        stream = await pose.open({
-          videoWidth: video.videoWidth,
-          videoHeight: video.videoHeight,
-          // IMAGE, not VIDEO. The coach scrubs, and VIDEO mode carries a region
-          // of interest forward and demands rising timestamps — so a jump
-          // backwards hands it an image from elsewhere while the clock says a
-          // millisecond passed, and the skeleton comes back stale or bent onto
-          // the wrong part of the frame. IMAGE treats each frame on its own.
-          mode: 'IMAGE',
-          // Seeded with what the preview already found, so switching the
-          // skeleton off and back on continues rather than starting over.
-          seed: poseMeasuredRef.current,
+        const frames = await readClipPose({
+          source: source.kind === 'local' ? { blob: source.file } : { url: forSrc },
+          src: forSrc,
+          duration: video.duration,
+          // Each frame on its own (IMAGE): nothing carried from one to the next.
+          open: () => pose.open({ videoWidth: video.videoWidth, videoHeight: video.videoHeight, mode: 'IMAGE' }),
+          signal: controller.signal,
+          // Tracking reads the playing video and has a frame-rate floor; it gets the CPU.
+          hold: () => busyRef.current,
+          onProgress: (fraction) => {
+            const now = performance.now()
+            if (now - lastShown > 250) {
+              lastShown = now
+              setPoseRead({ status: 'reading', progress: fraction })
+            }
+          },
         })
+        if (controller.signal.aborted) return
+        poseMeasuredRef.current = frames
+        poseReadFor.current = forSrc
+        redrawPose()
+        setPoseRead({ status: 'done', progress: 1 })
+        // Saved while it was still being read: it goes up now.
+        if (savedIdRef.current) void storePose(savedIdRef.current)
       } catch {
-        return // usePose has already reported it; the toolbar shows why.
+        if (controller.signal.aborted) return
+        setPoseRead({ status: 'error', progress: 0 })
       }
-      if (cancelled) {
-        stream.close()
-        return
-      }
-
-      const width = POSE_PREVIEW_WIDTH
-      const height = Math.round((width / video.videoWidth) * video.videoHeight)
-      const canvas = document.createElement('canvas')
-      canvas.width = width
-      canvas.height = height
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })
-      if (!ctx) return
-
-      let working = false
-
-      /** Reads whatever the video is showing right now, at time `t`. */
-      const readCurrentFrame = (t: number) => {
-        // Frames arriving while the previous one is still in the model are
-        // skipped, not queued — the same rule captureInto's fan-out follows.
-        if (cancelled || !stream || working) return
-        working = true
-        // Drawn from the video element, never createImageBitmap: the bitmap path
-        // applies its resize before the clip's rotation metadata and hands back
-        // sideways content for a portrait clip.
-        ctx.drawImage(video, 0, 0, width, height)
-        const data = ctx.getImageData(0, 0, width, height).data
-        void stream
-          .push({ t, width, height, data })
-          .then(() => {
-            if (cancelled || !stream) return
-            poseMeasuredRef.current = stream.frames
-            redrawPose()
-          })
-          .finally(() => {
-            working = false
-          })
-      }
-
-      /**
-       * Throttled DURING PLAYBACK, and not at all when paused or seeking.
-       *
-       * Reading a frame costs a full getImageData off the main thread, and
-       * running one on every presented frame — plus an inference behind it —
-       * made playback visibly stutter. The preview is for looking at a position,
-       * not for building a dense track; that is what the tracking pass is for,
-       * where the frames are wanted anyway.
-       *
-       * So while the clip is playing the skeleton refreshes a few times a second
-       * and the video plays smoothly. Pausing or scrubbing gets an immediate
-       * read, because that is where the coach is actually reading a position and
-       * correcting a joint.
-       */
-      let lastRunAt = 0
-      const onFrame = (_now: number, meta: { mediaTime: number }) => {
-        if (cancelled || !stream) return
-        const now = performance.now()
-        if (now - lastRunAt >= PREVIEW_MIN_INTERVAL_MS) {
-          lastRunAt = now
-          readCurrentFrame(meta.mediaTime)
-        }
-        pending = video.requestVideoFrameCallback(onFrame)
-      }
-
-      /**
-       * A CLIP IS PAUSED WHEN IT LOADS, AND THAT IS THE WHOLE POINT.
-       *
-       * requestVideoFrameCallback fires when the compositor PRESENTS a frame. A
-       * paused video that has already painted presents nothing further, so a
-       * loop built only on rVFC never runs a single inference — switch the
-       * skeleton on and it sits there looking broken until you happen to press
-       * play. That is what shipped, and every check here passed because the
-       * probe played the clip first.
-       *
-       * So the frame on screen is read immediately, and again after every seek,
-       * with rVFC covering playback.
-       */
-      readCurrentFrame(video.currentTime)
-      const onSeeked = () => readCurrentFrame(video.currentTime)
-      video.addEventListener('seeked', onSeeked)
-      detach = () => video.removeEventListener('seeked', onSeeked)
-
-      pending = video.requestVideoFrameCallback(onFrame)
     }
-
     void start()
-    return () => {
-      cancelled = true
-      if (pending !== null) video.cancelVideoFrameCallback?.(pending)
-      detach?.()
-      stream?.close()
-    }
-    // Deliberately NOT depending on redrawPose or pose: both are stable, and
-    // re-running this would tear the model down and rebuild it — a ~0.3 s stall
-    // and a lost preview — on every render.
-  }, [showPose, busy, source])
+    return () => controller.abort()
+    // Deliberately not depending on pose, redrawPose or storePose: re-running
+    // this would throw away a read in progress on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPose, source, videoSrc])
 
+  /**
+   * Joint angles against the bar on this page too (BP13), once the bar is
+   * tracked and the clip's skeleton read. poseRef is read rather than depended
+   * on — a correction is what changes it, and poseCorrections is the state that
+   * says so; poseRead says the skeleton itself arrived.
+   */
+  const poseSeries = useMemo(() => {
+    if (busy || !showPose || !samples || samples.length < 2) return null
+    const frames = poseRef.current
+    if (frames.length < 2) return null
+    return angleSeries(frames, samples, pixelsPerMetre)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, showPose, samples, poseCorrections, pixelsPerMetre, poseRead.status])
+
+  // ── Keys (BP15, D37) ────────────────────────────────────────────────────
+  // The stage takes Space, ← / →, F and 1–9; these are the page's own.
+  // Above the early returns, as every hook must be; it works out what it needs
+  // from state rather than from values declared further down.
+  const setRangeStart = () =>
+    setRange((r) => ({ from: currentTime, to: Math.max(currentTime + 0.2, r?.to ?? duration) }))
+  const setRangeEnd = () =>
+    setRange((r) => ({ from: Math.min(r?.from ?? 0, currentTime - 0.2), to: currentTime }))
+  const toggleCalibrate = () => {
+    setMode((m) => (m === 'calibrate' ? 'seed' : 'calibrate'))
+    setAwaitingSecondPoint(false)
+  }
+  useAnalysisKeys(!!videoSrc, (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      if (!samples || saving || updatingSaved) return true
+      if (!savedId) void saveAnalysis()
+      else if (savedContext !== contextNow()) void updateSavedContext()
+      return true
+    }
+    if (busy) return false
+    if (plainKey(e, 'i')) { setRangeStart(); return true }
+    if (plainKey(e, 'o')) { setRangeEnd(); return true }
+    if (plainKey(e, 't')) {
+      if (!!seed && cvStatus === 'ready' && !!range) retrack()
+      return true
+    }
+    if (plainKey(e, 's')) { toggleCalibrate(); return true }
+    if (plainKey(e, 'p')) {
+      setMode((m) => (m === 'draw' ? 'seed' : 'draw'))
+      setAwaitingSecondPoint(false)
+      return true
+    }
+    return false
+  })
+
+  if (linkError) {
+    return (
+      <div className="space-y-4 p-8">
+        <LoadError what="that video" message={linkError} onRetry={() => setLinkAttempt((n) => n + 1)} />
+        <Button variant="outline" onClick={chooseAnother}>Choose another video</Button>
+      </div>
+    )
+  }
   if (notFound) {
     return (
       <div className="p-8">
@@ -1119,6 +1242,19 @@ export default function VideoAnalysis() {
           <p className="text-sm text-muted-foreground">Loading video…</p>
         ) : (
           <>
+            {/* Before a clip is picked, not after tracking (BP27): every number
+                on the page assumes this, and it is the moment the coach can
+                still pass it on to the athlete. */}
+            <section className="rounded-md border bg-muted/40 p-3 text-sm" aria-label="Filming tips">
+              <p className="flex items-center gap-2 font-medium">
+                <Smartphone className="h-4 w-4 text-muted-foreground" /> For numbers you can trust, the clip needs
+              </p>
+              <ul className="mt-1.5 list-disc space-y-0.5 pl-9 text-muted-foreground">
+                <li>the camera side-on to the bar, level with it — the plate a circle, not an oval</li>
+                <li>the whole plate in frame for the whole set, with nothing passing in front of it</li>
+                <li>the phone held still, on a stand or something solid — a moving camera moves the path</li>
+              </ul>
+            </section>
             <VideoPicker onPick={setSource} />
             <div className="space-y-2">
               <h2 className="text-sm font-medium">Saved analyses</h2>
@@ -1130,24 +1266,70 @@ export default function VideoAnalysis() {
     )
   }
 
+  // The top before each rep: 1–9 and a click on a rep's number go there, so the whole rep plays.
+  const repTops = samples?.length && trackedReps.length ? repWindows(trackedReps, samples[0].t).map((w) => w.from) : []
   const canTrack = !!seed && cvStatus === 'ready' && !busy && !!range
 
   return (
     <div className="space-y-4 p-6">
-      <div className="flex items-center gap-3">
+      {/* Wraps, like the saved page's: the actions outgrow one line on a narrow window. */}
+      <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="sm" onClick={chooseAnother} title="Choose another video">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-[1_1_16rem]">
           <h1 className="text-lg font-semibold">Bar path analysis</h1>
           <p className="truncate text-sm text-muted-foreground">{sourceLabel}</p>
         </div>
-        <Button variant="outline" size="sm" className="ml-auto" onClick={chooseAnother} disabled={busy}>
-          Choose another video
-        </Button>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* The frame on screen as an image for the athlete (BP24). */}
+          {samples && samples.length > 1 && !busy && source && (
+            <PathImageButtons
+              videoRef={videoRef}
+              track={samples}
+              reps={reps}
+              metric={metric}
+              strokes={strokes}
+              color={color}
+              title={[
+                reps.length > 0 ? liftLabel(setContext.lift) : 'Bar path',
+                loadKg != null ? `${loadKg} ${loadUnit}` : null,
+                roster.find((a) => a.id === athleteId)?.name ?? (source.kind === 'discord' ? source.item.athleteName : null),
+                source.kind === 'discord' ? source.item.postedAt.slice(0, 10) : null,
+              ].filter(Boolean).join(' · ')}
+              note={note.trim() || null}
+              name={source.kind === 'local' ? source.name : sourceLabel}
+            />
+          )}
+          {/* The clip with the path drawn in (BP25), once there is a path. */}
+          {samples && samples.length > 1 && !busy && source && (
+            <PathClipButton
+              source={source.kind === 'local' ? source.file : `/api/discord/media/${source.item.id}/file`}
+              track={samples}
+              reps={trackedReps}
+              strokes={strokes}
+              color={color}
+              name={source.kind === 'local' ? source.name : sourceLabel}
+            />
+          )}
+          <Button variant="outline" size="sm" onClick={chooseAnother} disabled={busy}>
+            Choose another video
+          </Button>
+        </div>
       </div>
 
+      {/* The lift, first thing (D126). */}
+      {videoSrc && !liftConfirmed && <LiftPrompt known={knownLift} onPick={confirmLift} />}
+      {videoSrc && liftConfirmed && (
+        <p className="text-sm text-muted-foreground">
+          Lift: <span className="font-medium text-foreground">{liftLabel(setContext.lift)}</span>
+          <Button size="sm" variant="ghost" className="ml-1 h-7 px-2" onClick={() => setLiftConfirmed(false)}>Change</Button>
+        </p>
+      )}
       {videoSrc && (
+        // The reps' paths beside the video once there are any (BP10), laid
+        // over each other; it was never on this page before.
+        <div className={samples && trackedReps.length > 0 ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]' : ''}>
         <AnalysisStage
           src={videoSrc}
           videoRef={videoRef}
@@ -1156,6 +1338,10 @@ export default function VideoAnalysis() {
           livePathRef={livePathRef}
           poseRef={poseRef}
           showPose={showPose}
+          showAngles={showAngles}
+          showMidFoot={showMidFoot && MID_FOOT_LIFTS.includes(setContext.lift)}
+          poseLift={setContext.lift}
+          ghost={reference.shape && pixelsPerMetre ? { path: reference.shape.path, pixelsPerMetre } : null}
           onCorrectLandmark={correctPoseLandmark}
           onPlaceSeed={placeSeed}
           onLoadedMetadata={onLoadedMetadata}
@@ -1165,9 +1351,38 @@ export default function VideoAnalysis() {
           mode={mode}
           calibration={calibration}
           onCalibratePoint={addCalibrationPoint}
+          onCalibrationChange={(line) => {
+            setCalibration(line)
+            setAwaitingSecondPoint(false)
+          }}
           strokes={strokes}
           onDrawStroke={(s) => setStrokes((prev) => [...prev, s])}
+          keyboard
+          repStarts={repTops}
+          reps={trackedReps}
+          trackRange={range}
         />
+        {samples && trackedReps.length > 0 && (
+          <PathPlot track={samples} color={color} pixelsPerMetre={pixelsPerMetre} reps={trackedReps} currentTime={currentTime} height={320} />
+        )}
+        </div>
+      )}
+
+      {/* The bar's speed through the set and each rep's sticking point (BP11). */}
+      {samples && samples.length > 1 && !busy && (
+        <div className="space-y-2 rounded-md border p-4">
+          <h2 className="text-sm font-medium">Bar speed</h2>
+          <BarSpeedChart track={samples} reps={trackedReps} pixelsPerMetre={pixelsPerMetre} currentTime={currentTime} />
+        </div>
+      )}
+
+      {/* What the body was doing when the bar slowed (BP13) — it used to be on
+          the saved page only. */}
+      {poseSeries && poseSeries.length > 1 && (
+        <div className="space-y-2 rounded-md border p-4">
+          <h2 className="text-sm font-medium">Joint angles against the bar</h2>
+          <JointAngleChart series={poseSeries} calibrated={pixelsPerMetre !== null} />
+        </div>
       )}
 
       <div className="rounded-md border p-4">
@@ -1182,202 +1397,66 @@ export default function VideoAnalysis() {
 
         {cvStatus === 'ready' && (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="flex items-center gap-2 text-sm">
-                <Crosshair className="h-4 w-4 text-muted-foreground" />
-                {mode === 'calibrate'
-                  ? 'Click both edges of a plate to set the scale'
-                  : samples
-                    ? 'Tracked — play the clip to watch the dot follow the bar'
-                    : seed
-                      ? 'Point set — the circle is the search area, then track'
-                      : 'Click the middle of a plate to place the tracking point'}
-              </span>
-              {seed && (
-                <>
-                  <Button size="sm" variant="outline" onClick={() => resizeSeed(-8)} disabled={busy}>
-                    −
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => resizeSeed(8)} disabled={busy}>
-                    +
-                  </Button>
-                </>
-              )}
+            <TrackingControls
+              mode={mode}
+              onModeChange={(next) => {
+                setMode(next)
+                setAwaitingSecondPoint(false)
+              }}
+              onToggleCalibrate={toggleCalibrate}
+              awaitingSecondPoint={awaitingSecondPoint}
+              hasSeed={!!seed}
+              hasSamples={!!samples}
+              onResizeSeed={resizeSeed}
+              busy={busy}
+              showPose={showPose}
+              onShowPose={setShowPose}
+              poseStatus={pose.status}
+              poseError={pose.error}
+              poseReading={poseRead.status === 'reading' ? poseRead.progress : null}
+              poseReadFailed={poseRead.status === 'error'}
+              correctionsCount={poseCorrections.length}
+              showAngles={showAngles}
+              onShowAngles={setShowAngles}
+              midFootLift={MID_FOOT_LIFTS.includes(setContext.lift)}
+              showMidFoot={showMidFoot}
+              onShowMidFoot={setShowMidFoot}
+              color={color}
+              onColor={setColor}
+              range={range}
+              duration={duration}
+              onSetStart={setRangeStart}
+              onSetEnd={setRangeEnd}
+              plateMm={plateMm}
+              onPlateMm={setPlateMm}
+              pixelsPerMetre={pixelsPerMetre}
+              calibrationPx={calibrationPx}
+              progress={progress}
+              canTrack={canTrack}
+              onTrack={retrack}
+              onCancel={cancelTracking}
+              onClear={reset}
+              strokes={strokes}
+              onStrokesChange={setStrokes}
+              quality={quality}
+              pathPoints={samples ? samples.length : null}
+            />
 
-              {/* Locked only WHILE a run is under way — the fan-out that feeds
-                  pose is set up at the start of that pass, so switching it
-                  mid-track would silently do nothing. Otherwise it takes effect
-                  at once: the preview runs on whatever frame is on screen. */}
-              <label
-                className={`flex items-center gap-1.5 text-sm ${busy ? 'opacity-50' : ''}`}
-                title={
-                  busy
-                    ? 'Pose cannot be switched during a tracking run'
-                    : 'Draw the lifter’s skeleton — drag a joint to correct it'
-                }
-              >
-                <input
-                  type="checkbox"
-                  checked={showPose}
-                  disabled={busy}
-                  onChange={(e) => setShowPose(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-cyan-400"
+            {/* The coach's cue for the set (BP23). Kept with the analysis and
+                shown on the saved page and in the lists. Changing it after
+                saving offers "Update saved set", like the lift and load. */}
+            {samples && (
+              <label className="block space-y-1 text-sm">
+                <span className="text-muted-foreground">Note on this set</span>
+                <textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={2}
+                  maxLength={2000}
+                  placeholder="The cue for the athlete, e.g. drive the hips through, keep the bar over mid-foot"
+                  className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
                 />
-                <PersonStanding className="h-4 w-4 text-muted-foreground" />
-                Skeleton
               </label>
-              {pose.status === 'loading' && (
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading the pose model…
-                </span>
-              )}
-              {pose.status === 'error' && (
-                <span className="text-xs text-destructive">Skeleton unavailable: {pose.error}</span>
-              )}
-              {poseCorrections.length > 0 && (
-                <span className="text-xs text-muted-foreground">
-                  {poseCorrections.length} joint{poseCorrections.length === 1 ? '' : 's'} corrected
-                </span>
-              )}
-
-              <span className="ml-auto flex items-center gap-1.5">
-                <Palette className="h-4 w-4 text-muted-foreground" />
-                {TRACKER_COLORS.map((c) => (
-                  <button
-                    key={c.value}
-                    type="button"
-                    title={c.name}
-                    aria-label={`${c.name} overlay`}
-                    aria-pressed={color === c.value}
-                    onClick={() => setColor(c.value)}
-                    className={`h-5 w-5 rounded-full border transition-transform ${
-                      color === c.value
-                        ? 'scale-110 border-foreground ring-2 ring-foreground/30'
-                        : 'border-border hover:scale-110'
-                    }`}
-                    style={{ backgroundColor: c.value }}
-                  />
-                ))}
-              </span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Track from</span>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => setRange((r) => ({ from: currentTime, to: Math.max(currentTime + 0.2, r?.to ?? duration) }))}
-              >
-                Set start ({fmt(range?.from ?? 0)})
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => setRange((r) => ({ from: Math.min(r?.from ?? 0, currentTime - 0.2), to: currentTime }))}
-              >
-                Set end ({fmt(range?.to ?? duration)})
-              </Button>
-
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <Ruler className="h-4 w-4 text-muted-foreground" />
-              <span className="text-muted-foreground">Scale</span>
-              <select
-                value={plateMm}
-                onChange={(e) => setPlateMm(Number(e.target.value))}
-                disabled={busy}
-                className="rounded-md border bg-background px-2 py-1 text-sm"
-              >
-                {PLATE_DIAMETERS_MM.map((p) => (
-                  <option key={p.value} value={p.value}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-              <Button
-                size="sm"
-                variant={mode === 'calibrate' ? 'default' : 'outline'}
-                disabled={busy}
-                onClick={() => {
-                  setMode((m) => (m === 'calibrate' ? 'seed' : 'calibrate'))
-                  setAwaitingSecondPoint(false)
-                }}
-              >
-                {mode === 'calibrate'
-                  ? awaitingSecondPoint
-                    ? 'Now click the far edge'
-                    : 'Click one edge of the plate'
-                  : pixelsPerMetre
-                    ? 'Redo scale'
-                    : 'Set scale'}
-              </Button>
-              {pixelsPerMetre ? (
-                <span className="text-muted-foreground">
-                  {Math.round(calibrationPx)} px across a {plateMm} mm plate — velocity in m/s
-                </span>
-              ) : (
-                <span className="text-muted-foreground">
-                  Not set — velocity will be in pixels/second
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {busy ? (
-                <Button variant="outline" onClick={cancelTracking}>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {`Tracking… ${Math.round(progress * 100)}% — stop and keep`}
-                </Button>
-              ) : (
-                <Button onClick={retrack} disabled={!canTrack}>
-                  <Target className="h-4 w-4" />
-                  {samples ? 'Track again' : 'Track bar path'}
-                </Button>
-              )}
-              {(seed || samples) && (
-                <Button variant="ghost" onClick={reset} disabled={busy}>
-                  <RotateCcw className="h-4 w-4" /> Clear
-                </Button>
-              )}
-
-              {/* Drawing on the lift. Fullscreen is NOT here — it belongs in the
-                  video's own control bar, where a fullscreen button always is,
-                  and the stage puts it there itself. */}
-              <div className="ml-auto">
-                <DrawControls
-                  mode={mode}
-                  onModeChange={(next) => {
-                    setMode(next)
-                    setAwaitingSecondPoint(false)
-                  }}
-                  strokes={strokes}
-                  onStrokesChange={setStrokes}
-                />
-              </div>
-            </div>
-
-            {busy && (
-              <p className="text-xs text-muted-foreground">
-                Frames are read while the clip plays, so this takes about as long as the range
-                itself. The path draws as it goes.
-              </p>
-            )}
-
-            {quality && (
-              <div className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-                <Stat label="Points followed" value={`${quality.seededPoints}`} />
-                <Stat label="Kept per frame" value={`${Math.round(quality.medianSurvivalRate * 100)}%`} />
-                <Stat label="Re-locks" value={`${quality.reseeds}`} />
-                <Stat
-                  label="Held for"
-                  value={quality.lostAtFrame === null ? 'the whole range' : `${quality.lostAtFrame} frames`}
-                />
-                <Stat label="Effective frame rate" value={`${quality.effectiveFps.toFixed(1)} fps`} />
-                {samples && <Stat label="Path points" value={`${samples.length}`} />}
-              </div>
             )}
 
             {/* Asked, never assumed: an analysis is only stored if the coach
@@ -1393,7 +1472,7 @@ export default function VideoAnalysis() {
                         ? `${reps.length} ${reps.length === 1 ? 'rep' : 'reps'}, bar path and scale are kept.`
                         : 'The bar path is kept.'}
                       {loadKg != null &&
-                        ` The lift and ${loadKg} kg go with it, so the athlete's velocity profile builds up.`}
+                        ` The lift and ${loadKg} ${loadUnit} go with it, so the athlete's velocity profile builds up.`}
                       {source?.kind === 'local' &&
                         ' The video is copied into CoachBoard too, so you can watch it back later.'}
                     </span>
@@ -1427,6 +1506,17 @@ export default function VideoAnalysis() {
                   )}
                 </div>
 
+                <TrainingDayLink
+                  athleteId={athleteId}
+                  day={liftedDay}
+                  lift={reps.length > 0 ? setContext.lift : null}
+                  loadKg={loadKg}
+                  preferredWorkoutId={source?.kind === 'discord' ? source.item.workoutId : null}
+                  choice={linkChoice}
+                  onChoose={setLinkChoice}
+                  onResolved={setDayLink}
+                />
+
                 <div className="flex gap-2">
                   <Button size="sm" onClick={saveAnalysis} disabled={saving}>
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -1442,153 +1532,113 @@ export default function VideoAnalysis() {
             {savedId &&
               (savedContext !== null && savedContext !== contextNow() ? (
                 <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-sm">
-                  <span>The lift, load, RPE or athlete changed since you saved.</span>
+                  <span>The lift, load, RPE, athlete or note changed since you saved.</span>
                   <Button size="sm" variant="outline" onClick={updateSavedContext} disabled={updatingSaved}>
                     {updatingSaved ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                     Update saved set
                   </Button>
                 </div>
               ) : (
-                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <Check className="h-4 w-4 text-success" /> Saved.
-                </p>
+                  {source?.kind === 'discord' && (
+                    <Button size="sm" variant="outline" onClick={openNextClip} disabled={findingNext}>
+                      {findingNext ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                      Next clip
+                    </Button>
+                  )}
+                </div>
               ))}
+            {/* The estimate as a max (BP34, D60): only when the coach confirms,
+                stored marked "estimated" — used for load hints and generated
+                blocks, never as a PR, never to calibrate another estimate. */}
+            {savedId && athleteId && estimateKg != null && maxOffer !== 'done' && maxOffer !== 'declined' && reps.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-sm">
+                <span>
+                  Record <span className="num font-medium">{estimateKg} {loadUnit}</span> as an estimated {liftLabel(setContext.lift).toLowerCase()} max
+                  {athleteName ? ` for ${athleteName}` : ''}?
+                </span>
+                <Button size="sm" variant="outline" onClick={recordEstimatedMax} disabled={maxOffer === 'saving'}>
+                  {maxOffer === 'saving' ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Record
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setMaxOffer('declined')}>Not now</Button>
+              </div>
+            )}
+            {savedId && savedScale !== null && savedScale !== scaleNow() && (
+              <p className="text-sm text-warning">
+                The scale changed since you saved. The saved set keeps the scale it was saved with; the
+                numbers on this page use the new one.
+              </p>
+            )}
 
             {samples && trackedReps.length > 0 && (
               <div className="space-y-2">
-                <h2 className="text-sm font-medium">
-                  Concentric velocity — {reps.length} {reps.length === 1 ? 'rep' : 'reps'}
-                  {excludedReps.size > 0 && (
-                    <span className="ml-1 font-normal text-muted-foreground">
-                      ({excludedReps.size} struck off)
-                    </span>
-                  )}
-                </h2>
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-medium">
+                    Concentric velocity — {reps.length} {reps.length === 1 ? 'rep' : 'reps'}
+                    {excludedReps.size > 0 && (
+                      <span className="ml-1 font-normal text-muted-foreground">
+                        ({excludedReps.size} struck off)
+                      </span>
+                    )}
+                  </h2>
+                  {/* The rep table as a file (BP42). */}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title="Save the rep table as a CSV file, for your own sheets"
+                    onClick={() => downloadCsv(repCsv(trackedReps, { track: samples, pixelsPerMetre, excluded: excludedReps }), sourceLabel || 'lift')}
+                  >
+                    <FileDown className="h-4 w-4" /> CSV
+                  </Button>
+                </div>
                 <p className="text-xs text-muted-foreground">
                   A cycle that was not a rep — a re-rack, a failed attempt, a bounce in the walkout —
                   skews everything measured from the set. Strike it off and every number below is
                   recalculated without it.
                 </p>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[30rem] text-sm">
-                    <thead>
-                      <tr className="border-b text-left text-muted-foreground">
-                        <th className="py-1 pr-4 font-medium">Rep</th>
-                        <th className={`py-1 pr-4 font-medium ${metric === 'mean' ? 'text-foreground' : ''}`}>
-                          Mean{metric === 'mean' && ' •'}
-                        </th>
-                        <th className={`py-1 pr-4 font-medium ${metric === 'propulsive' ? 'text-foreground' : ''}`}>
-                          Propulsive{metric === 'propulsive' && ' •'}
-                        </th>
-                        <th className={`py-1 pr-4 font-medium ${metric === 'peak' ? 'text-foreground' : ''}`}>
-                          Peak{metric === 'peak' && ' •'}
-                        </th>
-                        <th className="py-1 pr-4 font-medium">Range</th>
-                        <th className="py-1 pr-4 font-medium">Duration</th>
-                        {/* Per-rep interpretation. Dropped entirely without a
-                            scale line rather than shown as a column of dashes —
-                            neither an RPE table nor a velocity zone means
-                            anything against a pixels-per-second number. */}
-                        {pixelsPerMetre !== null && (
-                          <>
-                            <th className="py-1 pr-4 font-medium">≈ RPE</th>
-                            <th className="py-1 font-medium">Quality</th>
-                          </>
-                        )}
-                        <th className="py-1 pl-4 font-medium"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {trackedReps.map((r) => {
-                        const excluded = excludedReps.has(r.index)
-                        // Whatever velocity the panel reads the tables against,
-                        // so one rep never carries two different RPEs.
-                        const suspect = looksMistracked(r)
-                        const v = readRep(r, metric)
-                        const reading =
-                          !excluded && v !== null
-                            ? rpeFromLastRepVelocity(setContext.lift, v, { anchors })
-                            : null
-                        const zone = !excluded && v !== null ? zoneFor(v) : null
-                        return (
-                          <tr
-                            key={r.index}
-                            className={`border-b last:border-0 ${
-                              excluded ? 'text-muted-foreground line-through opacity-60' : ''
-                            }`}
-                          >
-                            <td className="py-1 pr-4">
-                              {r.index + 1}
-                              {suspect && !excluded && (
-                                <span
-                                  className="ml-1.5 text-warning"
-                                  title="The peak is far out of line with the mean — the tracker probably jumped here. Strike this rep off or track it again."
-                                >
-                                  ⚠
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-1 pr-4 font-medium">
-                              {r.meanVelocity !== null
-                                ? `${r.meanVelocity.toFixed(2)} m/s`
-                                : `${Math.round(r.meanVelocityPxS)} px/s`}
-                            </td>
-                            <td className="py-1 pr-4 font-medium">
-                              {r.meanPropulsiveVelocity !== null
-                                ? `${r.meanPropulsiveVelocity.toFixed(2)} m/s`
-                                : '—'}
-                              {r.propulsiveFraction !== null && (
-                                <span className="ml-1 text-xs font-normal text-muted-foreground">
-                                  {Math.round(r.propulsiveFraction * 100)}%
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-1 pr-4">
-                              {r.peakVelocity !== null
-                                ? `${r.peakVelocity.toFixed(2)} m/s`
-                                : `${Math.round(r.peakVelocityPxS)} px/s`}
-                            </td>
-                            <td className="py-1 pr-4">
-                              {r.romM !== null
-                                ? `${(r.romM * 100).toFixed(0)} cm`
-                                : `${Math.round(r.romPx)} px`}
-                            </td>
-                            <td className="py-1 pr-4">{(r.durationMs / 1000).toFixed(2)} s</td>
-                            {pixelsPerMetre !== null && (
-                              <>
-                                <td className="py-1 pr-4">{reading ? reading.rpe : '—'}</td>
-                                <td className="py-1 text-muted-foreground">{zone ? zone.label : '—'}</td>
-                              </>
-                            )}
-                            <td className="py-1 pl-4 text-right">
-                              <button
-                                type="button"
-                                onClick={() => toggleRep(r.index)}
-                                title={excluded ? 'Count this rep again' : 'Not a rep — strike it off'}
-                                aria-label={
-                                  excluded ? `Count rep ${r.index + 1} again` : `Strike off rep ${r.index + 1}`
-                                }
-                                className="rounded p-1 text-muted-foreground no-underline hover:bg-muted hover:text-foreground"
-                              >
-                                {excluded ? (
-                                  <Undo2 className="h-3.5 w-3.5" />
-                                ) : (
-                                  <X className="h-3.5 w-3.5" />
-                                )}
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <RepTable
+                  reps={trackedReps}
+                  lift={setContext.lift}
+                  metric={metric}
+                  calibrated={pixelsPerMetre !== null}
+                  anchors={anchors}
+                  track={samples}
+                  pixelsPerMetre={pixelsPerMetre}
+                  excluded={excludedReps}
+                  onToggle={toggleRep}
+                  target={tableTarget(setTarget)}
+                  midFoot={busy ? null : midFootByRep(setContext.lift, poseRef.current, samples, trackedReps, pixelsPerMetre)}
+                  lockout={busy || !showPose ? null : repLockouts(poseRef.current, trackedReps, setContext.lift)}
+                  onJump={(index) => {
+                    const at = repTops[trackedReps.findIndex((r) => r.index === index)]
+                    const v = videoRef.current
+                    if (at == null || !v) return
+                    v.pause()
+                    v.currentTime = at
+                  }}
+                />
+                {reference.shape && (
+                  <ReferencePanel
+                    shape={reference.shape}
+                    reps={reps}
+                    track={samples}
+                    pixelsPerMetre={pixelsPerMetre}
+                    loadKg={loadKg}
+                    metric={metric}
+                    athleteName={roster.find((a) => a.id === athleteId)?.name ?? null}
+                    unit={loadUnit}
+                  />
+                )}
               </div>
             )}
 
             {/* Velocity-based readouts live in their own panel: they need the
                 lift and load, which the tracker cannot know, and they are
                 interpretation rather than measurement. */}
+            {samples && reps.length > 0 && (
+              <VelocityTargetLine setTarget={setTarget} rowName={dayLink.exerciseName ?? null} calibrated={pixelsPerMetre !== null} />
+            )}
             {samples && reps.length > 0 && (
               <VelocityPanel
                 reps={reps}
@@ -1602,8 +1652,11 @@ export default function VideoAnalysis() {
                 savedPoints={savedPoints}
                 maxes={athleteMaxes}
                 value={setContext}
-                onChange={setSetContext}
+                onChange={changeSetContext}
+                fromCaption={fromCaption}
                 onSetScale={startCalibration}
+                onEstimate={setEstimateKg}
+                unit={loadUnit}
               />
             )}
 
@@ -1624,15 +1677,6 @@ export default function VideoAnalysis() {
           </div>
         )}
       </div>
-    </div>
-  )
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between gap-4 border-b py-1 last:border-0">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
     </div>
   )
 }

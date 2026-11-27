@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Maximize, Minimize } from 'lucide-react'
 import { pictureRect } from 'coachboard-shared/videoAnalysis'
+import { isSideOn, visibleBones } from 'coachboard-shared/poseRefine'
 import {
-  POSE_BONES,
+  cameraSide,
+  frameAngles,
   frameIndexAt,
   isVisible,
+  midFootAt,
+  sideJoints,
   type PoseFrame,
+  type Side,
 } from 'coachboard-shared/pose'
-import { isDrawable, simplify, type Point, type Stroke } from './annotations'
+import { isDrawable, simplify, type PenTool, type Point, type Stroke } from './annotations'
+import { usePenTool } from './penTool'
+import { paintDot, paintPath, paintStrokes, repWindows, sampleAt } from './pathPaint'
+import { useAnalysisKeys } from './analysisKeys'
 import type { Sample } from './tracker.core'
 
 /**
@@ -91,6 +99,11 @@ interface Props {
   calibration: CalibrationLine | null
   /** Called with each click while in 'calibrate' mode. */
   onCalibratePoint: (point: { x: number; y: number }) => void
+  /**
+   * Called when the coach drags an end of the scale line (BP18). Its presence
+   * is what makes the ends draggable — the saved page passes nothing.
+   */
+  onCalibrationChange?: (line: CalibrationLine) => void
   /** Freehand marks over the lift, in video pixels. See annotations.ts. */
   strokes?: Stroke[]
   /** Called with the finished stroke when the pointer lifts in 'draw' mode. */
@@ -113,7 +126,43 @@ interface Props {
    * page passes nothing, because a track being built is not something to edit.
    */
   onCorrectLandmark?: (frameIndex: number, landmark: number, x: number, y: number) => void
+  /**
+   * Space, ← / →, Shift+← / →, F and 1–9 drive this video (BP15). Off on the
+   * Compare page, where two stages would both answer every key.
+   */
+  keyboard?: boolean
+  /** Where each rep starts, in seconds: 1–9 jump to them. */
+  repStarts?: number[]
+  /** Each rep's way up (its concentric), to draw the reps apart (BP9). */
+  reps?: { startT: number; endT: number }[]
+  /**
+   * The stretch of the clip chosen for tracking, drawn on the strip under the
+   * video (BP17) before anything is tracked. Without it the strip shows the
+   * tracked path's own stretch, once there are reps.
+   */
+  trackRange?: { from: number; to: number } | null
+  /** The joints' degrees beside the skeleton (D56). Only drawn with the skeleton on. */
+  showAngles?: boolean
+  /**
+   * The athlete's reference rep (BP28): its path in metres from the top before
+   * it, and this clip's scale to draw it at. Absent without a scale on both.
+   */
+  ghost?: { path: { x: number; y: number }[]; pixelsPerMetre: number } | null
+  /** The line straight up from mid-foot (BP31). Only drawn with the skeleton on. */
+  showMidFoot?: boolean
+  /** The lift, which decides the bones drawn side-on (no arm on a squat). */
+  poseLift?: string | null
 }
+
+// Kept importable from here, where the pages have always found it.
+export { repWindows }
+
+/** One step of ← / →. The clip's real frame rate is not knowable from the element; 1/30 s is a frame of a phone clip. */
+const FRAME_S = 1 / 30
+
+/** The scale loupe's size on screen, and how much closer it shows the picture than the video does. */
+const LOUPE_PX = 128
+const LOUPE_ZOOM = 4
 
 /**
  * The video with a drawing surface over it.
@@ -137,12 +186,36 @@ export default function AnalysisStage({
   mode,
   calibration,
   onCalibratePoint,
+  onCalibrationChange,
   strokes,
   onDrawStroke,
   poseRef,
   showPose,
   onCorrectLandmark,
+  keyboard = false,
+  repStarts,
+  reps,
+  trackRange,
+  showAngles = false,
+  ghost = null,
+  showMidFoot = false,
+  poseLift = null,
 }: Props) {
+  /** Which side the camera sees, worked out once per skeleton rather than every frame. */
+  const sideCacheRef = useRef<{ frames: PoseFrame[]; side: Side } | null>(null)
+  /**
+   * The bones drawn, and their joints — side-on only the side facing the camera
+   * (visibleBones). Worked out once per skeleton and lift; the joints are also
+   * the only ones that can be grabbed, since only they are on screen.
+   */
+  const bonesCacheRef = useRef<{ frames: PoseFrame[]; lift: string | null; bones: readonly (readonly [number, number])[]; joints: Set<number>; sideOn: boolean } | null>(null)
+  const bonesFor = useCallback((frames: PoseFrame[]) => {
+    const c = bonesCacheRef.current
+    if (c?.frames === frames && c.lift === poseLift) return c
+    const bones = visibleBones(frames, poseLift)
+    bonesCacheRef.current = { frames, lift: poseLift, bones, joints: new Set(bones.flat()), sideOn: isSideOn(frames) }
+    return bonesCacheRef.current
+  }, [poseLift])
   /**
    * The joint under the pointer, and whether it has actually been dragged yet.
    *
@@ -183,6 +256,18 @@ export default function AnalysisStage({
    * itself. Exactly the reasoning behind livePathRef during tracking.
    */
   const drawingRef = useRef<Point[] | null>(null)
+  /** The shape being drawn right now (BP30), fixed when the press began. */
+  const drawingToolRef = useRef<PenTool>('free')
+  const [penTool] = usePenTool()
+  /**
+   * An end of the scale line being dragged (BP18). The line lives here until
+   * release, like a joint being corrected, so it follows the pointer at frame
+   * rate and the page hears about it once.
+   */
+  const calibDragRef = useRef<{ end: 'a' | 'b'; line: CalibrationLine; from: Point; moved: boolean } | null>(null)
+  /** Where the pointer is over the picture, in video pixels, for the loupe. */
+  const loupeAtRef = useRef<Point | null>(null)
+  const loupeRef = useRef<HTMLCanvasElement | null>(null)
   const [fullscreen, setFullscreen] = useState(false)
 
   const bar = fullscreen ? CONTROL_BAR_FULLSCREEN_PX : CONTROL_BAR_PX
@@ -248,6 +333,39 @@ export default function AnalysisStage({
     document.addEventListener('fullscreenchange', sync)
     return () => document.removeEventListener('fullscreenchange', sync)
   }, [])
+
+  // ── Playback by button and by key (BP15, BP16) ──────────────────────────
+  /** Pause, then move by `s` seconds: a frame, or a second. */
+  const step = useCallback((s: number) => {
+    const v = videoRef.current
+    if (!v) return
+    v.pause()
+    v.currentTime = Math.min(Number.isFinite(v.duration) ? v.duration : Infinity, Math.max(0, v.currentTime + s))
+  }, [videoRef])
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current
+    if (!v) return
+    if (v.paused) void v.play().catch(() => {})
+    else v.pause()
+  }, [videoRef])
+  useAnalysisKeys(keyboard, (e) => {
+    if (e.ctrlKey || e.metaKey) return false
+    if (e.key === ' ') { togglePlay(); return true }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      step((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1 : FRAME_S))
+      return true
+    }
+    if (e.key.toLowerCase() === 'f') { toggleFullscreen(); return true }
+    if (/^[1-9]$/.test(e.key)) {
+      const at = repStarts?.[Number(e.key) - 1]
+      const v = videoRef.current
+      if (at == null || !v) return false
+      v.pause()
+      v.currentTime = at
+      return true
+    }
+    return false
+  })
 
   /**
    * Whether a pointer is over the browser's control bar rather than the lift.
@@ -324,28 +442,9 @@ export default function AnalysisStage({
     // Freehand marks first, so the bar path and its dot stay readable on top of
     // whatever the coach has drawn.
     const penStrokes = drawingRef.current
-      ? [...(strokes ?? []), { color, points: drawingRef.current }]
+      ? [...(strokes ?? []), { color, points: drawingRef.current, kind: drawingToolRef.current }]
       : (strokes ?? [])
-    for (const stroke of penStrokes) {
-      if (stroke.points.length < 2) continue
-      const trace = () => {
-        ctx.beginPath()
-        stroke.points.forEach((p, i) =>
-          i ? ctx.lineTo(p.x * scale, p.y * scale) : ctx.moveTo(p.x * scale, p.y * scale),
-        )
-        ctx.stroke()
-      }
-      ctx.lineJoin = 'round'
-      ctx.lineCap = 'round'
-      // Same dark casing as the bar path: gym footage contains something every
-      // colour disappears into somewhere.
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
-      ctx.lineWidth = 6
-      trace()
-      ctx.strokeStyle = stroke.color
-      ctx.lineWidth = 3.5
-      trace()
-    }
+    paintStrokes(ctx, penStrokes, scale, 1, video.videoHeight)
 
     // Which frame the compositor has actually PRESENTED, not where the playback
     // clock has got to. The clock runs ahead, which made the bar-path dot lead
@@ -372,10 +471,11 @@ export default function AnalysisStage({
       const pose = nearest && Math.abs(nearest.t - playhead) <= POSE_MAX_STALE_S ? nearest : null
       if (pose) {
         const lm = pose.landmarks
+        const { bones, joints: drawn, sideOn } = bonesFor(poseFrames)
         ctx.lineJoin = 'round'
         ctx.lineCap = 'round'
 
-        for (const [from, to] of POSE_BONES) {
+        for (const [from, to] of bones) {
           const a = lm[from]
           const b = lm[to]
           if (!a || !b) continue
@@ -397,14 +497,64 @@ export default function AnalysisStage({
 
         // Joints only where a bone actually reaches them, so the parked
         // landmarks of a partly-seen body do not scatter dots across the frame.
-        const jointed = new Set(POSE_BONES.flat())
-        for (const i of jointed) {
+        for (const i of drawn) {
           const l = lm[i]
           if (!l) continue
           ctx.fillStyle = isVisible(l) ? 'rgba(224, 242, 254, 0.95)' : 'rgba(161, 161, 170, 0.6)'
           ctx.beginPath()
           ctx.arc(l.x * scale, l.y * scale, 3, 0, Math.PI * 2)
           ctx.fill()
+        }
+
+        if ((showAngles || showMidFoot) && sideCacheRef.current?.frames !== poseFrames) {
+          sideCacheRef.current = { frames: poseFrames, side: cameraSide(poseFrames) }
+        }
+
+        // The line straight up from mid-foot (BP31, D58): where the bar should
+        // stack on a squat or a deadlift. Only where the model saw the foot, and
+        // only side-on: from the front a vertical line through one foot says nothing.
+        const mf = showMidFoot && sideOn ? midFootAt(pose, sideCacheRef.current!.side) : null
+        if (mf) {
+          ctx.save()
+          ctx.setLineDash([6, 5])
+          ctx.lineWidth = 2
+          ctx.strokeStyle = 'rgba(34, 211, 238, 0.8)'
+          ctx.beginPath()
+          ctx.moveTo(mf.x * scale, mf.y * scale)
+          ctx.lineTo(mf.x * scale, 0)
+          ctx.stroke()
+          ctx.restore()
+        }
+
+        // The joints' degrees (D56), on the side nearest the camera — the same
+        // reading the joint-angle chart uses. Only joints the model could see.
+        if (showAngles && poseFrames) {
+          const side = sideCacheRef.current!.side
+          const [a] = frameAngles([pose], side)
+          const j = sideJoints(side)
+          const label = (text: string, p: { x: number; y: number } | undefined) => {
+            if (!p) return
+            ctx.font = '600 12px system-ui, sans-serif'
+            const w = ctx.measureText(text).width + 8
+            const x = p.x * scale + 9
+            const y = p.y * scale - 9
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+            ctx.fillRect(x, y - 8, w, 16)
+            ctx.fillStyle = 'rgba(224, 242, 254, 1)'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(text, x + 4, y)
+          }
+          const deg = (v: number | null) => (v == null ? null : `${Math.round(v)}°`)
+          // Only at joints that are drawn: no degrees floating over an arm left out.
+          const put = (v: number | null, i: number) => { const t = deg(v); if (t && drawn.has(i) && isVisible(lm[i])) label(t, lm[i]) }
+          put(a.knee, j.knee)
+          put(a.hip, j.hip)
+          put(a.ankle, j.ankle)
+          put(a.elbow, j.elbow)
+          put(a.shoulder, j.shoulder)
+          // Lean is not at a joint: between the shoulder and the hip.
+          const s = lm[j.shoulder], h = lm[j.hip]
+          if (a.torsoLean != null && s && h) label(`lean ${Math.round(a.torsoLean)}°`, { x: (s.x + h.x) / 2, y: (s.y + h.y) / 2 })
         }
       }
     }
@@ -413,68 +563,62 @@ export default function AnalysisStage({
     // so far — so the line grows as the clip plays.
     const path = samples ?? livePathRef?.current ?? null
 
-    // The whole path, so a track that wandered off the bar is obvious at a
-    // glance. Quality numbers cannot be trusted to reveal that on their own.
-    if (path && path.length > 1) {
-      const trace = () => {
+    // The athlete's reference rep (BP28, D57), faintly, from the top of the rep
+    // under the playhead: the shape this rep is being held against. Under the
+    // path, so the measurement stays on top.
+    if (ghost && samples?.length && reps?.length) {
+      const w = repWindows(reps, samples[0].t).find((x) => playhead >= x.from && playhead <= x.to)
+      const top = w ? sampleAt(samples, w.from) : null
+      if (top) {
+        const px = (p: { x: number; y: number }) => [(top.x + p.x * ghost.pixelsPerMetre) * scale, (top.y + p.y * ghost.pixelsPerMetre) * scale] as const
+        ctx.save()
+        ctx.setLineDash([5, 5])
+        ctx.lineJoin = 'round'
+        ctx.lineWidth = 2.5
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)'
         ctx.beginPath()
-        path.forEach((s, i) =>
-          i ? ctx.lineTo(s.x * scale, s.y * scale) : ctx.moveTo(s.x * scale, s.y * scale),
-        )
+        ghost.path.forEach((p, i) => { const [x, y] = px(p); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y) })
         ctx.stroke()
+        ctx.restore()
       }
-      ctx.lineJoin = 'round'
-      ctx.lineCap = 'round'
-      // Dark casing under the line: whichever colour the coach picks, gym
-      // footage will contain something it blends into somewhere along the path.
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
-      ctx.lineWidth = 5
-      trace()
-      ctx.strokeStyle = color
-      ctx.lineWidth = 2.5
-      trace()
     }
+
+    // The whole path, reps apart once it is finished (BP9) — see paintPath.
+    if (path) paintPath(ctx, { path, reps: samples ? reps : null, playhead, color, scale })
 
     // The dot, riding the bar: whichever sample is nearest the frame ON SCREEN.
     // `playhead` above is requestVideoFrameCallback's presented mediaTime rather
     // than video.currentTime, because the playback clock runs ahead of what the
     // compositor has drawn — the dot led the bar by a frame or two and looked
     // like it was lagging the lift on the way up.
-    const marker = samples?.length
-      ? samples.reduce((best, s) =>
-          Math.abs(s.t - playhead) < Math.abs(best.t - playhead) ? s : best,
-        )
-      : (path?.[path.length - 1] ?? null)
+    const marker = samples?.length ? sampleAt(samples, playhead) : (path?.[path.length - 1] ?? null)
     const point = marker ?? seed
-
-    if (point) {
-      const cx = point.x * scale
-      const cy = point.y * scale
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
-      ctx.lineWidth = 4
-      ctx.beginPath()
-      ctx.arc(cx, cy, 9, 0, Math.PI * 2)
-      ctx.stroke()
-      ctx.strokeStyle = color
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.arc(cx, cy, 9, 0, Math.PI * 2)
-      ctx.stroke()
-      ctx.fillStyle = color
-      ctx.beginPath()
-      ctx.arc(cx, cy, 3, 0, Math.PI * 2)
-      ctx.fill()
-    }
+    if (point) paintDot(ctx, point, color, scale)
 
     // The search box, shown only before tracking: it is what the coach is
     // really choosing when they click, so its size should not be a mystery.
     // The scale reference, drawn distinctly from the tracking overlay so the
     // two are never confused — this one is a measurement, not a result.
-    if (calibration) {
-      const ax = calibration.a.x * scale
-      const ay = calibration.a.y * scale
-      const bx = calibration.b.x * scale
-      const by = calibration.b.y * scale
+    const line = calibDragRef.current?.line ?? calibration
+    // The first point placed and the second not yet (D52): a faint line
+    // straight down through it, so the bottom edge is found directly below
+    // and not off to one side.
+    if (line && mode === 'calibrate' && line.a.x === line.b.x && line.a.y === line.b.y) {
+      ctx.save()
+      ctx.setLineDash([4, 6])
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.6)'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.moveTo(line.a.x * scale, line.a.y * scale - 12)
+      ctx.lineTo(line.a.x * scale, video.videoHeight * scale)
+      ctx.stroke()
+      ctx.restore()
+    }
+    if (line) {
+      const ax = line.a.x * scale
+      const ay = line.a.y * scale
+      const bx = line.b.x * scale
+      const by = line.b.y * scale
       ctx.setLineDash([6, 4])
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
       ctx.lineWidth = 4
@@ -501,10 +645,66 @@ export default function AnalysisStage({
     // looking and the +/- buttons change its size, so the extra rectangle only
     // added clutter over the lift.
     ctx.restore()
+
+    // The loupe (BP18): the picture under the pointer, close up, while setting
+    // the scale or dragging an end of it. A plate's edge is a few pixels wide
+    // on a phone clip, and every number on the page is in proportion to where
+    // the two clicks landed. A second canvas beside the real video, like the
+    // recorder's zoom — not a canvas standing in for the video.
+    const loupe = loupeRef.current
+    if (loupe) {
+      const at = loupeAtRef.current
+      const drag = calibDragRef.current
+      if (!at || disabled || !(mode === 'calibrate' || drag?.moved)) {
+        loupe.style.display = 'none'
+      } else {
+        const L = LOUPE_PX
+        const src = L / (scale * LOUPE_ZOOM)
+        const sx = at.x - src / 2
+        const sy = at.y - src / 2
+        const px = picture.left + at.x * scale
+        const py = picture.top + at.y * scale
+        // Up and to the right of the pointer, so the hand never covers it;
+        // flipped at the edges of the picture.
+        const left = px + 24 + L > rect.width ? px - 24 - L : px + 24
+        const top = py - 24 - L < 0 ? py + 24 : py - 24 - L
+        loupe.style.display = 'block'
+        loupe.style.left = `${offsetX + left}px`
+        loupe.style.top = `${offsetY + top}px`
+        if (loupe.width !== L) { loupe.width = L; loupe.height = L }
+        const lc = loupe.getContext('2d')
+        if (lc) {
+          lc.fillStyle = '#000'
+          lc.fillRect(0, 0, L, L)
+          lc.drawImage(video, sx, sy, src, src, 0, 0, L, L)
+          const toLoupe = (p: Point) => [(p.x - sx) * (L / src), (p.y - sy) * (L / src)] as const
+          if (line) {
+            const [ax, ay] = toLoupe(line.a)
+            const [bx, by] = toLoupe(line.b)
+            lc.setLineDash([6, 4])
+            lc.strokeStyle = '#fbbf24'
+            lc.lineWidth = 1.5
+            lc.beginPath()
+            lc.moveTo(ax, ay)
+            lc.lineTo(bx, by)
+            lc.stroke()
+            lc.setLineDash([])
+          }
+          lc.strokeStyle = 'rgba(255, 255, 255, 0.85)'
+          lc.lineWidth = 1
+          lc.beginPath()
+          lc.moveTo(L / 2, L / 2 - 12)
+          lc.lineTo(L / 2, L / 2 + 12)
+          lc.moveTo(L / 2 - 12, L / 2)
+          lc.lineTo(L / 2 + 12, L / 2)
+          lc.stroke()
+        }
+      }
+    }
     // poseRef is a ref like livePathRef, so it is not a dependency — its
     // contents change every inference without the identity ever changing, and
     // the loop below redraws every animation frame regardless.
-  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose])
+  }, [samples, seed, videoRef, color, calibration, livePathRef, strokes, bar, poseRef, showPose, reps, mode, disabled, showAngles, ghost, showMidFoot, bonesFor])
 
   // Redraw every animation frame while playing so the dot tracks the bar, and
   // once on any state change so it is right while paused too.
@@ -536,6 +736,15 @@ export default function AnalysisStage({
       justDraggedRef.current = false
       return
     }
+    // The click that ends a correction or a scale-end drag is not a request to
+    // seed the tracker or to start a new scale line. Only a real drag sets this
+    // — a press that never moved falls through, so a plate sitting near a wrist
+    // is still clickable. Cleared before anything else can return, or a drag
+    // that ended over the letterbox would swallow the next real click.
+    if (justDraggedRef.current) {
+      justDraggedRef.current = false
+      return
+    }
     // The second click of a double-click is the fullscreen gesture, not a seed.
     // Without this, going fullscreen also drops a tracking point or a
     // calibration endpoint wherever the coach happened to double-click.
@@ -549,14 +758,6 @@ export default function AnalysisStage({
     }
     // A click in the letterbox bars is not on the lift.
     if (point.x < 0 || point.y < 0 || point.x > video.videoWidth || point.y > video.videoHeight) {
-      return
-    }
-    // The click that ends a correction is not a request to seed the tracker or
-    // to move the scale line. Only a real drag sets this — a press on a joint
-    // that never moved falls through, so a plate sitting near a wrist is still
-    // clickable.
-    if (justDraggedRef.current) {
-      justDraggedRef.current = false
       return
     }
     if (mode === 'draw') return // strokes are built from pointer events, not clicks
@@ -607,9 +808,10 @@ export default function AnalysisStage({
     const reach = GRAB_PX / scale
     let best: number | null = null
     let bestDist = reach
-    // Only joints a bone actually reaches — the parked landmarks of a partly
-    // seen body are not on screen and must not be grabbable.
-    for (const i of new Set(POSE_BONES.flat())) {
+    // Only joints that are drawn — the parked landmarks of a partly seen body,
+    // and the far side of a side-on lifter, are not on screen and must not be
+    // grabbable.
+    for (const i of bonesFor(frames).joints) {
       const l = lm[i]
       if (!l) continue
       const d = Math.hypot(l.x - point.x, l.y - point.y)
@@ -621,7 +823,49 @@ export default function AnalysisStage({
     return best === null ? null : { frameIndex, landmark: best }
   }
 
+  /** Screen pixels per video pixel, right now. */
+  const displayScale = () => {
+    const video = videoRef.current
+    if (!video || !video.videoWidth) return 1
+    const rect = video.getBoundingClientRect()
+    return pictureRect(rect.width, rect.height, video.videoWidth, video.videoHeight).scale
+  }
+
+  /** Whether the scale line's ends can be dragged here at all (BP18). */
+  const canAdjustScale = !!onCalibrationChange && !!calibration && !disabled && mode !== 'draw'
+
+  /**
+   * The end of the scale line under a pointer, if one is close enough to have
+   * been aimed at. Same on-screen reach as a joint. Nothing while the line is
+   * still a single point (the first click of two).
+   */
+  const calibrationEndAt = (point: Point): 'a' | 'b' | null => {
+    if (!calibration) return null
+    const s = displayScale()
+    const { a, b } = calibration
+    if (Math.hypot(a.x - b.x, a.y - b.y) * s < GRAB_PX) return null
+    const da = Math.hypot(a.x - point.x, a.y - point.y) * s
+    const db = Math.hypot(b.x - point.x, b.y - point.y) * s
+    if (!(Math.min(da, db) <= GRAB_PX)) return null
+    return da <= db ? 'a' : 'b'
+  }
+
   const startStroke = (e: React.PointerEvent<HTMLDivElement>) => {
+    // An end of the scale line comes first: it is small, it was put there on
+    // purpose, and a press that never moves still falls through as a click.
+    if (canAdjustScale) {
+      const at = pointFor(e)
+      const end = at && calibrationEndAt(at)
+      if (at && end) {
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId)
+        } catch {
+          /* the drag still works, it just cannot follow the pointer off-frame */
+        }
+        calibDragRef.current = { end, line: calibration!, from: at, moved: false }
+        return
+      }
+    }
     // Correcting a joint takes precedence over drawing on it: the coach who
     // grabs a knee that is in the wrong place means to move it, and a freehand
     // circle can start a few pixels further out.
@@ -651,10 +895,27 @@ export default function AnalysisStage({
     // Capture, so a stroke that runs off the frame still ends cleanly — without
     // it the pointerup lands on some other element and the stroke never closes.
     e.currentTarget.setPointerCapture(e.pointerId)
+    // The shape is fixed at the press, so changing tools mid-drag cannot turn
+    // half a line into a circle.
+    drawingToolRef.current = penTool
     drawingRef.current = [point]
   }
 
   const extendStroke = (e: React.PointerEvent<HTMLDivElement>) => {
+    const here = pointFor(e)
+    loupeAtRef.current = here
+    const cd = calibDragRef.current
+    if (cd) {
+      if (!here) return
+      if (!cd.moved) {
+        if (Math.hypot(here.x - cd.from.x, here.y - cd.from.y) * displayScale() < DRAG_SLOP_PX) return
+        cd.moved = true
+        e.currentTarget.style.cursor = 'grabbing'
+      }
+      cd.line = { ...cd.line, [cd.end]: here }
+      return
+    }
+    if (canAdjustScale) e.currentTarget.style.cursor = here && calibrationEndAt(here) ? 'grab' : ''
     const drag = draggingRef.current
     if (drag) {
       const point = pointFor(e)
@@ -688,10 +949,26 @@ export default function AnalysisStage({
     const point = pointFor(e)
     // Points outside the frame are dropped rather than ending the stroke: a
     // coach circling a knee often overshoots the edge and comes back.
-    if (point) drawingRef.current.push(point)
+    if (!point) return
+    const tool = drawingToolRef.current
+    if (tool === 'free') drawingRef.current.push(point)
+    // A shape is its start and wherever the pointer is now; a plumb line is its one point.
+    else if (tool !== 'plumb') drawingRef.current = [drawingRef.current[0], point]
   }
 
   const endStroke = (e: React.PointerEvent<HTMLDivElement>) => {
+    const cd = calibDragRef.current
+    if (cd) {
+      calibDragRef.current = null
+      e.currentTarget.style.cursor = ''
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+      if (cd.moved) {
+        // The click that follows a drag is not a new first point.
+        justDraggedRef.current = true
+        onCalibrationChange?.(cd.line)
+      }
+      return
+    }
     const drag = draggingRef.current
     draggingRef.current = null
     if (drag?.moved) {
@@ -721,13 +998,14 @@ export default function AnalysisStage({
     }
     if (!points) return
     // A tolerance of one video pixel: invisible to the coach, and it typically
-    // drops most of the points in a stroke.
-    const stroke = { color, points: simplify(points, 1) }
+    // drops most of the points in a stroke. Shapes keep their two points.
+    const tool = drawingToolRef.current
+    const stroke: Stroke = tool === 'free' ? { color, points: simplify(points, 1) } : { color, points, kind: tool }
     if (isDrawable(stroke)) onDrawStroke?.(stroke)
   }
 
   return (
-    <div className="flex items-center justify-center bg-black/90">
+    <div className="flex flex-col items-center justify-center bg-black/90">
       {/* The element that goes fullscreen. The canvas is a descendant, so it
           travels into the top layer with the video and the bar path and the
           coach's marks stay ON the lift at any size. Sending the <video> itself
@@ -789,6 +1067,7 @@ export default function AnalysisStage({
             onPointerMove={extendStroke}
             onPointerUp={endStroke}
             onPointerCancel={endStroke}
+            onPointerLeave={() => { if (!calibDragRef.current) loupeAtRef.current = null }}
             className={`absolute left-0 top-0 ${
               // Drawing needs the layer even on a saved analysis, which is always
               // disabled — that is where a coach explains a lift they tracked
@@ -805,6 +1084,12 @@ export default function AnalysisStage({
           >
             <canvas ref={canvasRef} className="pointer-events-none absolute left-0 top-0" />
           </div>
+          <canvas
+            ref={loupeRef}
+            aria-hidden
+            style={{ display: 'none', width: LOUPE_PX, height: LOUPE_PX }}
+            className="pointer-events-none absolute rounded-full border-2 border-white/80 shadow-lg"
+          />
 
           {/* On the video rather than in the page toolbar, because it acts on
               the video. NOT in the control bar with the browser's own buttons:
@@ -826,6 +1111,150 @@ export default function AnalysisStage({
           </button>
         </div>
       </div>
+      <PlaybackBar videoRef={videoRef} onStep={step} />
+      {(() => {
+        const tracked = reps && reps.length > 0 && samples && samples.length > 1
+        const range = trackRange ?? (tracked ? { from: samples[0].t, to: samples[samples.length - 1].t } : null)
+        if (!range) return null
+        return <RepStrip videoRef={videoRef} windows={tracked ? repWindows(reps, samples[0].t) : []} range={range} />
+      })()}
+    </div>
+  )
+}
+
+/**
+ * The clip as a strip (BP17): the tracked range, each rep as a block. Click
+ * anywhere to go there, a block to go to that rep, and Loop to play the rep
+ * under the playhead over and over. The range used to be two buttons with
+ * timestamps and nothing to see.
+ */
+function RepStrip({ videoRef, windows, range }: {
+  videoRef: React.MutableRefObject<HTMLVideoElement | null>
+  windows: { from: number; bottom: number; to: number }[]
+  range: { from: number; to: number }
+}) {
+  const [now, setNow] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [loop, setLoop] = useState<number | null>(null)
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const sync = () => {
+      setNow(v.currentTime)
+      if (Number.isFinite(v.duration)) setDuration(v.duration)
+    }
+    sync()
+    v.addEventListener('timeupdate', sync)
+    v.addEventListener('durationchange', sync)
+    v.addEventListener('seeked', sync)
+    return () => {
+      v.removeEventListener('timeupdate', sync)
+      v.removeEventListener('durationchange', sync)
+      v.removeEventListener('seeked', sync)
+    }
+  }, [videoRef])
+  // Loop: past the end of the rep, back to its top.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || loop == null) return
+    const w = windows[loop]
+    if (!w) return
+    const keep = () => { if (v.currentTime > w.to || v.currentTime < w.from - 0.05) v.currentTime = w.from }
+    v.addEventListener('timeupdate', keep)
+    return () => v.removeEventListener('timeupdate', keep)
+  }, [videoRef, loop, windows])
+
+  const total = duration > 0 ? duration : range.to
+  // A clip whose length is not known yet (a WebM straight from a recorder
+  // reports Infinity until it has been played to the end) has nowhere to put
+  // anything.
+  if (!(Number.isFinite(total) && total > 0)) return null
+  const pct = (t: number) => `${Math.max(0, Math.min(100, (t / total) * 100))}%`
+  const seek = (t: number) => { const v = videoRef.current; if (v) v.currentTime = t }
+  const under = windows.findIndex((w) => now >= w.from && now <= w.to)
+  return (
+    <div className="flex w-full items-center gap-2 border-t border-white/10 px-2 py-1.5">
+      <div
+        role="group"
+        aria-label="Reps in the clip"
+        className="relative h-6 flex-1 cursor-pointer rounded bg-white/5"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect()
+          seek(((e.clientX - r.left) / r.width) * total)
+        }}
+      >
+        <span aria-hidden className="absolute inset-y-0 rounded bg-white/10" style={{ left: pct(range.from), width: `calc(${pct(range.to)} - ${pct(range.from)})` }} />
+        {windows.map((w, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); seek(w.from) }}
+            aria-label={`Rep ${i + 1}`}
+            title={`Rep ${i + 1}: go to its start`}
+            className={`absolute inset-y-0.5 rounded-sm text-[10px] font-medium leading-5 text-white/90 transition-colors ${
+              i === under ? 'bg-primary/80' : 'bg-white/25 hover:bg-white/40'
+            }`}
+            style={{ left: pct(w.from), width: `calc(${pct(w.to)} - ${pct(w.from)})` }}
+          >
+            {i + 1}
+          </button>
+        ))}
+        <span aria-hidden className="pointer-events-none absolute inset-y-0 w-0.5 bg-white" style={{ left: pct(now) }} />
+      </div>
+      {windows.length > 0 && <button
+        type="button"
+        aria-pressed={loop !== null}
+        disabled={loop === null && under === -1}
+        onClick={() => setLoop((l) => (l !== null ? null : under >= 0 ? under : null))}
+        title={loop !== null ? `Looping rep ${loop + 1} — click to stop` : 'Loop the rep under the playhead'}
+        className={`rounded px-2 py-1 text-xs transition disabled:opacity-40 ${loop !== null ? 'bg-primary text-primary-foreground' : 'text-white/80 hover:bg-white/10 hover:text-white'}`}
+      >
+        {loop !== null ? `Looping rep ${loop + 1}` : 'Loop rep'}
+      </button>}
+    </div>
+  )
+}
+
+const SPEEDS = [0.25, 0.5, 1]
+
+/**
+ * Frame steps and slow motion as buttons (BP16). Slow motion was only in
+ * Chromium's own ⋮ menu on the video, and stepping a frame was not there at
+ * all; both are how a coach reads a sticking point.
+ */
+function PlaybackBar({ videoRef, onStep }: {
+  videoRef: React.MutableRefObject<HTMLVideoElement | null>
+  onStep: (seconds: number) => void
+}) {
+  const [rate, setRate] = useState(1)
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const sync = () => setRate(v.playbackRate)
+    sync()
+    v.addEventListener('ratechange', sync)
+    return () => v.removeEventListener('ratechange', sync)
+  }, [videoRef])
+  const btn = 'rounded px-2 py-1 text-xs text-white/80 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/60'
+  return (
+    <div role="group" aria-label="Playback" className="flex w-full flex-wrap items-center justify-center gap-1 border-t border-white/10 px-2 py-1">
+      <button type="button" className={btn} onClick={() => onStep(-1)} title="Back one second (Shift+←)" aria-label="Back one second">« 1 s</button>
+      <button type="button" className={btn} onClick={() => onStep(-FRAME_S)} title="Back one frame (←)" aria-label="Back one frame">‹ frame</button>
+      <button type="button" className={btn} onClick={() => onStep(FRAME_S)} title="Forward one frame (→)" aria-label="Forward one frame">frame ›</button>
+      <button type="button" className={btn} onClick={() => onStep(1)} title="Forward one second (Shift+→)" aria-label="Forward one second">1 s »</button>
+      <span aria-hidden className="mx-2 h-4 w-px bg-white/20" />
+      {SPEEDS.map((s) => (
+        <button
+          key={s}
+          type="button"
+          aria-pressed={rate === s}
+          onClick={() => { if (videoRef.current) videoRef.current.playbackRate = s }}
+          title={s === 1 ? 'Normal speed' : `Slow motion, ${s}×`}
+          className={`${btn} ${rate === s ? 'bg-white/15 text-white' : ''}`}
+        >
+          {s}×
+        </button>
+      ))}
     </div>
   )
 }

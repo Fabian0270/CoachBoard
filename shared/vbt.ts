@@ -869,7 +869,37 @@ export function matchesLiftName(lift: VbtLift, liftName: string): boolean {
 
 export type MainLiftKey = 'squat' | 'bench' | 'deadlift'
 
-/** Which competition lift a free-text exercise name is, or null for anything else. */
+/**
+ * The competition lift an exercise IS, by exact name — never a variation.
+ *
+ * For the numbers that should only come from the competition lifts: the e1RM
+ * trend, the athlete's progress across blocks and weekly volume. "Pause
+ * Squat", "Tempo Squat" and "Close Grip Bench" are variations here and count
+ * as nothing (Fabian, 2026-11-16: "only count squat or competition squat,
+ * bench or competition bench or deadlift or sumo deadlift"). English and the
+ * Swedish names of the same lifts.
+ */
+export function competitionLiftKey(name: string): MainLiftKey | null {
+  const n = name.trim().toLowerCase().replace(/\s+/g, ' ')
+  for (const lift of ['squat', 'bench', 'deadlift'] as const) {
+    if (COMPETITION_NAMES[lift].includes(n)) return lift
+  }
+  return null
+}
+const COMPETITION_NAMES: Record<MainLiftKey, string[]> = {
+  // "Back squat" and "conventional deadlift" are the competition lifts written
+  // out in full, not variations.
+  squat: ['squat', 'back squat', 'competition squat', 'comp squat', 'knäböj', 'tävlingsknäböj'],
+  bench: ['bench', 'bench press', 'competition bench', 'competition bench press', 'comp bench', 'comp bench press', 'bänk', 'bänkpress', 'tävlingsbänk', 'tävlingsbänkpress'],
+  deadlift: ['deadlift', 'conventional deadlift', 'sumo deadlift', 'competition deadlift', 'comp deadlift', 'marklyft', 'sumomarklyft', 'sumo marklyft', 'tävlingsmarklyft'],
+}
+
+/**
+ * Which competition lift a free-text exercise name belongs to, variations
+ * included, or null for anything else. For grouping exercises in programming
+ * (the suggestion engine, results import); the e1RM numbers use
+ * competitionLiftKey instead.
+ */
 export function mainLiftKey(name: string): MainLiftKey | null {
   if (matchesLiftName('back-squat', name)) return 'squat'
   if (matchesLiftName('bench-press', name)) return 'bench'

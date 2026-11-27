@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db.js'
+import { unitOf } from 'coachboard-shared/units'
 import { deleteVideo, sweepOrphanVideos, videoPath } from './analysisVideoStore.js'
 import type {
   CalibrationDto,
@@ -36,6 +37,17 @@ interface AnalysisRow {
   created_at: string
   updated_at: string
   athlete_name?: string | null
+  athlete_unit?: string | null
+  posted_at?: string | null
+  link_workout_id?: string | null
+  link_date?: string | null
+  link_workout_name?: string | null
+  link_program_id?: string | null
+  link_program_name?: string | null
+  link_exercise_id?: string | null
+  link_exercise_name?: string | null
+  link_exercise_workout_id?: string | null
+  link_exercise_velocity?: string | null
 }
 
 /**
@@ -60,6 +72,8 @@ function toDto(row: AnalysisRow): VideoAnalysisDto {
     mediaId: row.media_id,
     athleteId: row.athlete_id,
     athleteName: row.athlete_name ?? null,
+    // The unit loadKg is in (S3): the athlete's; kg for nobody's set.
+    athleteUnit: unitOf(row.athlete_unit),
     sourceLabel: row.source_label,
     track: parseJson<Sample[]>(row.track, []),
     calibration: parseJson<CalibrationDto | null>(row.calibration, null),
@@ -75,6 +89,20 @@ function toDto(row: AnalysisRow): VideoAnalysisDto {
     hasVideo: !!row.video_path || !!row.media_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    liftedAt: row.posted_at ?? row.created_at,
+    // A deleted day reads as no link; a deleted row as a link to the day only.
+    link: row.link_workout_id && row.link_program_id
+      ? {
+          workoutId: row.link_workout_id,
+          date: row.link_date ?? null,
+          workoutName: row.link_workout_name ?? '',
+          programId: row.link_program_id,
+          programName: row.link_program_name ?? '',
+          exerciseId: row.link_exercise_id && row.link_exercise_workout_id === row.link_workout_id ? row.link_exercise_id : null,
+          exerciseName: row.link_exercise_id && row.link_exercise_workout_id === row.link_workout_id ? row.link_exercise_name ?? null : null,
+          exerciseVelocity: row.link_exercise_id && row.link_exercise_workout_id === row.link_workout_id ? row.link_exercise_velocity ?? null : null,
+        }
+      : null,
   }
 }
 
@@ -89,6 +117,16 @@ function baseQuery(withTrack = true) {
   return getDb()
     .selectFrom('video_analyses')
     .leftJoin('athletes', 'athletes.id', 'video_analyses.athlete_id')
+    // L2: the day and row the set was, with what the saved page shows of them.
+    .leftJoin('workouts as lw', 'lw.id', 'video_analyses.workout_id')
+    .leftJoin('programs as lp', 'lp.id', 'lw.program_id')
+    .leftJoin('exercises as le', 'le.id', 'video_analyses.exercise_id')
+    .select([
+      'lw.id as link_workout_id', 'lw.scheduled_date as link_date', 'lw.name as link_workout_name',
+      'lp.id as link_program_id', 'lp.name as link_program_name',
+      'le.id as link_exercise_id', 'le.name as link_exercise_name', 'le.workout_id as link_exercise_workout_id',
+      'le.velocity as link_exercise_velocity',
+    ])
     .select(
       withTrack
         ? sql<string>`video_analyses.track`.as('track')
@@ -111,6 +149,11 @@ function baseQuery(withTrack = true) {
       'video_analyses.created_at as created_at',
       'video_analyses.updated_at as updated_at',
       'athletes.name as athlete_name',
+      'athletes.unit as athlete_unit',
+      // When the set was lifted, as near as the app knows (BP33): a synced
+      // clip's posting time, else when the set was saved. A coach clearing an
+      // inbox on Thursday must not turn Tuesday's sets into Thursday's.
+      (eb) => eb.selectFrom('discord_media').select('discord_media.posted_at').whereRef('discord_media.id', '=', 'video_analyses.media_id').as('posted_at'),
     ])
 }
 
@@ -134,6 +177,8 @@ export async function saveAnalysis(input: SaveVideoAnalysisInput): Promise<Video
       metric: input.metric,
       video_path: input.videoPath ?? null,
       video_bytes: input.videoBytes ?? null,
+      workout_id: input.workoutId ?? null,
+      exercise_id: input.workoutId ? input.exerciseId ?? null : null,
       created_at: now,
       updated_at: now,
     })
@@ -172,7 +217,8 @@ export async function setAnalysisAthlete(
 ): Promise<VideoAnalysisDto | null> {
   const res = await getDb()
     .updateTable('video_analyses')
-    .set({ athlete_id: athleteId, updated_at: new Date().toISOString() })
+    // The training day belonged to the previous athlete's program (L2).
+    .set({ athlete_id: athleteId, workout_id: null, exercise_id: null, updated_at: new Date().toISOString() })
     .where('id', '=', id)
     .executeTakeFirst()
   if (Number(res.numUpdatedRows ?? 0n) === 0) return null
@@ -193,16 +239,34 @@ export async function updateAnalysisContext(
     loadKg?: number | null
     calledRpe?: number | null
     metric?: string | null
+    /** The set's reps, after one was struck off (or put back). */
+    metrics?: Record<string, unknown>[]
+    /** The coach's note on the set. Blank is stored as null. */
+    notes?: string | null
+    /** The training day and row (L2). A day given without a row clears the row. */
+    workoutId?: string | null
+    exerciseId?: string | null
   },
 ): Promise<VideoAnalysisDto | null> {
+  // Another athlete's set cannot stay on the first athlete's training day.
+  let link: { workout_id?: string | null; exercise_id?: string | null } = {}
+  if (change.workoutId !== undefined) {
+    link = { workout_id: change.workoutId, exercise_id: change.workoutId ? change.exerciseId ?? null : null }
+  } else if (change.athleteId !== undefined) {
+    const current = await getDb().selectFrom('video_analyses').select('athlete_id').where('id', '=', id).executeTakeFirst()
+    if (current && current.athlete_id !== change.athleteId) link = { workout_id: null, exercise_id: null }
+  }
   const res = await getDb()
     .updateTable('video_analyses')
     .set({
+      ...link,
       ...(change.athleteId !== undefined ? { athlete_id: change.athleteId } : {}),
       ...(change.lift !== undefined ? { lift: change.lift } : {}),
       ...(change.loadKg !== undefined ? { load_kg: change.loadKg } : {}),
       ...(change.calledRpe !== undefined ? { called_rpe: change.calledRpe } : {}),
       ...(change.metric !== undefined ? { metric: change.metric } : {}),
+      ...(change.metrics !== undefined ? { metrics: JSON.stringify(change.metrics) } : {}),
+      ...(change.notes !== undefined ? { notes: change.notes?.trim() || null } : {}),
       updated_at: new Date().toISOString(),
     })
     .where('id', '=', id)

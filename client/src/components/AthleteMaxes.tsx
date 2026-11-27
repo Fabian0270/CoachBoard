@@ -8,16 +8,26 @@ import { Label } from './ui/label'
 import { useToast } from './ui/toast'
 import { useConfirm } from './ui/confirm-dialog'
 import { Plus, Trash2 } from 'lucide-react'
+import { localToday } from '../lib/dates'
+import { ApiError, errorMessage, getList, sendJson } from '../lib/api'
+import LoadError from './LoadError'
+import { plateStep, unitOf, type LoadUnit } from 'coachboard-shared/units'
 
 const SUGGESTED_LIFTS = ['Squat', 'Bench Press', 'Deadlift']
 
-const today = () => new Date().toISOString().slice(0, 10)
+// Local, not UTC: a PR logged just after midnight belongs to the new day.
+const today = localToday
 
 function formatWeight(w: number): string {
   return Number.isInteger(w) ? String(w) : w.toFixed(1)
 }
 
-export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
+/**
+ * `unit` is the athlete's (S3, D76): new PRs are logged in it. A max recorded in
+ * another unit (kept when the coach switched without converting) still shows
+ * and rounds in its own.
+ */
+export default function AthleteMaxes({ athleteId, unit = 'kg' }: { athleteId: string; unit?: LoadUnit }) {
   const toast = useToast()
   const confirm = useConfirm()
   const [maxes, setMaxes] = useState<AthleteMax[]>([])
@@ -26,14 +36,20 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
   const [saving, setSaving] = useState(false)
   const [selectedLift, setSelectedLift] = useState<string | null>(null)
 
+  // A failed load used to show "No PRs yet" — telling a coach the athlete's
+  // maxes were gone.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/athletes/${athleteId}/maxes`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data) => { if (!cancelled) { setMaxes(Array.isArray(data) ? data : []); setLoading(false) } })
-      .catch(() => { if (!cancelled) setLoading(false) })
+    setLoading(true)
+    setLoadError(null)
+    getList<AthleteMax>(`/api/athletes/${encodeURIComponent(athleteId)}/maxes`)
+      .then((data) => { if (!cancelled) setMaxes(data) })
+      .catch((err) => { if (!cancelled) setLoadError(errorMessage(err)) })
+      .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [athleteId])
+  }, [athleteId, attempt])
 
   // Latest PR per lift — the API returns lift_name asc, recorded_at desc,
   // so the first row seen per lift is the current max.
@@ -60,6 +76,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
         body: JSON.stringify({
           lift_name: form.lift_name.trim(),
           weight: Number(form.weight),
+          unit,
           recorded_at: form.recorded_at,
         }),
       })
@@ -89,13 +106,20 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
       confirmLabel: 'Delete',
       destructive: true,
     }))) return
-    const res = await fetch(`/api/athletes/${athleteId}/maxes/${max.id}`, { method: 'DELETE' })
-    if (res.ok || res.status === 404) {
-      setMaxes((list) => list.filter((m) => m.id !== max.id))
+    // A refused delete used to leave the row in place without a word.
+    try {
+      await sendJson('DELETE', `/api/athletes/${athleteId}/maxes/${max.id}`)
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 404)) {
+        toast.error(`Could not delete that PR. ${errorMessage(err)}`)
+        return
+      }
     }
+    setMaxes((list) => list.filter((m) => m.id !== max.id))
   }
 
   if (loading) return <div className="text-muted-foreground">Loading...</div>
+  if (loadError) return <LoadError what="this athlete's maxes" message={loadError} onRetry={() => setAttempt((n) => n + 1)} />
 
   const reps = Array.from({ length: MAX_REPS - MIN_REPS + 1 }, (_, i) => MIN_REPS + i)
 
@@ -122,7 +146,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
               </datalist>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="pr-weight">Weight (kg)</Label>
+              <Label htmlFor="pr-weight">Weight ({unit})</Label>
               <Input
                 id="pr-weight"
                 required
@@ -172,7 +196,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
                     variant={m.lift_name === activeLift ? 'default' : 'outline'}
                     onClick={() => setSelectedLift(m.lift_name)}
                   >
-                    {m.lift_name} · {formatWeight(m.weight)} {m.unit}
+                    {m.lift_name} · {formatWeight(m.weight)} {m.unit}{m.estimated ? ' (est.)' : ''}
                   </Button>
                 ))}
               </div>
@@ -180,7 +204,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
                 <>
                   <p className="text-sm text-muted-foreground">
                     Weights for {activeMax.lift_name} based on a {formatWeight(activeMax.weight)} {activeMax.unit} max
-                    (Tuchscherer RPE chart, rounded to 2.5 kg).
+                    (Tuchscherer RPE chart, rounded to {plateStep(unitOf(activeMax.unit))} {unitOf(activeMax.unit)}).
                   </p>
                   <div className="overflow-x-auto rounded-md border border-border">
                     <table className="w-full min-w-[600px] border-collapse text-sm">
@@ -199,7 +223,7 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
                           <tr key={r} className="even:bg-muted/20">
                             <td className="border-b border-r border-border px-2 py-1 font-medium">{r}</td>
                             {RPE_VALUES.map((rpe) => {
-                              const w = targetWeight(activeMax.weight, r, rpe)
+                              const w = targetWeight(activeMax.weight, r, rpe, plateStep(unitOf(activeMax.unit)))
                               return (
                                 <td key={rpe} className="border-b border-r border-border px-2 py-1 text-right tabular-nums">
                                   {w === null ? '—' : formatWeight(w)}
@@ -225,6 +249,12 @@ export default function AthleteMaxes({ athleteId }: { athleteId: string }) {
                     <span className="font-medium">{m.lift_name}</span>
                     <span className="ml-2 text-primary font-semibold">{formatWeight(m.weight)} {m.unit}</span>
                     <span className="ml-2 text-sm text-muted-foreground">{m.recorded_at.slice(0, 10)}</span>
+                    {/* From bar speed, confirmed by the coach (BP34, D60): not a lifted max. */}
+                    {!!m.estimated && (
+                      <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" title="Estimated from bar speed and confirmed by you — used for load hints, not counted as a PR">
+                        estimated
+                      </span>
+                    )}
                   </div>
                   <button
                     type="button"

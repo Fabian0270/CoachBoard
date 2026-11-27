@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useToast } from '../ui/toast'
+import { errorMessage, getList } from '../../lib/api'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
 import {
   bestRepVelocity,
@@ -25,7 +27,9 @@ export function useVbtHistory(
   athleteId: string | null,
   lift: VbtLift,
   metric: VelocityMetric,
-): { anchors: LrvAnchor[]; points: LvPoint[] } {
+  /** A saved set to leave out: the saved page reads a set against the OTHERS. */
+  excludeId: string | null = null,
+): { anchors: LrvAnchor[]; points: LvPoint[]; rows: VideoAnalysisDto[] } {
   const [rows, setRows] = useState<VideoAnalysisDto[]>([])
 
   useEffect(() => {
@@ -53,7 +57,7 @@ export function useVbtHistory(
     const points: LvPoint[] = []
 
     for (const row of rows) {
-      if (row.lift !== lift) continue
+      if (row.lift !== lift || row.id === excludeId) continue
       const metrics = row.metrics ?? []
       // The last rep is what an RPE is called on; the fastest is what a
       // load-velocity profile is built from.
@@ -64,8 +68,10 @@ export function useVbtHistory(
         points.push({ load: row.loadKg, velocity: best, label: row.createdAt.slice(0, 10) })
       }
     }
-    return { anchors, points }
-  }, [rows, lift, metric])
+    // The rows too: the saved page finds the last set at this load and the
+    // velocity PR in them (BP29, BP35) without a second request.
+    return { anchors, points, rows }
+  }, [rows, lift, metric, excludeId])
 }
 
 /**
@@ -77,6 +83,7 @@ export function useVbtHistory(
  * job rather than this hook's.
  */
 export function useAthleteMaxes(athleteId: string | null): { lift_name: string; weight: number }[] {
+  const toast = useToast()
   const [maxes, setMaxes] = useState<{ lift_name: string; weight: number }[]>([])
 
   useEffect(() => {
@@ -85,18 +92,24 @@ export function useAthleteMaxes(athleteId: string | null): { lift_name: string; 
       return
     }
     let cancelled = false
-    fetch(`/api/athletes/${encodeURIComponent(athleteId)}/maxes`)
-      .then((r) => (r.ok ? r.json() : []))
+    getList<{ lift_name: string; weight: number; estimated?: number }>(`/api/athletes/${encodeURIComponent(athleteId)}/maxes`)
       .then((data) => {
-        if (!cancelled) setMaxes(Array.isArray(data) ? data : [])
+        // Lifted maxes only: an estimate from bar speed calibrating the bar-speed
+        // estimate would be the estimate agreeing with itself (BP34, D60).
+        if (!cancelled) setMaxes(data.filter((m) => !m.estimated))
       })
       // No maxes on file simply means no calibration — the estimate falls back
-      // to a population slope and says so.
-      .catch(() => !cancelled && setMaxes([]))
+      // to a population slope and says so. A failed read must not pass for
+      // that silently: the estimate would quietly ignore a max that exists.
+      .catch((err) => {
+        if (cancelled) return
+        setMaxes([])
+        toast.error(`Could not read this athlete's maxes, so the estimate ignores them. ${errorMessage(err)}`)
+      })
     return () => {
       cancelled = true
     }
-  }, [athleteId])
+  }, [athleteId, toast])
 
   return maxes
 }

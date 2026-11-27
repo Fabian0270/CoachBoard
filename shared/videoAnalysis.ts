@@ -470,6 +470,175 @@ export function repMetrics(
   }
 }
 
+/** How far the bar moved sideways during one rep's concentric (BP8). */
+export interface RepDrift {
+  /** Furthest from the vertical line through the bottom, either side. */
+  maxPx: number
+  /** Where the top ended up against the bottom: positive is right in the picture. */
+  netPx: number
+  maxM: number | null
+  netM: number | null
+}
+
+/**
+ * Sideways travel during a rep's concentric, read from the tracked path between
+ * its start and its top.
+ *
+ * Worked out from the path rather than stored with the rep, so every saved set
+ * has it, including those saved before it existed. The start is the trimmed
+ * one (see repMetrics), which only drops time standing still at the bottom,
+ * so the bar is where the bottom left it. Null when the path has fewer than two
+ * samples in the rep.
+ */
+export function repDrift(track: Sample[], rep: { startT: number; endT: number }, pixelsPerMetre: number | null): RepDrift | null {
+  const inRep = track.filter((s) => s.t >= rep.startT - 1e-6 && s.t <= rep.endT + 1e-6)
+  if (inRep.length < 2) return null
+  const x0 = inRep[0].x
+  let maxPx = 0
+  for (const s of inRep) maxPx = Math.max(maxPx, Math.abs(s.x - x0))
+  const netPx = inRep[inRep.length - 1].x - x0
+  const toM = (px: number) => (pixelsPerMetre && pixelsPerMetre > 0 ? px / pixelsPerMetre : null)
+  return { maxPx, netPx, maxM: toM(maxPx), netM: toM(netPx) }
+}
+
+/**
+ * A dip has to be at least this deep, as a fraction of the stretch's top speed,
+ * to be a sticking point rather than tracking noise.
+ */
+const STICKING_MIN_DIP = 0.1
+
+/**
+ * The deepest slow-down in one stretch of upward speeds: the sample furthest
+ * below the fastest point on BOTH sides of it. A stretch that only speeds up and
+ * then slows down has none. Shared by the skeleton chart's sticking point
+ * (`stickingPoint` in pose.ts) and the per-rep one below.
+ */
+export function deepestDip(run: number[]): { index: number; depth: number } | null {
+  if (run.length < 3) return null
+  const top = Math.max(...run)
+  if (!(top > 0)) return null
+  const before: number[] = []
+  for (let k = 0, m = 0; k < run.length; k++) before.push((m = Math.max(m, run[k])))
+  const after: number[] = new Array(run.length)
+  for (let k = run.length - 1, m = 0; k >= 0; k--) after[k] = m = Math.max(m, run[k])
+  let best: { index: number; depth: number } | null = null
+  for (let k = 1; k < run.length - 1; k++) {
+    const depth = Math.min(before[k], after[k]) - run[k]
+    if (depth >= top * STICKING_MIN_DIP && (!best || depth > best.depth)) best = { index: k, depth }
+  }
+  return best
+}
+
+export interface RepStickingPoint {
+  t: number
+  /** Upward bar speed there, px/s. */
+  speedPxS: number
+  /** How far up the rep it happened: 0 at the bottom, 1 at the top. */
+  height: number
+}
+
+/**
+ * Where each rep slowed most on the way up (BP11), or null for a rep that
+ * never did. One per rep, in the order given.
+ *
+ * The rep's whole way up is one stretch here, rather than being split into
+ * runs of upward motion the way the skeleton chart does: a bar that stalls
+ * dead mid-rep has speed 0 at the stall, and splitting there would lose the
+ * one sticking point that matters most. The pause at the bottom and the
+ * slow-down into lockout are never dips — nothing faster comes before or
+ * after them.
+ *
+ * Worked out from the stored track, so sets saved before this exist get it too.
+ */
+export function repStickingPoints(track: Sample[], reps: { startT: number; endT: number }[]): (RepStickingPoint | null)[] {
+  const velocities = verticalVelocity(track)
+  return reps.map((rep) => {
+    const idx: number[] = []
+    track.forEach((s, i) => { if (s.t >= rep.startT - 1e-6 && s.t <= rep.endT + 1e-6) idx.push(i) })
+    if (idx.length < 3) return null
+    const up = idx.map((i) => Math.max(0, -velocities[i].vy))
+    const dip = deepestDip(up)
+    if (!dip) return null
+    const bottom = track[idx[0]].y
+    const range = bottom - track[idx[idx.length - 1]].y
+    if (!(range > 0)) return null
+    const at = idx[dip.index]
+    return {
+      t: track[at].t,
+      speedPxS: up[dip.index],
+      height: Math.min(1, Math.max(0, (bottom - track[at].y) / range)),
+    }
+  })
+}
+
+/**
+ * How near its lowest point the bar counts as still at the bottom, as a share
+ * of the rep's range: about a centimetre on a bench.
+ */
+export const PAUSE_BAND = 0.03
+
+/** A rep's tempo (BP12): how long the way down took, and the pause at the bottom. No lockout time (D36). */
+export interface RepTempo {
+  descentMs: number
+  /** From arriving at the bottom to moving up again; 0 for touch-and-go. */
+  pauseMs: number
+}
+
+/**
+ * Each rep's descent and pause, in the order given, worked out from the
+ * stored track like the sideways drift, so older sets get it too.
+ *
+ * Walked BACK from where the rep starts up (`startT`, already past the pause
+ * — see the trim in repMetrics). The pause is the time the bar spends within
+ * PAUSE_BAND of the rep's range of its lowest point. It used to be "not moving
+ * down faster than a tenth of the descent's top speed", and on a real bench
+ * (filmed from the foot end, no collars) the plate crept 4 px over half a
+ * second during the pause — over that line for two frames — so the pause read
+ * as part of the way down and the rep got no reading at all. The run moving
+ * down before the pause (the same tenth-of-top-speed rule, so it holds at any
+ * zoom) is the descent. The search stops at the top before the rep (the
+ * previous rep's end, or the start of the path for the first). Null when there
+ * is no descent there — the first pull of a deadlift starts on the floor — or
+ * it covers under a quarter of the rep's range, which is a wobble, not the way
+ * down.
+ */
+export function repTempos(track: Sample[], reps: { startT: number; endT: number; romPx: number }[]): (RepTempo | null)[] {
+  if (track.length < 3) return reps.map(() => null)
+  const velocities = verticalVelocity(track)
+  const indexAt = (t: number) => {
+    const i = track.findIndex((s) => s.t >= t - 1e-6)
+    return i === -1 ? track.length - 1 : i
+  }
+  const order = reps.map((_, i) => i).sort((a, b) => reps[a].startT - reps[b].startT)
+  const result: (RepTempo | null)[] = reps.map(() => null)
+  order.forEach((ri, k) => {
+    const rep = reps[ri]
+    const lower = k === 0 ? 0 : indexAt(reps[order[k - 1]].endT)
+    const up = indexAt(rep.startT)
+    if (up - lower < 3) return
+    const down = velocities.slice(lower, up + 1).map((v) => v.vy).filter((vy) => vy > 0)
+    if (down.length < 2) return
+    const moving = percentile(down, PEAK_PERCENTILE) * 0.1
+    // The bottom: the lowest the bar got before this rep went up (y grows downward).
+    let bottomY = -Infinity
+    for (let i = lower; i <= up; i++) bottomY = Math.max(bottomY, track[i].y)
+    const band = Math.max(2, rep.romPx * PAUSE_BAND)
+    let arrive = up
+    while (arrive - 1 > lower && track[arrive - 1].y >= bottomY - band) arrive--
+    if (arrive <= lower) return
+    // Back past the slow last of the way down to the fast part, then to where it began.
+    let top = arrive
+    while (top > lower && velocities[top].vy < moving) top--
+    while (top > lower && velocities[top].vy >= moving) top--
+    if (track[arrive].y - track[top].y < rep.romPx * 0.25) return
+    result[ri] = {
+      descentMs: Math.round((track[arrive].t - track[top].t) * 1000),
+      pauseMs: Math.max(0, Math.round((rep.startT - track[arrive].t) * 1000)),
+    }
+  })
+  return result
+}
+
 /** Vertical distance over elapsed time between two samples, px/s. 0 for no time. */
 function displacementRate(samples: Sample[], from: number, to: number): number {
   const dt = samples[to].t - samples[from].t
@@ -512,6 +681,8 @@ export interface VideoAnalysisDto extends SetContext {
   mediaId: string | null
   athleteId: string | null
   athleteName: string | null
+  /** 'kg' | 'lb' (S3): the unit loadKg is in — the athlete's (the field name predates lb). */
+  athleteUnit?: 'kg' | 'lb'
   sourceLabel: string
   track: Sample[]
   calibration: CalibrationDto | null
@@ -522,6 +693,55 @@ export interface VideoAnalysisDto extends SetContext {
   hasVideo: boolean
   createdAt: string
   updatedAt: string
+  /**
+   * When the set was lifted, as near as the app knows: a synced clip's posting
+   * time, else when it was saved. What sessions are grouped by (BP33).
+   */
+  liftedAt: string
+  /** The training day, and the row of it, this set was (L2). Null when not
+   *  linked, or when the day has since been deleted. */
+  link: AnalysisLink | null
+}
+
+/** Where in a program a saved set belongs (L2, D67). */
+export interface AnalysisLink {
+  workoutId: string
+  date: string | null
+  workoutName: string
+  programId: string
+  programName: string
+  /** Null: linked to the day only, or the row has since been deleted. */
+  exerciseId: string | null
+  exerciseName: string | null
+  /** The row's velocity target as typed (BP39); null without a row or a target. */
+  exerciseVelocity: string | null
+}
+
+/** A row of a day a set could be linked to. */
+export interface AnalysisLinkRow {
+  exerciseId: string
+  name: string
+  sets: string | null
+  reps: string | null
+  /** The planned load (Load Cap). */
+  weight: number | null
+  loadUsed: string | null
+  /** The row's velocity target as typed (BP39). */
+  velocity: string | null
+  /** The lift matches the set's, and the load agrees when there is one. */
+  fits: boolean
+}
+
+/** A training day near when the set was lifted, for the link pickers. */
+export interface AnalysisLinkDay {
+  workoutId: string
+  date: string | null
+  workoutName: string
+  programId: string
+  programName: string
+  rows: AnalysisLinkRow[]
+  /** The one row that fits, when exactly one does — picked for the coach. */
+  suggestedExerciseId: string | null
 }
 
 export interface SaveVideoAnalysisInput extends SetContext {
@@ -536,6 +756,9 @@ export interface SaveVideoAnalysisInput extends SetContext {
    *  Null for a Discord clip, which needs no copy. */
   videoPath?: string | null
   videoBytes?: number | null
+  /** The training day and row (L2); both optional. */
+  workoutId?: string | null
+  exerciseId?: string | null
 }
 
 /**
@@ -562,6 +785,13 @@ export const PLATE_DIAMETERS_MM = [
   { label: '350 mm — training plate', value: 350 },
   { label: '325 mm — training plate', value: 325 },
 ] as const
+
+/** A saved analysis's scale, from its stored line across the plate; null without one. */
+export function analysisPixelsPerMetre(analysis: { calibration: CalibrationDto | null }): number | null {
+  const c = analysis.calibration
+  if (!c) return null
+  return pixelsPerMetreFromPlate(Math.hypot(c.b.x - c.a.x, c.b.y - c.a.y), c.plateDiameterMm)
+}
 
 /** Where the picture actually sits inside a video element's box, in CSS pixels. */
 export interface PictureRect {

@@ -80,3 +80,16 @@ describe('getProgramReport — avg RPE deviation', () => {
     expect(report.avgRpeDeviation).toBe(1)
   })
 })
+
+describe('getProgramReport — e1RM from the competition lifts only (D47)', () => {
+  it('a pause squat logged heavier does not move the Squat e1RM', async () => {
+    // Both rows log 100 kg × 5; the pause squat at RPE 7 would give the higher e1RM.
+    const report = await reportFor([
+      { name: 'Squat', rpe: '9' },
+      { name: 'Pause Squat', rpe: '7' },
+      { name: 'Close Grip Bench', rpe: '8' },
+    ])
+    expect(report.e1rmTrends.map((t) => [t.liftKey, t.displayName])).toEqual([['squat', 'Squat']])
+    expect(report.e1rmTrends[0].dataPoints.map((d) => d.exerciseName)).toEqual(['Squat'])
+  })
+})

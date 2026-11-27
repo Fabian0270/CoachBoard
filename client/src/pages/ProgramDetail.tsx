@@ -3,37 +3,68 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useProgramData } from '../hooks/useProgramData'
 import { useProgramCalendar, useWorkoutByDate } from '../hooks/useProgramCalendar'
 import { useWorkoutActions } from '../hooks/useWorkoutActions'
+import { useDayOperations, dayHasResults } from '../hooks/useDayOperations'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
+import { Textarea } from '../components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { useToast } from '../components/ui/toast'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Trash2, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, Eye, Film } from 'lucide-react'
+import { Trash2, Copy, CopyPlus, Pencil, StickyNote, Replace, TrendingUp, CalendarRange, Loader2, Check, X, Download, SlidersHorizontal, Upload, BarChart2, GripVertical, PlayCircle, Mail, ChevronDown, ChevronLeft, ChevronRight, Eye, Film, CalendarDays, Rows3 } from 'lucide-react'
 import { BackLink } from '../components/PageHeader'
 import DayAttachments from '../components/discord/DayAttachments'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
 import ImportDialog from '../components/ImportDialog'
 import SendProgramDialog from '../components/SendProgramDialog'
 import PreviewProgramDialog from '../components/PreviewProgramDialog'
-import ExerciseEditor from '../components/program-detail/ExerciseEditor'
+import ExerciseEditor, { type CopyWeek } from '../components/program-detail/ExerciseEditor'
+import DayPreview from '../components/program-detail/DayPreview'
+import DuplicateProgramDialog from '../components/DuplicateProgramDialog'
+import { unitOf } from 'coachboard-shared/units'
+import ProgressionDialog from '../components/program-detail/ProgressionDialog'
+import BlockView from '../components/program-detail/BlockView'
+import { anchorFor, weekdayCounts, type BlockRow } from '../lib/blockLayout'
 import type { SuggestionGoal } from 'coachboard-shared'
 import {
   type ToggleableColumn,
   TOGGLEABLE_COLUMNS,
+  DEFAULT_ENABLED_COLUMNS,
   COLUMN_LABELS,
   DAY_LABELS,
   weeksBetween,
-  dayName,
+  planDurationChange,
+  toIsoDate,
+  addDays,
+  parseIsoDate,
+  buildColumns,
+  type ColKey,
+  type Exercise,
   type Program,
 } from '../lib/programUtils'
-import { errorMessage, getJson } from '../lib/api'
+import { errorMessage, getJson, getList, sendJson } from '../lib/api'
+import type { StoredMax } from '../lib/loadHint'
+import { parseCellBlock, rowToFields } from '../lib/pasteGrid'
+import { localToday } from '../lib/dates'
 import LoadError from '../components/LoadError'
 
+/**
+ * One page per program. Going straight from one program to another kept this
+ * page mounted: until the new program loaded it showed the previous one's
+ * calendar under the new address, so a quick click opened a day of the old
+ * program and its edits were sent to the new one. Keyed by id, the page starts
+ * over for each program — open day, clipboard and undo included.
+ */
 export default function ProgramDetail() {
+  const { id } = useParams<{ id: string }>()
+  return <ProgramPage key={id} />
+}
+
+function ProgramPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const toast = useToast()
@@ -41,6 +72,18 @@ export default function ProgramDetail() {
   const { program, setProgram, notFound, loadError, reload } = useProgramData(id)
   const [setupForm, setSetupForm] = useState({ start_date: '', weeks: '4' })
   const [savingDuration, setSavingDuration] = useState(false)
+  const [durationOpen, setDurationOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [replaceOpen, setReplaceOpen] = useState(false)
+  const [duplicateOpen, setDuplicateOpen] = useState(false)
+  const [progressOpen, setProgressOpen] = useState(false)
+  const [replaceForm, setReplaceForm] = useState({ from: '', to: '', fromWeek: '0' })
+  /** The week whose W-label menu is open. */
+  const [weekMenu, setWeekMenu] = useState<number | null>(null)
+  // The shortcut handler is registered once; this keeps it on the latest program.
+  const handleChangeDurationRef = useRef<() => void>(() => {})
+  const [detailsForm, setDetailsForm] = useState({ name: '', description: '' })
+  const [savingDetails, setSavingDetails] = useState(false)
   const [openDate, setOpenDate] = useState<string | null>(null)
   const [cellStatus, setCellStatus] = useState<Record<string, 'saving' | 'saved' | 'error'>>({})
   const [columnsOpen, setColumnsOpen] = useState(false)
@@ -50,7 +93,6 @@ export default function ProgramDetail() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const [exportToast, setExportToast] = useState(false)
   const exportToastTimer = useRef<number | null>(null)
-  const exportMenuRef = useRef<HTMLDivElement>(null)
   const savedTimers = useRef<Record<string, number>>({})
 
   const [dayDragSource, setDayDragSource] = useState<string | null>(null)
@@ -84,12 +126,29 @@ export default function ProgramDetail() {
     return map
   }, [discordMedia])
 
+  // Shortcuts for the buttons at the top of the program. Only while nothing
+  // else is open, so they never reach into a dialog or a menu. Delete has no
+  // shortcut on purpose: it is one press from losing a whole program.
   useEffect(() => {
-    if (!exportMenuOpen) return
-    const close = () => setExportMenuOpen(false)
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [exportMenuOpen])
+    if (!program?.start_date || !id) return
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      if (document.querySelector('[role="dialog"], [role="menu"]')) return
+      const key = e.key.toLowerCase()
+      const act =
+        !e.shiftKey && key === 'e' ? () => setExportMenuOpen(true)
+        : !e.shiftKey && key === 'i' ? () => setImportOpen(true)
+        : !e.shiftKey && key === 'r' ? () => navigate(`/programs/${id}/report`)
+        : e.shiftKey && key === 'c' ? () => setColumnsOpen(true)
+        : e.shiftKey && key === 'd' ? () => handleChangeDurationRef.current()
+        : null
+      if (!act) return
+      e.preventDefault()
+      act()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [program?.start_date, id, navigate])
 
   const flashCell = (date: string, status: 'saving' | 'saved' | 'error') => {
     setCellStatus((s) => ({ ...s, [date]: status }))
@@ -102,7 +161,7 @@ export default function ProgramDetail() {
   }
 
   const {
-    addExercise, saveExerciseField, deleteExercise, deleteWorkout, addSet, reorderExercises,
+    ensureWorkout, addExercise, saveExerciseField, deleteExercise, addSet, duplicateExercise, saveDayNote, reorderExercises,
     failedEdits, retryFailedEdits,
   } = useWorkoutActions(
     id, workoutByDate, setProgram, flashCell,
@@ -132,19 +191,239 @@ export default function ProgramDetail() {
     }
   }
 
-  // Dates for the same day-of-week across all weeks (excluding openDate itself)
-  const sameDayDates = useMemo<{ date: string; weekIndex: number }[]>(() => {
+  // Every day of the program as a place the open day could be copied to.
+  const copyGrid = useMemo<CopyWeek[]>(() => {
     if (!grid || !openDate) return []
-    let colIndex = -1
-    for (const row of grid.rows) {
-      const idx = row.days.findIndex((d) => d.date === openDate)
-      if (idx !== -1) { colIndex = idx; break }
+    const sourceCol = grid.rows.map((r) => r.days.findIndex((d) => d.date === openDate)).find((i) => i !== -1) ?? -1
+    return grid.rows.map((row) => ({
+      weekIndex: row.weekIndex,
+      days: row.days.map((d, col) => {
+        const w = workoutByDate.get(d.date)
+        return {
+          date: d.date,
+          weekday: DAY_LABELS[col],
+          isSource: d.date === openDate,
+          sameWeekday: col === sourceCol,
+          occupied: !!w && w.exercises.length > 0,
+          hasResults: dayHasResults(w),
+        }
+      }),
+    }))
+  }, [grid, openDate, workoutByDate])
+
+  // The athlete's maxes, for the suggested loads in the day editor. A hint, so
+  // a failed read only means no suggestions — nothing claims there are no maxes.
+  const [athleteMaxes, setAthleteMaxes] = useState<StoredMax[]>([])
+  const athleteId = program?.athlete_id ?? null
+  useEffect(() => {
+    if (!athleteId) { setAthleteMaxes([]); return }
+    let cancelled = false
+    getList<StoredMax>(`/api/athletes/${encodeURIComponent(athleteId)}/maxes`)
+      .then((rows) => { if (!cancelled) setAthleteMaxes(rows) })
+      .catch(() => { if (!cancelled) setAthleteMaxes([]) })
+    return () => { cancelled = true }
+  }, [athleteId])
+  // Settings > Preferences can switch the suggestions off; on until it says so.
+  const [loadHints, setLoadHints] = useState(true)
+  useEffect(() => {
+    let cancelled = false
+    getJson<{ loadHints: boolean }>('/api/settings/preferences')
+      .then((p) => { if (!cancelled) setLoadHints(p.loadHints) })
+      .catch(() => { /* keep the default */ })
+    return () => { cancelled = true }
+  }, [])
+
+  // The coach's own exercise names, for the suggestions in the day editor.
+  // Loaded once per visit; on failure the built-in list still suggests.
+  const [ownExerciseNames, setOwnExerciseNames] = useState<string[]>([])
+  useEffect(() => {
+    let cancelled = false
+    getJson<{ name: string }[]>('/api/programs/exercise-names')
+      .then((rows) => { if (!cancelled && Array.isArray(rows)) setOwnExerciseNames(rows.map((r) => r.name)) })
+      .catch(() => { /* a convenience: the built-in names are still offered */ })
+    return () => { cancelled = true }
+  }, [])
+
+  // ── Moving between days while one is open ───────────────────────────────
+  const allDates = useMemo(() => (grid ? grid.rows.flatMap((r) => r.days.map((d) => d.date)) : []), [grid])
+  const lastOpenDate = useRef<string | null>(null)
+  if (openDate) lastOpenDate.current = openDate
+
+  /** Whether there is a day `step` calendar days away inside the program. */
+  const canGoToDay = (step: number): boolean => {
+    const i = openDate ? allDates.indexOf(openDate) : -1
+    return i !== -1 && i + step >= 0 && i + step < allDates.length
+  }
+  /** Next / previous CALENDAR day, empty or not; ±7 is the same weekday. */
+  const goToDay = (step: number) => {
+    if (!openDate || !canGoToDay(step)) return
+    setOpenDate(allDates[allDates.indexOf(openDate) + step])
+  }
+  /** "16 Nov" */
+  const shortDate = (date: string): string =>
+    new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+
+  /** "Mon W2" — how a day is named in messages. */
+  const shortDayLabel = (date: string): string => {
+    const i = allDates.indexOf(date)
+    return i === -1 ? date : `${DAY_LABELS[i % 7]} W${Math.floor(i / 7) + 1}`
+  }
+
+  const days = useDayOperations({
+    programId: id,
+    workoutByDate,
+    setProgram,
+    mediaIdsFor: (workoutId) => (mediaByWorkoutId.get(workoutId) ?? []).map((m) => m.id),
+    onMediaChanged: () => void loadDiscordMedia(),
+    labelFor: shortDayLabel,
+  })
+
+  // ── Calendar or block view ──────────────────────────────────────────────
+  // The block view (1E) is a second way to look at the same days: one weekday,
+  // exercises down the side, weeks across. It replaces nothing (D40).
+  const [view, setView] = useState<'calendar' | 'block'>('calendar')
+  const [blockWeekday, setBlockWeekday] = useState<number | null>(null)
+  /** Until the coach picks one: the first weekday with training. */
+  const shownWeekday = blockWeekday ?? Math.max(0, weekdayCounts(workoutByDate, allDates).findIndex((n) => n > 0))
+  const blockFocus = useRef<(() => void) | null>(null)
+
+  // ── The calendar from the keyboard ──────────────────────────────────────
+  // One day is "current": the only one Tab stops on, and where the arrow keys
+  // start from. Without that, Tab would have to cross every day of the block.
+  const [currentDay, setCurrentDay] = useState<string | null>(null)
+  // Day lookups stay inside THIS calendar. A dialog closing after the page had
+  // moved on to another program found a day with the same date there and
+  // focused it (seen in the tests, where one screen follows another).
+  const calendarRef = useRef<HTMLDivElement>(null)
+  // Where the keyboard starts when no day has been visited yet: today, if the
+  // program is running, otherwise its first day.
+  const today = localToday()
+  const startDay = allDates.includes(today) ? today : allDates[0] ?? null
+  const tabStopDay = currentDay && allDates.includes(currentDay) ? currentDay : startDay
+  const focusDay = (date: string) => {
+    setCurrentDay(date)
+    calendarRef.current?.querySelector<HTMLElement>(`[data-day="${date}"]`)?.focus()
+  }
+
+  // Arrow keys work as soon as the program is on screen. Before, nothing had
+  // the focus until a day was clicked, so the first arrow press scrolled the
+  // page instead — keyboard use started with the mouse. Now a press with
+  // nothing focused lands on the current day; the next one moves from there.
+  // Left alone while anything else has the focus (a button, a field) or while a
+  // dialog or menu is open, where the arrows mean something else.
+  // The whole-day preview shown when the pointer rests on a cell.
+  const [preview, setPreview] = useState<{ date: string; rect: DOMRect } | null>(null)
+  const previewTimer = useRef<number | null>(null)
+  const showPreviewSoon = (date: string, el: HTMLElement) => {
+    if (previewTimer.current) window.clearTimeout(previewTimer.current)
+    previewTimer.current = window.setTimeout(() => setPreview({ date, rect: el.getBoundingClientRect() }), 450)
+  }
+  const hidePreview = () => {
+    if (previewTimer.current) window.clearTimeout(previewTimer.current)
+    previewTimer.current = null
+    setPreview(null)
+  }
+  useEffect(() => () => { if (previewTimer.current) window.clearTimeout(previewTimer.current) }, [])
+
+  const focusDayRef = useRef(focusDay)
+  focusDayRef.current = focusDay
+  useEffect(() => {
+    if (!tabStopDay) return
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.key.startsWith('Arrow') || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+      const active = document.activeElement
+      if (active && active !== document.body && active !== document.documentElement) return
+      if (document.querySelector('[role="dialog"], [role="menu"]')) return
+      e.preventDefault()
+      // In the block view the press lands in its grid, where the cursor last was.
+      if (view === 'block') blockFocus.current?.()
+      else focusDayRef.current(tabStopDay)
     }
-    if (colIndex === -1) return []
-    return grid.rows
-      .filter((row) => row.days[colIndex]?.date !== openDate)
-      .map((row) => ({ date: row.days[colIndex].date, weekIndex: row.weekIndex }))
-  }, [grid, openDate])
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [tabStopDay, view])
+  const onDayKeyDown = (e: React.KeyboardEvent, date: string) => {
+    const i = allDates.indexOf(date)
+    const ctrl = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key]
+    if (step !== undefined && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault()
+      const to = allDates[i + step]
+      if (to) focusDay(to)
+      return
+    }
+    if (ctrl && e.key.toLowerCase() === 'c') { e.preventDefault(); days.copyToClipboard(date); return }
+    if (ctrl && e.key.toLowerCase() === 'x') { e.preventDefault(); days.cutToClipboard(date); return }
+    if (ctrl && e.key.toLowerCase() === 'v') {
+      e.preventDefault()
+      void days.paste(date).then(() => focusDay(date))
+      return
+    }
+    if (e.key === 'Delete' && !e.ctrlKey && !e.altKey) {
+      e.preventDefault()
+      void days.clearDay(date).then(() => focusDay(date))
+      return
+    }
+    if (e.key === 'Escape' && days.clipboard) days.clearClipboard()
+  }
+
+  /** An exercise's name for history labels; a set row takes its exercise's. */
+  const nameOf = (exerciseId: string): string => {
+    for (const w of program?.workouts ?? []) {
+      const i = w.exercises.findIndex((ex) => ex.id === exerciseId)
+      if (i === -1) continue
+      for (let k = i; k >= 0; k--) if (w.exercises[k].name.trim()) return w.exercises[k].name.trim()
+    }
+    return 'the exercise'
+  }
+
+  // Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z) anywhere on the program, the open day
+  // included. Typing not yet saved keeps the field's own undo, and another
+  // dialog or a menu keeps the keys to itself.
+  const daysRef = useRef(days)
+  daysRef.current = days
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      const k = e.key.toLowerCase()
+      const isUndo = k === 'z' && !e.shiftKey
+      const isRedo = (k === 'y' && !e.shiftKey) || (k === 'z' && e.shiftKey)
+      if (!isUndo && !isRedo) return
+      if ([...document.querySelectorAll('[role="dialog"]')].some((d) => !d.hasAttribute('data-day-dialog'))) return
+      if (document.querySelector('[role="menu"]')) return
+      if (daysRef.current.keyBelongsToField()) return
+      e.preventDefault()
+      void (isUndo ? daysRef.current.undo() : daysRef.current.redo())
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // ── A whole week at a time ──────────────────────────────────────────────
+  const [copyWeekFrom, setCopyWeekFrom] = useState<number | null>(null)
+  const [copyWeekTo, setCopyWeekTo] = useState<Set<number>>(new Set())
+  const weekDates = (w: number) => grid?.rows[w]?.days.map((d) => d.date) ?? []
+  const weekHasResults = (w: number) => weekDates(w).some((d) => dayHasResults(workoutByDate.get(d)))
+  const weekHasExercises = (w: number) => weekDates(w).some((d) => (workoutByDate.get(d)?.exercises.length ?? 0) > 0)
+  const runCopyWeek = async () => {
+    if (copyWeekFrom === null) return
+    const from = weekDates(copyWeekFrom)
+    const targets = [...copyWeekTo].sort((a, b) => a - b)
+    const pairs = targets.flatMap((w) => weekDates(w).map((target, col) => ({ source: from[col], target })))
+    const done = `Week ${copyWeekFrom + 1} copied to week${targets.length === 1 ? '' : 's'} ${targets.map((w) => w + 1).join(', ')}`
+    if (await days.copyDays(pairs, done)) setCopyWeekFrom(null)
+  }
+
+  /** "Week 3 · Monday · 2 Dec" — the week is what a coach thinks in. */
+  const dayTitle = (date: string): string => {
+    const i = allDates.indexOf(date)
+    // English names on purpose: the app is in English, and the system locale
+    // would give "Week 3 · måndag" on a Swedish machine.
+    const d = new Date(`${date}T00:00:00Z`)
+    const weekday = d.toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' })
+    const short = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+    return `${i === -1 ? '' : `Week ${Math.floor(i / 7) + 1} · `}${weekday} · ${short}`
+  }
 
   // A failed reload used to put a 500's error object in place of the program.
   // Now the page keeps what it had and says the view may be out of date.
@@ -157,38 +436,59 @@ export default function ProgramDetail() {
     }
   }
 
-  const handleDayDrop = async (targetDate: string) => {
-    if (!dayDragSource || !id) return
+  // Dragging onto an occupied day swaps the two. It used to do so without a
+  // word, and a refused move did nothing at all; now it says what happened and
+  // offers Undo (see useDayOperations).
+  // Holding Ctrl while dropping copies the day instead of moving it.
+  const handleDayDrop = async (targetDate: string, copy: boolean) => {
+    if (!dayDragSource) return
     const sourceDate = dayDragSource
     setDayDragSource(null)
     setDayDragOver(null)
-    const res = await fetch(`/api/programs/${id}/move-day`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sourceDate, targetDate }),
-    })
-    if (res.ok) await reloadProgram()
+    if (!copy) { void days.moveDay(sourceDate, targetDate); return }
+    if (!(await days.confirmLosingResults([targetDate], 'Replace'))) return
+    void days.copyDays(
+      [{ source: sourceDate, target: targetDate }],
+      `${shortDayLabel(sourceDate)} copied to ${shortDayLabel(targetDate)}`,
+    )
   }
+
+  // What the dates in the duration form would do to the training days, worked
+  // out before anything is sent so the coach is asked about what is at stake.
+  const durationPlan = program && setupForm.start_date && Number(setupForm.weeks) >= 1
+    ? planDurationChange(program, setupForm.start_date, Number(setupForm.weeks))
+    : null
 
   const handleSetupSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!id) return
+    if (!id || !durationPlan) return
+    const removed = durationPlan.outside
+    if (removed.length > 0) {
+      const withResults = removed.filter((w) => dayHasResults(w)).length
+      const ok = await confirm({
+        title: `Remove ${removed.length} training day${removed.length === 1 ? '' : 's'}?`,
+        description:
+          `${removed.length === 1 ? 'It falls' : 'They fall'} outside the new dates and will be deleted.` +
+          (withResults > 0
+            ? ` ${withResults} of them ${withResults === 1 ? 'holds' : 'hold'} what the athlete logged.`
+            : ''),
+        confirmLabel: 'Remove and save',
+        destructive: true,
+      })
+      if (!ok) return
+    }
     setSavingDuration(true)
     try {
-      const res = await fetch(`/api/programs/${id}/duration`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start_date: setupForm.start_date, weeks: Number(setupForm.weeks) }),
+      await sendJson('PUT', `/api/programs/${id}/duration`, {
+        start_date: setupForm.start_date,
+        weeks: Number(setupForm.weeks),
+        remove_outside: removed.length > 0,
       })
-      if (res.ok) {
-        const updated = await res.json()
-        setProgram((p) => p ? { ...p, ...updated } : p)
-      } else {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        toast.error(`Failed to set duration: ${err.error ?? JSON.stringify(err)}`)
-      }
+      // The training days may have moved or gone: show what is stored.
+      await reloadProgram()
+      setDurationOpen(false)
     } catch (err) {
-      toast.error(`Network error: ${String(err)}`)
+      toast.error(`Could not change the dates. ${errorMessage(err)} Nothing was changed.`)
     } finally {
       setSavingDuration(false)
     }
@@ -196,43 +496,285 @@ export default function ProgramDetail() {
 
   const handleDelete = async () => {
     if (!(await confirm({ title: 'Delete this program?', confirmLabel: 'Delete', destructive: true }))) return
-    await fetch(`/api/programs/${id}`, { method: 'DELETE' })
+    // Used to navigate away whether or not anything had been deleted, so a
+    // refused delete looked like a successful one until the list was reopened.
+    try {
+      await sendJson('DELETE', `/api/programs/${id}`)
+    } catch (err) {
+      toast.error(`Could not delete this program. ${errorMessage(err)}`)
+      return
+    }
     navigate('/programs')
   }
 
   const handleActivateDraft = async () => {
     if (!program || !id) return
-    const res = await fetch(`/api/programs/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'active' }),
-    })
-    if (res.ok) {
-      const updated = await res.json()
+    try {
+      const updated = await sendJson<Partial<Program>>('PUT', `/api/programs/${id}`, { status: 'active' })
       setProgram((p) => p ? { ...p, ...updated } : p)
+    } catch (err) {
+      toast.error(`Could not make this program active. ${errorMessage(err)}`)
     }
   }
 
+  const openDetails = () => {
+    if (!program) return
+    setDetailsForm({ name: program.name, description: program.description ?? '' })
+    setDetailsOpen(true)
+  }
+  const saveDetails = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id || !detailsForm.name.trim()) return
+    setSavingDetails(true)
+    try {
+      const updated = await sendJson<Partial<Program>>('PUT', `/api/programs/${id}`, {
+        name: detailsForm.name.trim(),
+        description: detailsForm.description.trim(),
+      })
+      setProgram((p) => (p ? { ...p, name: updated.name ?? p.name, description: updated.description ?? null } : p))
+      setDetailsOpen(false)
+    } catch (err) {
+      toast.error(`Could not save the name and description. ${errorMessage(err)}`)
+    } finally {
+      setSavingDetails(false)
+    }
+  }
+
+  // Rows pasted from a spreadsheet into a day, with Undo of the whole paste.
+  const pasteRows = async (date: string, anchorId: string | null, start: ColKey, text: string) => {
+    if (!id || !program) return
+    const cols = buildColumns(program.enabled_columns ?? DEFAULT_ENABLED_COLUMNS).map((c) => c.key)
+    const grid = parseCellBlock(text)
+    if (grid.length === 0) return
+    let notNumbers = 0
+    let ignored = 0
+    const read = (cells: string[], from: ColKey) => {
+      const r = rowToFields(cells, cols, from)
+      notNumbers += r.notNumbers
+      ignored += r.ignored
+      return r.fields
+    }
+    const anchorPatch = anchorId ? read(grid[0], start) : null
+    // New rows start at the same column as the first, the way a spreadsheet
+    // pastes a block.
+    const rows = (anchorId ? grid.slice(1) : grid).map((cells) => read(cells, start))
+    const ok = await days.withUndo([date], async () => {
+      const workout = workoutByDate.get(date) ?? (await ensureWorkout(date))
+      if (!workout) throw new Error('The day could not be created.')
+      await sendJson('POST', `/api/programs/${id}/workouts/${workout.id}/exercises/paste`, { anchorId, anchorPatch, rows })
+    }, `Pasted ${grid.length} row${grid.length === 1 ? '' : 's'}`)
+    if (ok && (notNumbers || ignored)) {
+      toast.info([
+        notNumbers ? `${notNumbers} Load Cap value${notNumbers === 1 ? ' was' : 's were'} not a number and left out.` : '',
+        ignored ? `${ignored} cell${ignored === 1 ? '' : 's'} past the last column ${ignored === 1 ? 'was' : 'were'} left out.` : '',
+      ].filter(Boolean).join(' '))
+    }
+  }
+
+  // The program as it is now, for saves that finish after the page has moved on.
+  const workoutByDateRef = useRef(workoutByDate)
+  workoutByDateRef.current = workoutByDate
+
+  /**
+   * Save one cell and make it a step of the history. Shared by the day editor
+   * and the block view, so Ctrl+Z treats an edit the same wherever it was made.
+   */
+  const saveCell = async (date: string, workoutId: string, exerciseId: string, patch: Partial<Exercise>): Promise<boolean> => {
+    // What the edited fields held before. The rest of the day is read when the
+    // step is undone (see recordLazy), so two cells saved in quick succession
+    // each undo only themselves.
+    const row = workoutByDateRef.current.get(date)?.exercises.find((ex) => ex.id === exerciseId)
+    const old = Object.fromEntries(Object.keys(patch).map((k) => [k, row?.[k as keyof typeof row] ?? null]))
+    const ok = await saveExerciseField(date, workoutId, exerciseId, patch)
+    if (ok) {
+      days.recordLazy(`Changed ${nameOf(exerciseId)}`, [date], () =>
+        days.snapshotDays([date]).map((d) => d.workout
+          ? { ...d, workout: { ...d.workout, exercises: d.workout.exercises.map((ex) => (ex.id === exerciseId ? { ...ex, ...old } : ex)) } }
+          : d))
+    }
+    return ok
+  }
+
+  // ── Block view saves ────────────────────────────────────────────────────
+  // A cell typed into a week that does not have the exercise creates it there
+  // (D41). Enter moves straight on to the next cell of that same week, which
+  // has no exercise yet either; its save waits for the first one's exercise
+  // rather than creating a second.
+  const creating = useRef(new Map<string, Promise<{ workoutId: string; exerciseId: string } | null>>())
+
+  const createInWeek = async (row: BlockRow, rows: BlockRow[], week: number, patch: Partial<Exercise>) => {
+    if (!id) return null
+    const date = allDates[week * 7 + shownWeekday]
+    const before = days.snapshotDays([date])
+    try {
+      const workout = workoutByDateRef.current.get(date) ?? (await ensureWorkout(date))
+      if (!workout) throw new Error('The training day could not be created.')
+      const anchor = anchorFor(rows, row, week)
+      let exerciseId: string
+      if (row.isSet && anchor && anchor.name.trim().toLowerCase() === row.name.toLowerCase()) {
+        // A further set: added to its exercise, as Add set in the day editor does.
+        const known = new Set(workoutByDateRef.current.get(date)?.exercises.map((e) => e.id) ?? [])
+        const res = await sendJson<{ exercises: Exercise[] }>('POST', `/api/programs/${id}/workouts/${workout.id}/exercises/${anchor.id}/add-set`)
+        const made = res.exercises.find((e) => !known.has(e.id))
+        if (!made) throw new Error('The set could not be added.')
+        exerciseId = made.id
+        await sendJson('PUT', `/api/programs/${id}/workouts/${workout.id}/exercises/${exerciseId}`, patch)
+      } else {
+        // In its place: under the row above it that this week has, or first.
+        const res = await sendJson<{ exercises: Exercise[]; newIds: string[] }>(
+          'POST', `/api/programs/${id}/workouts/${workout.id}/exercises/paste`,
+          { anchorId: anchor?.id ?? null, anchorPatch: null, rows: [{ name: row.name, ...patch }] },
+        )
+        exerciseId = res.newIds[0]
+        if (!anchor && res.exercises.length > 1) {
+          await sendJson('PUT', `/api/programs/${id}/workouts/${workout.id}/exercises/reorder`, {
+            exerciseIds: [exerciseId, ...res.exercises.filter((e) => e.id !== exerciseId).map((e) => e.id)],
+          })
+        }
+      }
+      await reloadProgram()
+      days.record(`Added ${row.name} to week ${week + 1}`, before)
+      return { workoutId: workout.id, exerciseId }
+    } catch (err) {
+      await reloadProgram()
+      toast.error(`Could not add ${row.name} to week ${week + 1}. ${errorMessage(err)}`)
+      return null
+    }
+  }
+
+  /**
+   * Whether an exercise created a moment ago is still there (an undo may have
+   * taken it away since). Asked of the server when the page does not show it:
+   * right after a creation the page has the new program but has not drawn it
+   * yet, and reading only what is drawn created the exercise a second time —
+   * seen in the packaged build, not in the tests.
+   */
+  const stillExists = async (date: string, exerciseId: string): Promise<boolean> => {
+    if (workoutByDateRef.current.get(date)?.exercises.some((e) => e.id === exerciseId)) return true
+    if (!id) return false
+    try {
+      const fresh = await getJson<Program>(`/api/programs/${encodeURIComponent(id)}`)
+      return fresh.workouts.some((w) => w.exercises.some((e) => e.id === exerciseId))
+    } catch {
+      // Unknown: try the save, which says so if the exercise is gone.
+      return true
+    }
+  }
+
+  const saveBlockCell = async (row: BlockRow, rows: BlockRow[], week: number, patch: Partial<Exercise>): Promise<boolean> => {
+    const date = allDates[week * 7 + shownWeekday]
+    const ex = row.cells[week]
+    const key = `${shownWeekday}|${row.key}|${week}`
+    if (ex) {
+      creating.current.delete(key)
+      return saveCell(date, ex.workout_id, ex.id, patch)
+    }
+    const inFlight = creating.current.get(key)
+    if (inFlight) {
+      const made = await inFlight
+      if (made && (await stillExists(date, made.exerciseId))) return saveCell(date, made.workoutId, made.exerciseId, patch)
+      creating.current.delete(key)
+      if (made) return saveBlockCell(row, rows, week, patch)
+    }
+    const run = createInWeek(row, rows, week, patch)
+    creating.current.set(key, run)
+    return !!(await run)
+  }
+
+  /** A new exercise on the shown weekday in every week; days are created where missing (D42). */
+  const addBlockRow = async (name: string): Promise<boolean> => {
+    if (!id) return false
+    const dates = Array.from({ length: Math.floor(allDates.length / 7) }, (_, w) => allDates[w * 7 + shownWeekday])
+    const weekday = new Date(`${dates[0]}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' })
+    const label = `Added ${name} to every ${weekday}`
+    const before = days.snapshotDays(dates)
+    try {
+      for (const date of dates) {
+        const workout = workoutByDateRef.current.get(date) ?? (await ensureWorkout(date))
+        if (!workout) throw new Error('A training day could not be created.')
+        await sendJson('POST', `/api/programs/${id}/workouts/${workout.id}/exercises/paste`, { anchorId: null, anchorPatch: null, rows: [{ name }] })
+      }
+    } catch (err) {
+      // Some weeks may have it already: show what is stored, and Undo takes it all back.
+      await reloadProgram()
+      days.record(label, before)
+      toast.error(`${name} could not be added to every week. ${errorMessage(err)} Ctrl+Z takes back what was added.`)
+      return false
+    }
+    await reloadProgram()
+    days.record(label, before, true)
+    return true
+  }
+
+  // Replace an exercise across the block: one rename instead of one edit per day.
+  const exerciseNamesInProgram = useMemo(() => {
+    const counts = new Map<string, { name: string; count: number }>()
+    for (const w of program?.workouts ?? []) {
+      for (const e of w.exercises) {
+        const key = e.name.trim().toLowerCase()
+        if (!key) continue
+        const c = counts.get(key) ?? { name: e.name.trim(), count: 0 }
+        c.count++
+        counts.set(key, c)
+      }
+    }
+    return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name))
+  }, [program?.workouts])
+  const openReplace = () => {
+    const runningWeek = allDates.indexOf(today)
+    setReplaceForm({ from: exerciseNamesInProgram[0]?.name ?? '', to: '', fromWeek: String(runningWeek > 0 ? Math.floor(runningWeek / 7) : 0) })
+    setReplaceOpen(true)
+  }
+  const replaceDates = (() => {
+    if (!program || !replaceForm.from) return []
+    const want = replaceForm.from.trim().toLowerCase()
+    const fromDate = allDates[Number(replaceForm.fromWeek) * 7] ?? ''
+    return program.workouts
+      .filter((w) => w.scheduled_date && w.scheduled_date >= fromDate && w.exercises.some((e) => e.name.trim().toLowerCase() === want))
+      .map((w) => w.scheduled_date!)
+  })()
+  const runReplace = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id || !replaceForm.from || !replaceForm.to.trim()) return
+    const fromDate = allDates[Number(replaceForm.fromWeek) * 7] ?? null
+    const ok = await days.withUndo(
+      replaceDates,
+      async () => {
+        await sendJson('POST', `/api/programs/${id}/rename-exercise`, {
+          from: replaceForm.from, to: replaceForm.to.trim(), from_date: Number(replaceForm.fromWeek) > 0 ? fromDate : null,
+        })
+      },
+      `${replaceForm.from} → ${replaceForm.to.trim()} on ${replaceDates.length} day${replaceDates.length === 1 ? '' : 's'}`,
+    )
+    if (ok) setReplaceOpen(false)
+  }
+
+  // Opens over the calendar. It used to blank the program's dates locally to
+  // swap the whole calendar for the setup form.
   const handleChangeDuration = () => {
     if (!program) return
     const current = program.start_date && program.end_date
       ? weeksBetween(program.start_date, program.end_date)
       : 4
     setSetupForm({ start_date: program.start_date ?? '', weeks: String(current) })
-    setProgram({ ...program, start_date: null, end_date: null })
+    setDurationOpen(true)
   }
+  handleChangeDurationRef.current = handleChangeDuration
 
   const toggleColumn = async (col: ToggleableColumn) => {
     if (!program || !id) return
-    const current = program.enabled_columns ?? TOGGLEABLE_COLUMNS
+    const current = program.enabled_columns ?? DEFAULT_ENABLED_COLUMNS
     const nextSet = current.includes(col) ? current.filter((c) => c !== col) : [...current, col]
     const ordered = TOGGLEABLE_COLUMNS.filter((c) => nextSet.includes(c))
     setProgram({ ...program, enabled_columns: ordered })
-    await fetch(`/api/programs/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled_columns: ordered }),
-    })
+    try {
+      await sendJson('PUT', `/api/programs/${id}`, { enabled_columns: ordered })
+    } catch (err) {
+      // Shown ticked but not stored: the next export would not match the
+      // screen. Put the tick back where the server has it.
+      setProgram((p) => (p ? { ...p, enabled_columns: current } : p))
+      toast.error(`Could not change the columns. ${errorMessage(err)}`)
+    }
   }
 
   if (notFound) {
@@ -247,17 +789,17 @@ export default function ProgramDetail() {
   if (!program) return <div className="text-muted-foreground">Loading...</div>
 
   const openWorkout = openDate ? workoutByDate.get(openDate) ?? null : null
-  const enabledColumns = program.enabled_columns ?? TOGGLEABLE_COLUMNS
+  const enabledColumns = program.enabled_columns ?? DEFAULT_ENABLED_COLUMNS
 
   const handleSetFocus = async (value: string) => {
     if (!program) return
     const next = value === '' ? null : (value as SuggestionGoal)
-    const res = await fetch(`/api/programs/${program.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ focus: next }),
-    })
-    if (res.ok) setProgram((p) => (p ? { ...p, focus: next } : p))
+    try {
+      await sendJson('PUT', `/api/programs/${program.id}`, { focus: next })
+      setProgram((p) => (p ? { ...p, focus: next } : p))
+    } catch (err) {
+      toast.error(`Could not change the training focus. ${errorMessage(err)}`)
+    }
   }
 
   const handleExport = () => {
@@ -276,6 +818,21 @@ export default function ProgramDetail() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <h1 className="text-[28px] font-semibold leading-tight tracking-tight">{program.name}</h1>
+          {/* Name and description used to be fixed once created: renaming was
+              only in the Programs list, and the description not at all. */}
+          <Button
+            variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground"
+            onClick={openDetails} aria-label="Edit name and description" title="Edit name and description"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground"
+            onClick={() => setDuplicateOpen(true)}
+            aria-label="Duplicate program" title="Duplicate — for another athlete, another start, or as a template"
+          >
+            <CopyPlus className="h-3.5 w-3.5" />
+          </Button>
           <Badge variant={program.status === 'active' ? 'default' : 'secondary'} className="capitalize">{program.status}</Badge>
           <select
             value={program.focus ?? ''}
@@ -298,51 +855,45 @@ export default function ProgramDetail() {
         <div className="flex flex-wrap items-center gap-1.5">
           {program.start_date && (
             <>
-              <Button variant="ghost" size="sm" onClick={() => setColumnsOpen(true)}>
+              <Button variant="ghost" size="sm" onClick={() => setColumnsOpen(true)} title="Columns (Ctrl+Shift+C)">
                 <SlidersHorizontal className="h-4 w-4" />Columns
               </Button>
-              <Button variant="ghost" size="sm" onClick={handleChangeDuration}>
-                <CalendarRange className="h-4 w-4" />Duration
+              <Button variant="ghost" size="sm" onClick={() => setProgressOpen(true)} disabled={exerciseNamesInProgram.length === 0 || (grid?.rows.length ?? 0) < 2} title="Step an exercise week by week through the block">
+                <TrendingUp className="h-4 w-4" />Progress
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)}>
+              <Button variant="ghost" size="sm" onClick={openReplace} disabled={exerciseNamesInProgram.length === 0} title="Replace an exercise across the block">
+                <Replace className="h-4 w-4" />Replace
+              </Button>
+              <Button variant="ghost" size="sm" onClick={handleChangeDuration} title="Dates (Ctrl+Shift+D)">
+                <CalendarRange className="h-4 w-4" />Dates
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)} title="Import results (Ctrl+I)" data-tour="import-results">
                 <Download className="h-4 w-4" />Import
               </Button>
               <Button variant="ghost" size="sm" asChild>
-                <Link to={`/programs/${program.id}/report`}>
+                <Link to={`/programs/${program.id}/report`} title="Report (Ctrl+R)">
                   <BarChart2 className="h-4 w-4" />Report
                 </Link>
               </Button>
               <span aria-hidden className="mx-1 h-5 w-px bg-border" />
-              <div className="relative" ref={exportMenuRef}>
-                <Button size="sm" onClick={(e) => { e.stopPropagation(); setExportMenuOpen((v) => !v) }}>
-                  <Upload className="h-4 w-4" />Export<ChevronDown className="h-4 w-4 -mr-0.5 opacity-70" />
-                </Button>
-                {exportMenuOpen && (
-                  <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-lg border bg-popover py-1 shadow-xl shadow-black/20" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      onClick={() => { setExportMenuOpen(false); setPreviewOpen(true) }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-                    >
-                      <Eye className="h-4 w-4" />Preview Excel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setExportMenuOpen(false); handleExport() }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-                    >
-                      <Download className="h-4 w-4" />Download as Excel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setExportMenuOpen(false); setEmailOpen(true) }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-                    >
-                      <Mail className="h-4 w-4" />Email to athlete
-                    </button>
-                  </div>
-                )}
-              </div>
+              <DropdownMenu open={exportMenuOpen} onOpenChange={setExportMenuOpen}>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" title="Export (Ctrl+E)" data-tour="export">
+                    <Upload className="h-4 w-4" />Export<ChevronDown className="h-4 w-4 -mr-0.5 opacity-70" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[200px]">
+                  <DropdownMenuItem onSelect={() => setPreviewOpen(true)}>
+                    <Eye className="h-4 w-4" />Preview Excel
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => handleExport()}>
+                    <Download className="h-4 w-4" />Download as Excel
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setEmailOpen(true)}>
+                    <Mail className="h-4 w-4" />Email to athlete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           )}
           <Button
@@ -418,9 +969,50 @@ export default function ProgramDetail() {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span className="num text-foreground">{program.start_date} → {program.end_date}</span>
             <span><span className="num text-foreground">{grid.weeks}</span> {grid.weeks === 1 ? 'week' : 'weeks'}</span>
-            <span>Click any day to edit · drag a day to move it</span>
+            <span>
+              {view === 'calendar'
+                ? 'Click any day to edit · drag a day to move it'
+                : 'One training day across every week · click a week to open that day'}
+            </span>
+            <div role="group" aria-label="View" data-tour="view-switch" className="ml-auto inline-flex rounded-lg border bg-card p-0.5">
+              {([
+                { key: 'calendar', label: 'Calendar', icon: CalendarDays, title: 'Weeks × days, one day at a time' },
+                { key: 'block', label: 'Block', icon: Rows3, title: 'One training day across every week, every value editable' },
+              ] as const).map((v) => (
+                <button
+                  key={v.key}
+                  type="button"
+                  aria-pressed={view === v.key}
+                  // The tour switches views by this (T1).
+                  data-view={v.key}
+                  onClick={() => { hidePreview(); setView(v.key) }}
+                  title={v.title}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring/40 ${
+                    view === v.key ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <v.icon className="h-3.5 w-3.5" />{v.label}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="overflow-x-auto rounded-xl border border-border bg-card">
+          {view === 'block' ? (
+            <BlockView
+              workoutByDate={workoutByDate}
+              dates={allDates}
+              weekday={shownWeekday}
+              onWeekday={setBlockWeekday}
+              columns={buildColumns(enabledColumns).filter((c) => c.key !== 'name')}
+              today={today}
+              unsavedKeys={new Set(Object.keys(failedEdits))}
+              suggestions={ownExerciseNames}
+              onSaveCell={saveBlockCell}
+              onAddRow={addBlockRow}
+              onOpenDay={setOpenDate}
+              focusApi={blockFocus}
+            />
+          ) : (
+          <div ref={calendarRef} data-tour="program-calendar" className="overflow-x-auto rounded-xl border border-border bg-card">
             <table className="w-full min-w-[640px] border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
               <colgroup>
                 <col style={{ width: 56 }} />
@@ -439,8 +1031,43 @@ export default function ProgramDetail() {
               <tbody>
                 {grid.rows.map((row) => (
                   <tr key={row.weekIndex} className="[&:last-child>*]:border-b-0">
-                    <th className="num border-b border-r border-border px-2 py-2 align-top text-[11px] font-medium text-muted-foreground">
-                      W{row.weekIndex + 1}
+                    <th className="num relative border-b border-r border-border p-0 align-top text-[11px] font-medium text-muted-foreground">
+                      {/* The week's own actions: copying week 1 across a block
+                          used to mean opening every training day in turn. */}
+                      <DropdownMenu
+                        open={weekMenu === row.weekIndex}
+                        onOpenChange={(o) => setWeekMenu(o ? row.weekIndex : null)}
+                      >
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label={`Week ${row.weekIndex + 1} actions`}
+                            title={`Week ${row.weekIndex + 1}, from ${shortDate(row.days[0].date)}: copy or clear`}
+                            className="h-full w-full px-2 py-2 text-left transition-colors hover:bg-foreground/[0.05] hover:text-foreground focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary"
+                          >
+                            W{row.weekIndex + 1}
+                            {/* Where in the calendar this week is, without counting. */}
+                            <span className="mt-0.5 block text-[9.5px] font-normal leading-tight text-muted-foreground/80">
+                              {shortDate(row.days[0].date)}
+                            </span>
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="min-w-[170px]">
+                          <DropdownMenuItem
+                            disabled={!weekHasExercises(row.weekIndex) || grid.rows.length < 2}
+                            onSelect={() => { setCopyWeekTo(new Set()); setCopyWeekFrom(row.weekIndex) }}
+                          >
+                            <Copy className="h-4 w-4" />Copy week to…
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            destructive
+                            disabled={!weekHasExercises(row.weekIndex)}
+                            onSelect={() => { void days.clearDays(weekDates(row.weekIndex), `Week ${row.weekIndex + 1} cleared`) }}
+                          >
+                            <Trash2 className="h-4 w-4" />Clear week
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </th>
                     {row.days.map((cell) => {
                       const workout = workoutByDate.get(cell.date)
@@ -448,12 +1075,18 @@ export default function ProgramDetail() {
                       const exercises = workout?.exercises ?? []
                       const isDragSource = dayDragSource === cell.date
                       const isDragOver = dayDragOver === cell.date
+                      const onClipboard = days.clipboard?.date === cell.date ? days.clipboard.mode : null
+                      const isToday = cell.date === today
+                      // Logged: the athlete has filled in Load Used or RPE. A past
+                      // day without results is NOT marked (D114): results come
+                      // back with the sheet when the block is done.
+                      const logged = dayHasResults(workout)
                       return (
                         <td
                           key={cell.date}
                           draggable={exercises.length > 0}
                           onDragStart={exercises.length > 0 ? (e) => {
-                            e.dataTransfer.effectAllowed = 'move'
+                            e.dataTransfer.effectAllowed = 'copyMove'
                             setDayDragSource(cell.date)
                           } : undefined}
                           onDragOver={dayDragSource && !isDragSource ? (e) => {
@@ -466,25 +1099,46 @@ export default function ProgramDetail() {
                           }}
                           onDrop={dayDragSource && !isDragSource ? (e) => {
                             e.preventDefault()
-                            handleDayDrop(cell.date)
+                            void handleDayDrop(cell.date, e.ctrlKey)
                           } : undefined}
                           onDragEnd={() => { setDayDragSource(null); setDayDragOver(null) }}
                           className={`border-r border-b border-border align-top p-0 transition-colors last:border-r-0 ${
-                            isDragSource ? 'opacity-40' :
+                            isDragSource || onClipboard === 'cut' ? 'opacity-40' :
                             isDragOver ? (workout ? 'ring-2 ring-inset ring-warning bg-warning/10' : 'ring-2 ring-inset ring-primary/50 bg-primary/5') :
                             ''
                           }`}
                         >
                           <button
                             type="button"
-                            onClick={() => setOpenDate(cell.date)}
-                            className={`group/cell block h-full min-h-[92px] w-full px-2.5 py-2 text-left transition-colors duration-150 ease-smooth hover:bg-primary/[0.06] focus:bg-primary/[0.06] focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary ${
+                            data-day={cell.date}
+                            // Arrow keys move between days; Tab stops on one.
+                            tabIndex={cell.date === tabStopDay ? 0 : -1}
+                            onFocus={() => setCurrentDay(cell.date)}
+                            onKeyDown={(e) => onDayKeyDown(e, cell.date)}
+                            onClick={() => { hidePreview(); setOpenDate(cell.date) }}
+                            onMouseEnter={exercises.length > 0 || workout?.notes ? (e) => showPreviewSoon(cell.date, e.currentTarget) : undefined}
+                            onMouseLeave={hidePreview}
+                            onDragStart={hidePreview}
+                            aria-label={`${dayTitle(cell.date)}${isToday ? ', today' : ''}, ${exercises.length === 0 ? 'empty' : `${exercises.length} exercise${exercises.length === 1 ? '' : 's'}`}${logged ? ', logged' : ''}${onClipboard ? `, ${onClipboard === 'cut' ? 'cut' : 'copied'}` : ''}`}
+                            className={`group/cell block h-full min-h-[92px] w-full px-2.5 py-2 text-left transition-colors duration-150 ease-smooth hover:bg-primary/[0.06] focus:bg-primary/[0.06] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary ${
                               exercises.length > 0 ? 'shadow-[inset_2px_0_0_hsl(var(--primary)/0.55)]' : ''
-                            }`}
+                            } ${isToday ? 'bg-primary/[0.04]' : ''} ${onClipboard ? 'outline-dashed outline-2 -outline-offset-2 outline-primary/70' : ''}`}
                           >
                             <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                              <span className="num">{cell.label}</span>
+                              {isToday ? (
+                                <span className="num rounded-full bg-primary px-1.5 font-semibold text-primary-foreground" title="Today">{cell.label}</span>
+                              ) : (
+                                <span className="num">{cell.label}</span>
+                              )}
                               <span className="flex items-center gap-0.5">
+                                {workout?.notes && (
+                                  <StickyNote className="h-2.5 w-2.5 text-muted-foreground" aria-label="Has a note" />
+                                )}
+                                {logged && (
+                                  <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-success" title="The athlete has logged results on this day">
+                                    <Check className="h-2.5 w-2.5" />Logged
+                                  </span>
+                                )}
                                 {workout && (mediaByWorkoutId.get(workout.id)?.length ?? 0) > 0 && (
                                   <span
                                     className="inline-flex items-center gap-0.5 rounded bg-primary/10 px-1 text-[9px] font-semibold text-primary"
@@ -513,7 +1167,11 @@ export default function ProgramDetail() {
                                       <span className="num text-muted-foreground"> {ex.sets}×{ex.reps}</span>
                                     )}
                                     {ex.weight != null && (
-                                      <span className="num text-muted-foreground"> @{ex.weight}kg</span>
+                                      <span className="num text-muted-foreground"> @{ex.weight}{unitOf(program.unit)}</span>
+                                    )}
+                                    {/* The target, so an RPE- or %-based program reads in the grid. */}
+                                    {ex.intensity && (
+                                      <span className="text-muted-foreground"> · {ex.intensity}</span>
                                     )}
                                   </li>
                                 ))}
@@ -531,62 +1189,152 @@ export default function ProgramDetail() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
 
+      {preview && !dayDragSource && !openDate && workoutByDate.get(preview.date) && (
+        <DayPreview workout={workoutByDate.get(preview.date)!} title={dayTitle(preview.date)} anchor={preview.rect} />
+      )}
+
       <Dialog open={openDate !== null} onOpenChange={(o) => { if (!o) setOpenDate(null) }}>
-        <DialogContent className="w-fit max-w-[95vw]">
-          <DialogHeader>
-            <DialogTitle>
-              {openDate ? `${dayName(openDate)} · ${openDate}` : ''}
-            </DialogTitle>
+        {/* Bounded and laid out as a column so a long day scrolls inside the
+            dialog. Unbounded, a 25-exercise day measured 1,437 px in a 764 px
+            window with the title and "Add exercise" both off-screen. */}
+        <DialogContent
+          className="flex max-h-[92vh] w-fit max-w-[95vw] flex-col"
+          // The editor puts the cursor in the first cell itself; Radix would
+          // otherwise pick the first button in the header.
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          // Back to the day that was open — which, after paging, is not the
+          // cell that was clicked to open the dialog.
+          onCloseAutoFocus={(e) => {
+            const date = lastOpenDate.current
+            const cell = date ? calendarRef.current?.querySelector<HTMLElement>(`[data-day="${date}"]`) ?? null : null
+            if (cell) { e.preventDefault(); cell.focus() }
+          }}
+          // With the exercise suggestions open, the first Esc closes that list
+          // (the name cell does it) and the day stays open.
+          onEscapeKeyDown={(e) => {
+            if (document.querySelector('[data-exercise-suggestions]')) e.preventDefault()
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'PageDown' && e.key !== 'PageUp') return
+            e.preventDefault()
+            const step = (e.ctrlKey ? 7 : 1) * (e.key === 'PageDown' ? 1 : -1)
+            goToDay(step)
+          }}
+          // Marks the day editor for the page's Ctrl+Z, which works inside it.
+          data-day-dialog=""
+          data-tour="day-editor"
+        >
+          <DialogHeader className="shrink-0 pr-8">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <DialogTitle>{openDate ? dayTitle(openDate) : ''}</DialogTitle>
+              <div className="flex items-center gap-0.5">
+                <Button
+                  type="button" variant="ghost" size="icon" className="h-7 w-7"
+                  onClick={() => goToDay(-1)} disabled={!canGoToDay(-1)}
+                  aria-label="Previous day" title="Previous day (Page Up)"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button" variant="ghost" size="icon" className="h-7 w-7"
+                  onClick={() => goToDay(1)} disabled={!canGoToDay(1)}
+                  aria-label="Next day" title="Next day (Page Down)"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+              {/* The same status the calendar cell shows — but that cell is
+                  under the overlay while the day is open. */}
+              <span className="ml-auto text-xs text-muted-foreground" role="status" aria-live="polite">
+                {openDate && cellStatus[openDate] === 'saving' && (
+                  <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" />Saving…</span>
+                )}
+                {openDate && cellStatus[openDate] === 'error' && (
+                  <span className="inline-flex items-center gap-1 text-destructive"><X className="h-3 w-3" />Not saved</span>
+                )}
+                {openDate && !cellStatus[openDate] && unsavedCount === 0 && (
+                  <span className="inline-flex items-center gap-1"><Check className="h-3 w-3 text-success" />Saved</span>
+                )}
+                {openDate && cellStatus[openDate] === 'saved' && (
+                  <span className="inline-flex items-center gap-1"><Check className="h-3 w-3 text-success" />Saved</span>
+                )}
+              </span>
+            </div>
           </DialogHeader>
           {openDate && (
             <ExerciseEditor
+              // A fresh editor per day: paging must not carry the copy panel or
+              // a drag over from the day before.
+              key={openDate}
               workout={openWorkout}
               enabledColumns={enabledColumns}
               programId={id ?? ''}
-              sameDayDates={sameDayDates}
+              copyGrid={copyGrid}
               // Marks the exact cells that did not save, so the banner's count
               // maps to something the coach can actually find on the page.
               unsavedKeys={new Set(Object.keys(failedEdits))}
-              onAdd={() => addExercise(openDate)}
-              onSaveField={(exerciseId, patch) => {
-                if (openWorkout) saveExerciseField(openDate, openWorkout.id, exerciseId, patch)
+              onAdd={async () => {
+                const before = days.snapshotDays([openDate])
+                if (await addExercise(openDate)) days.record('Added an exercise', before)
               }}
-              onDeleteExercise={(exerciseId) => {
-                if (openWorkout) deleteExercise(openDate, openWorkout.id, exerciseId)
+              suggestions={ownExerciseNames}
+              onDuplicate={(exerciseId) => {
+                if (!openWorkout) return
+                const before = days.snapshotDays([openDate])
+                void duplicateExercise(openDate, openWorkout.id, exerciseId).then((ok) => {
+                  if (ok) days.record(`Duplicated ${nameOf(exerciseId)}`, before)
+                })
+              }}
+              previous={workoutByDate.get(toIsoDate(addDays(parseIsoDate(openDate), -7))) ?? null}
+              onSaveNote={async (notes) => {
+                const before = days.snapshotDays([openDate])
+                const ok = await saveDayNote(openDate, notes)
+                if (ok) days.record('Changed the day note', before)
+                return ok
+              }}
+              maxes={athleteMaxes}
+              loadHints={loadHints}
+              unit={unitOf(program.unit)}
+              onPasteRows={(anchorId, start, text) => void pasteRows(openDate, anchorId, start, text)}
+              onSaveField={(exerciseId, patch) =>
+                openWorkout ? saveCell(openDate, openWorkout.id, exerciseId, patch) : Promise.resolve(false)}
+              onDeleteExercise={async (exerciseId) => {
+                if (!openWorkout) return false
+                const label = `${nameOf(exerciseId)} deleted`
+                const before = days.snapshotDays([openDate])
+                const gone = await deleteExercise(openDate, openWorkout.id, exerciseId)
+                if (gone) days.record(label, before, true)
+                return gone
               }}
               onDeleteWorkout={() => {
-                if (openWorkout) deleteWorkout(openWorkout.id, () => setOpenDate(null))
+                void days.clearDay(openDate).then((cleared) => { if (cleared) setOpenDate(null) })
               }}
               onAddSet={(exerciseId) => {
-                if (openWorkout) addSet(openDate, openWorkout.id, exerciseId)
+                if (!openWorkout) return
+                const before = days.snapshotDays([openDate])
+                void addSet(openDate, openWorkout.id, exerciseId).then((ok) => {
+                  if (ok) days.record(`Added a set to ${nameOf(exerciseId)}`, before)
+                })
               }}
               onReorder={(exerciseIds) => {
-                if (openWorkout) reorderExercises(openDate, openWorkout.id, exerciseIds)
+                if (!openWorkout) return
+                const before = days.snapshotDays([openDate])
+                void reorderExercises(openDate, openWorkout.id, exerciseIds).then((ok) => {
+                  if (ok) days.record('Reordered the exercises', before)
+                })
               }}
-              onCopyDay={async (targetDates) => {
-                if (!id || !openDate) return false
-                // A refused copy used to close the dialog exactly as a successful
-                // one did, so the coach believed days had been filled that were not.
-                try {
-                  const res = await fetch(`/api/programs/${id}/copy-day`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sourceDate: openDate, targetDates }),
-                  })
-                  if (!res.ok) {
-                    toast.error(`Could not copy the day (the server said ${res.status}). Nothing was changed.`)
-                    return false
-                  }
-                } catch {
-                  toast.error('CoachBoard could not reach its own server, so the day was not copied.')
-                  return false
-                }
-                await reloadProgram()
-                return true
-              }}
+              // Resolves false when nothing was copied, and the panel then
+              // stays open with its ticks, so a retry is one click.
+              onCopyDay={(targetDates) =>
+                days.copyDays(
+                  targetDates.map((target) => ({ source: openDate, target })),
+                  `${shortDayLabel(openDate)} copied to ${targetDates.length} day${targetDates.length === 1 ? '' : 's'}`,
+                )
+              }
             />
           )}
           {openWorkout && (
@@ -595,6 +1343,228 @@ export default function ProgramDetail() {
               onDetached={() => void loadDiscordMedia()}
             />
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={copyWeekFrom !== null} onOpenChange={(o) => { if (!o) setCopyWeekFrom(null) }}>
+        {copyWeekFrom !== null && grid && (
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Copy week {copyWeekFrom + 1} to</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              Each ticked week becomes a copy of week {copyWeekFrom + 1}, rest days included. What is in it now is replaced.
+            </p>
+            <div className="space-y-1">
+              {grid.rows.filter((r) => r.weekIndex !== copyWeekFrom).map((r) => {
+                const results = weekHasResults(r.weekIndex)
+                return (
+                  <label key={r.weekIndex} className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-accent/40">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-primary"
+                      checked={copyWeekTo.has(r.weekIndex)}
+                      onChange={() => setCopyWeekTo((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(r.weekIndex)) next.delete(r.weekIndex); else next.add(r.weekIndex)
+                        return next
+                      })}
+                    />
+                    Week {r.weekIndex + 1}
+                    {results
+                      ? <span className="text-xs text-warning">has athlete results</span>
+                      : weekHasExercises(r.weekIndex) && <span className="text-xs text-muted-foreground">has exercises</span>}
+                  </label>
+                )
+              })}
+            </div>
+            {[...copyWeekTo].some(weekHasResults) && (
+              <p className="text-xs font-medium text-destructive" role="alert">
+                A ticked week holds what the athlete logged. Copying over it erases that.
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button size="sm" disabled={copyWeekTo.size === 0} onClick={() => void runCopyWeek()}>
+                Copy to {copyWeekTo.size} week{copyWeekTo.size === 1 ? '' : 's'}
+              </Button>
+              <Button
+                size="sm" variant="outline"
+                // Weeks with athlete results stay unticked, as in the day panel.
+                onClick={() => setCopyWeekTo(new Set(
+                  grid.rows.map((r) => r.weekIndex).filter((w) => w !== copyWeekFrom && !weekHasResults(w)),
+                ))}
+              >
+                All weeks
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setCopyWeekFrom(null)}>Cancel</Button>
+            </div>
+          </DialogContent>
+        )}
+      </Dialog>
+
+      <DuplicateProgramDialog program={program} open={duplicateOpen} onOpenChange={setDuplicateOpen} />
+
+      <ProgressionDialog
+        open={progressOpen}
+        onOpenChange={setProgressOpen}
+        workouts={program.workouts}
+        dates={allDates}
+        exerciseNames={exerciseNamesInProgram.map((n) => n.name)}
+        initialWeek={Math.max(0, Math.floor(allDates.indexOf(today) / 7))}
+        unit={unitOf(program.unit)}
+        onApply={(changes, exercise) =>
+          days.withUndo(
+            [...new Set(changes.map((c) => c.date))],
+            async () => { await sendJson('PUT', `/api/programs/${program.id}/exercises`, { updates: changes.map((c) => ({ id: c.exerciseId, patch: c.patch })) }) },
+            `${exercise} progressed on ${changes.length} row${changes.length === 1 ? '' : 's'}`,
+          )
+        }
+      />
+
+      <Dialog open={replaceOpen} onOpenChange={setReplaceOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Replace an exercise</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Renames it on every training day it is on. Sets, reps, loads and what the athlete logged stay as they are.
+          </p>
+          <form onSubmit={runReplace} className="space-y-4">
+            <div className="space-y-1">
+              <Label htmlFor="replace_from">Replace</Label>
+              <select
+                id="replace_from"
+                value={replaceForm.from}
+                onChange={(e) => setReplaceForm({ ...replaceForm, from: e.target.value })}
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                {exerciseNamesInProgram.map((n) => (
+                  <option key={n.name} value={n.name}>{n.name} ({n.count})</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="replace_to">With</Label>
+              <Input
+                id="replace_to" required maxLength={200} list="replace_to_names" placeholder="e.g. Pause Squat"
+                value={replaceForm.to}
+                onChange={(e) => setReplaceForm({ ...replaceForm, to: e.target.value })}
+              />
+              <datalist id="replace_to_names">
+                {ownExerciseNames.slice(0, 200).map((n) => <option key={n} value={n} />)}
+              </datalist>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="replace_week">From</Label>
+              <select
+                id="replace_week"
+                value={replaceForm.fromWeek}
+                onChange={(e) => setReplaceForm({ ...replaceForm, fromWeek: e.target.value })}
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                {(grid?.rows ?? []).map((r) => (
+                  <option key={r.weekIndex} value={String(r.weekIndex)}>
+                    {r.weekIndex === 0 ? 'The whole block' : `Week ${r.weekIndex + 1} on`}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className="text-xs text-muted-foreground" aria-live="polite">
+              {replaceDates.length === 0
+                ? 'It is not on any day in that range.'
+                : `Changes ${replaceDates.length} training day${replaceDates.length === 1 ? '' : 's'}. You can undo it straight afterwards.`}
+            </p>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={!replaceForm.to.trim() || replaceDates.length === 0}>Replace</Button>
+              <Button type="button" variant="ghost" onClick={() => setReplaceOpen(false)}>Cancel</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={detailsOpen} onOpenChange={(o) => { if (!savingDetails) setDetailsOpen(o) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Name and description</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={saveDetails} className="space-y-4">
+            <div className="space-y-1">
+              <Label htmlFor="program_name">Name</Label>
+              <Input
+                id="program_name" required maxLength={200}
+                value={detailsForm.name}
+                onChange={(e) => setDetailsForm({ ...detailsForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="program_description">Description</Label>
+              <Textarea
+                id="program_description" maxLength={2000}
+                value={detailsForm.description}
+                onChange={(e) => setDetailsForm({ ...detailsForm, description: e.target.value })}
+                onKeyDown={(e) => {
+                  // Ctrl+Enter saves from inside the text; Enter is a new line.
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.currentTarget.form?.requestSubmit() }
+                }}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={savingDetails || !detailsForm.name.trim()}>
+                {savingDetails ? 'Saving…' : 'Save'}
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setDetailsOpen(false)} disabled={savingDetails}>Cancel</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={durationOpen} onOpenChange={(o) => { if (!savingDuration) setDurationOpen(o) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Dates</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSetupSubmit} className="space-y-4">
+            <div className="space-y-1">
+              <Label htmlFor="duration_start">Start date</Label>
+              <Input
+                id="duration_start" type="date" required
+                value={setupForm.start_date}
+                onChange={(e) => setSetupForm({ ...setupForm, start_date: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="duration_weeks">Number of weeks</Label>
+              <Input
+                id="duration_weeks" type="number" min="1" max="52" required
+                value={setupForm.weeks}
+                onChange={(e) => setSetupForm({ ...setupForm, weeks: e.target.value })}
+              />
+            </div>
+            {durationPlan && (
+              <div className="space-y-1 text-xs" aria-live="polite">
+                <p className="text-muted-foreground">
+                  <span className="num text-foreground">{durationPlan.newStart} → {durationPlan.newEnd}</span>.{' '}
+                  {durationPlan.shiftDays === 0
+                    ? 'The training days stay where they are.'
+                    : `Every training day moves ${Math.abs(durationPlan.shiftDays)} day${Math.abs(durationPlan.shiftDays) === 1 ? '' : 's'} ${durationPlan.shiftDays > 0 ? 'later' : 'earlier'}.`}
+                </p>
+                {durationPlan.outside.length > 0 && (
+                  <p className="font-medium text-destructive" role="alert">
+                    {durationPlan.outside.length} training day{durationPlan.outside.length === 1 ? '' : 's'} would fall
+                    outside these dates and be removed.
+                  </p>
+                )}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Button type="submit" disabled={savingDuration || !setupForm.start_date}>
+                {savingDuration ? 'Saving…' : 'Save'}
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setDurationOpen(false)} disabled={savingDuration}>
+                Cancel
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -620,7 +1590,24 @@ export default function ProgramDetail() {
                     onChange={() => toggleColumn(col)}
                     className="h-4 w-4 accent-primary"
                   />
-                  {COLUMN_LABELS[col]}
+                  {col === 'notes' ? (
+                    <span>
+                      {COLUMN_LABELS[col]}
+                      <span className="block text-xs text-muted-foreground">
+                        Short instructions for the athlete, like “pause 2 s”. They go in the exported sheet —
+                        in your own Excel style, after the exercise name. Turning this off keeps what you wrote, hidden.
+                      </span>
+                    </span>
+                  ) : col === 'velocity' ? (
+                    <span>
+                      {COLUMN_LABELS[col]}
+                      <span className="block text-xs text-muted-foreground">
+                        A speed (“0.50” = that fast or faster), a range (“0.45-0.55”) or a loss cut-off (“VL 20%”).
+                        A bar path set linked to the row is judged against it. In your own Excel style it goes after
+                        the Intensity text unless the sheet has a velocity column.
+                      </span>
+                    </span>
+                  ) : COLUMN_LABELS[col]}
                 </label>
               )
             })}
@@ -633,6 +1620,7 @@ export default function ProgramDetail() {
           open={importOpen}
           onOpenChange={setImportOpen}
           programId={program.id}
+          unit={unitOf(program.unit)}
           onImported={() => { void reloadProgram() }}
         />
       )}

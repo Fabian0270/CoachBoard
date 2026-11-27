@@ -15,6 +15,7 @@ import fs from 'fs'
 import { createServer, type RequestListener } from 'http'
 import { autoUpdater } from 'electron-updater'
 import { createWindowTools, type WindowTools } from './minimizedWindows'
+import { MIN_SIZE, parseSavedWindow, windowBoundsFor, type SavedWindow } from './windowBounds'
 
 /**
  * Dev means "running from source", which is exactly what app.isPackaged says.
@@ -56,7 +57,7 @@ interface ServerBundle {
   /** Points the server's logger at the log file. Must run before initializeDatabase. */
   configureLogger?(path: string): void
   configureSecureStore(opts: { safeStorage: unknown; userDataDir: string }): void
-  configureSystem?(opts: { shell: unknown }): void
+  configureSystem?(opts: { shell?: unknown; appVersion?: string }): void
   configureCapture?(opts: { desktopCapturer: unknown; ownSourceIds?: () => string[]; windowTools?: WindowTools | null }): void
   /** The source the coach picked, consumed once. See services/captureService. */
   resolvePendingSource?(): Promise<
@@ -65,6 +66,10 @@ interface ServerBundle {
   configureUpdates?(opts: { install: () => void }): void
   setUpdateState?(state: { status: string; version?: string | null; message?: string | null }): void
   runStartupBackup?(): Promise<string | null>
+  /** A backup a day while the app stays open (N4). Returns a stop function. */
+  startDailyBackups?(): () => void
+  /** The system folder dialog, for choosing the second backup folder (N4). */
+  configureBackupMirror?(opts: { pickFolder: () => Promise<string | null> }): void
   /** The settings half of a staged restore. Needs the keychain, so it runs
    *  after configureSecureStore rather than inside initializeDatabase. */
   applyPendingSettingsRestore?(dbPath: string): Promise<{
@@ -256,6 +261,22 @@ async function startServer(): Promise<void> {
   // Best-effort inside the service — a backup failure must never block startup.
   const backup = await bundle.runStartupBackup?.()
   if (backup) log(`Startup backup: ${backup}`)
+  // And one a day for as long as the app stays open (N4, D92).
+  bundle.startDailyBackups?.()
+  // The second backup folder is chosen with the system's own folder dialog, so
+  // the page never hands the server a path (N4).
+  bundle.configureBackupMirror?.({
+    pickFolder: async () => {
+      const options: Electron.OpenDialogOptions = {
+        title: 'Choose a second folder for your backups',
+        buttonLabel: 'Use this folder',
+        properties: ['openDirectory', 'createDirectory'],
+      }
+      const parent = ownWindow && !ownWindow.isDestroyed() ? ownWindow : null
+      const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
+      return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+    },
+  })
 
   const staticDir = resolveServerPath('client/dist')
   log(`Static dir: ${staticDir} (exists: ${fs.existsSync(staticDir)})`)
@@ -280,7 +301,8 @@ async function startServer(): Promise<void> {
   // Same injection seam for the handful of shell actions the UI needs (opening
   // the data folder from Settings and from the error screen). Optional-chained so
   // a stale bundle without the export can't break startup.
-  bundle.configureSystem?.({ shell })
+  // The version too, for problem reports (S4).
+  bundle.configureSystem?.({ shell, appVersion: app.getVersion() })
   // From Electron 45 the window list includes our own window, which the picker
   // already offers as "CoachBoard" (captured by frame, see the display handler).
   bundle.configureCapture?.({
@@ -570,9 +592,18 @@ async function createWindow(): Promise<void> {
     })
   })
 
+  // Where the coach left it (P3), when that spot is still on a screen.
+  const statePath = path.join(app.getPath('userData'), 'window-state.json')
+  let savedState: SavedWindow | null = null
+  try { savedState = parseSavedWindow(JSON.parse(fs.readFileSync(statePath, 'utf8'))) } catch { /* first start */ }
+  const primaryArea = screen.getPrimaryDisplay().workArea
+  const areas = [primaryArea, ...screen.getAllDisplays().map((d) => d.workArea).filter((a) => a !== primaryArea)]
+  const opening = windowBoundsFor(savedState, areas)
+
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    ...opening.bounds,
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
     autoHideMenuBar: true,
     // Dev only. A packaged build takes its window and taskbar icon from the
     // executable, which electron-builder stamps from build/icon.png — but an
@@ -598,6 +629,23 @@ async function createWindow(): Promise<void> {
   })
 
   ownWindow = win
+  if (opening.maximized) win.maximize()
+
+  // Saved as it changes (debounced) and on close, so a crash still remembers.
+  // The normal bounds, not the maximised ones: un-maximising goes back there.
+  let saveTimer: NodeJS.Timeout | null = null
+  const saveState = (): void => {
+    if (win.isDestroyed() || win.isMinimized()) return
+    const state: SavedWindow = { ...win.getNormalBounds(), maximized: win.isMaximized() }
+    try { fs.writeFileSync(statePath, JSON.stringify(state)) } catch (err) { log(`Could not save the window position: ${describeError(err)}`) }
+  }
+  const saveSoon = (): void => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(saveState, 500)
+  }
+  for (const event of ['resize', 'move', 'maximize', 'unmaximize'] as const) win.on(event as 'resize', saveSoon)
+  win.on('close', () => { if (saveTimer) clearTimeout(saveTimer); saveState() })
+
   // The bar counts as a window: left open, the app would not quit on Windows.
   win.on('closed', () => {
     if (controlsWindow && !controlsWindow.isDestroyed()) controlsWindow.destroy()

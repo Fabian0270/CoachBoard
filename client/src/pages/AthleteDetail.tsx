@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useToast } from '../components/ui/toast'
 import DeleteAthleteDialog from '../components/DeleteAthleteDialog'
 import AthleteMaxes from '../components/AthleteMaxes'
+import AthleteProgress from '../components/AthleteProgress'
 import SavedAnalyses from '../components/analysis/SavedAnalyses'
 import PaymentsSection from '../components/PaymentsSection'
 import AthleteMediaSection from '../components/discord/AthleteMediaSection'
@@ -22,7 +23,7 @@ import {
 import { WEIGHT_CLASSES, isPowerlifting } from 'coachboard-shared'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
 import type { DiscordUserItem } from 'coachboard-shared/discord'
-import { Plus, Trash2, Pencil, ChevronDown, Sparkles, FileUp } from 'lucide-react'
+import { Plus, Trash2, Pencil } from 'lucide-react'
 import { cn, initials } from '../lib/utils'
 import { BackLink } from '../components/PageHeader'
 
@@ -37,7 +38,10 @@ function InfoField({ label, mono, className, children }: { label: string; mono?:
 }
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
+import NewProgramChooser from '../components/NewProgramChooser'
 import LoadError from '../components/LoadError'
+import AthleteUnitSwitch from '../components/AthleteUnitSwitch'
+import { unitOf } from 'coachboard-shared/units'
 import { ApiError, errorMessage, getJson, getList } from '../lib/api'
 
 interface Athlete {
@@ -46,9 +50,12 @@ interface Athlete {
   sport: string | null
   weight_class: string | null
   height_cm: number | null
+  unit?: string
   email: string | null
   date_of_birth: string | null
   notes: string | null
+  /** The tour's sample athlete (T7). */
+  is_sample?: number
 }
 
 interface Program {
@@ -60,7 +67,17 @@ interface Program {
   bookmarked?: number
 }
 
+/**
+ * One page per athlete, as with programs: going straight from one athlete to
+ * another (Ctrl+K) kept the page mounted, showing the previous athlete under
+ * the new address until the new one loaded, with its dialogs still open.
+ */
 export default function AthleteDetail() {
+  const { id } = useParams<{ id: string }>()
+  return <AthletePage key={id} />
+}
+
+function AthletePage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const toast = useToast()
@@ -75,10 +92,14 @@ export default function AthleteDetail() {
   const [discordUsernames, setDiscordUsernames] = useState<string[]>([])
   const [searchParams] = useSearchParams()
   const initialTab = searchParams.get('tab') ?? 'info'
+  // Follows ?tab= when it changes on the same page — the tour goes from one
+  // tab to the next by address — and clicking a tab still just switches.
+  const [tab, setTab] = useState(initialTab)
+  useEffect(() => { setTab(searchParams.get('tab') ?? 'info') }, [searchParams])
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
-  const newMenuRef = useRef<HTMLDivElement>(null)
+  const [unitEpoch, setUnitEpoch] = useState(0)
 
   // Any failure used to read as "Athlete not found — they may have been
   // deleted" (or a page stuck on Loading), and a failed program list as "No
@@ -112,14 +133,8 @@ export default function AthleteDetail() {
       })
     void loadPrograms(id, () => !cancelled)
     return () => { cancelled = true }
-  }, [id, attempt]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, attempt])
 
-  useEffect(() => {
-    if (!newMenuOpen) return
-    const close = () => setNewMenuOpen(false)
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [newMenuOpen])
 
   // Linked Discord account(s) for this athlete — shown read-only in Info.
   useEffect(() => {
@@ -213,7 +228,7 @@ export default function AthleteDetail() {
     <div className="mx-auto max-w-6xl space-y-6">
       <BackLink to="/athletes">Athletes</BackLink>
       {/* Profile header: who this is at a glance, on the same glow as the hero figures. */}
-      <section className="flex flex-wrap items-center gap-5 rounded-xl border bg-card bg-glow-hero px-6 py-5">
+      <section data-tour="athlete-header" className="flex flex-wrap items-center gap-5 rounded-xl border bg-card bg-glow-hero px-6 py-5">
         <span
           aria-hidden
           className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/15 text-lg font-semibold text-primary"
@@ -223,12 +238,15 @@ export default function AthleteDetail() {
         <div className="min-w-0 flex-1 space-y-1.5">
           <h1 className="truncate text-[26px] font-semibold leading-tight tracking-tight">{athlete.name}</h1>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+            {athlete.is_sample ? <Badge variant="outline" className="border-primary/40 text-primary" title="A made-up athlete for trying CoachBoard. Remove it from Settings → Help.">Sample</Badge> : null}
             {athlete.sport && <Badge variant="default">{athlete.sport}</Badge>}
             {isPowerlifting(athlete.sport) && athlete.weight_class && <span className="num">{athlete.weight_class} kg</span>}
             {athlete.email && <span className="truncate">{athlete.email}</span>}
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* kg or lb (S3, D77): switching can convert their numbers. */}
+          <AthleteUnitSwitch athlete={athlete} onChanged={(a) => { setAthlete(a); setUnitEpoch((n) => n + 1) }} />
           <Button variant="outline" size="sm" onClick={startEdit}><Pencil className="h-3.5 w-3.5" />Edit</Button>
           <Button
             variant="ghost"
@@ -241,10 +259,12 @@ export default function AthleteDetail() {
           </Button>
         </div>
       </section>
-      <Tabs defaultValue={initialTab}>
+      {/* Remounted after a unit switch, so every tab reads the numbers again. */}
+      <Tabs key={unitEpoch} value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="programs">Programs ({programs.length})</TabsTrigger>
+          <TabsTrigger value="progress">Progress</TabsTrigger>
           <TabsTrigger value="maxes">Maxes &amp; RPE</TabsTrigger>
           <TabsTrigger value="barpath">Bar path</TabsTrigger>
           {discordConfigured && <TabsTrigger value="videos">Videos</TabsTrigger>}
@@ -342,34 +362,18 @@ export default function AthleteDetail() {
         <TabsContent value="programs">
           <SlideIn>
           <div className="space-y-3">
-            <div className="relative inline-block" ref={newMenuRef}>
-              <Button size="sm" onClick={(e) => { e.stopPropagation(); setNewMenuOpen((v) => !v) }}>
-                <Plus className="h-4 w-4 mr-2" />New Program<ChevronDown className="h-4 w-4 ml-2" />
-              </Button>
-              {newMenuOpen && (
-                <div className="absolute left-0 top-full mt-1 z-20 min-w-[200px] rounded-lg border bg-popover py-1 shadow-xl shadow-black/20" onClick={(e) => e.stopPropagation()}>
-                  <Link to={`/programs/new?athlete_id=${id}`} onClick={() => setNewMenuOpen(false)}>
-                    <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent">
-                      <Plus className="h-4 w-4" />New program
-                    </button>
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={() => { setNewMenuOpen(false); setSuggestOpen(true) }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-                  >
-                    <Sparkles className="h-4 w-4" />Generate next program
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setNewMenuOpen(false); setImportOpen(true) }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-                  >
-                    <FileUp className="h-4 w-4" />Import program
-                  </button>
-                </div>
-              )}
-            </div>
+            <Button size="sm" onClick={() => setNewMenuOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />New program
+            </Button>
+            {id && (
+              <NewProgramChooser
+                open={newMenuOpen}
+                onOpenChange={setNewMenuOpen}
+                athleteId={id}
+                onGenerate={() => setSuggestOpen(true)}
+                onImport={() => setImportOpen(true)}
+              />
+            )}
             {programsError ? (
               <LoadError what="this athlete's programs" message={programsError} onRetry={() => { if (id) void loadPrograms(id) }} />
             ) : programs.length === 0 ? (
@@ -405,8 +409,11 @@ export default function AthleteDetail() {
           </div>
           </SlideIn>
         </TabsContent>
-        <TabsContent value="maxes">
-          <SlideIn>{id && <AthleteMaxes athleteId={id} />}</SlideIn>
+        <TabsContent value="progress">
+          <SlideIn>{id && <AthleteProgress athleteId={id} unit={unitOf(athlete.unit)} />}</SlideIn>
+        </TabsContent>
+        <TabsContent value="maxes" data-tour="athlete-maxes">
+          <SlideIn>{id && <AthleteMaxes athleteId={id} unit={unitOf(athlete.unit)} />}</SlideIn>
         </TabsContent>
         <TabsContent value="barpath">
           <SlideIn>

@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Film, FolderOpen, Search, Upload } from 'lucide-react'
+import { Check, Film, FolderOpen, Search, Smartphone, Upload, Video } from 'lucide-react'
 import type { DiscordMediaItem } from 'coachboard-shared/discord'
+import type { VbtLift } from 'coachboard-shared/vbt'
+import CameraCapture, { type CameraTake } from './CameraCapture'
+import PhoneLink from './PhoneLink'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
+import { errorMessage, getJson } from '../../lib/api'
 
 /**
  * Where a clip being analysed came from.
@@ -15,7 +19,14 @@ import { Input } from '../ui/input'
  */
 export type AnalysisSource =
   | { kind: 'discord'; item: DiscordMediaItem }
-  | { kind: 'local'; name: string; url: string; file: File }
+  | {
+      kind: 'local'; name: string; url: string; file: File
+      /** Picked on the camera screen before recording (BP41, D103), for the analysis to start with. */
+      preset?: { athleteId: string | null; lift: VbtLift }
+    }
+
+/** Media rows read from the inbox at a time. */
+const PAGE = 200
 
 function fmtDuration(ms: number): string {
   const total = Math.round(ms / 1000)
@@ -35,19 +46,54 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
   const [items, setItems] = useState<DiscordMediaItem[] | null>(null)
   const [query, setQuery] = useState('')
   const [dragging, setDragging] = useState(false)
+  /** Recording a set from a camera, or receiving one from a phone, instead (BP41). */
+  const [camera, setCamera] = useState<'computer' | 'phone' | null>(null)
+
+  /** Why the synced videos could not be read. Never shown as "no videos yet" (BP6). */
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  /**
+   * How far into the inbox has been read, and how much there is (BP19). The
+   * list used to stop at the newest 200 with no hint that there was more.
+   * Counted in media rows, images included, since that is what the server pages.
+   */
+  const [read, setRead] = useState(0)
+  const [total, setTotal] = useState(0)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/discord/media?filter=all&limit=200')
-      .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((data: { items: DiscordMediaItem[] }) => {
-        if (!cancelled) setItems(data.items.filter((m) => m.isVideo && m.playable))
+    setLoadError(null)
+    getJson<{ items: DiscordMediaItem[]; total: number }>(`/api/discord/media?filter=all&limit=${PAGE}`)
+      .then((data) => {
+        if (cancelled) return
+        setItems(data.items.filter((m) => m.isVideo && m.playable))
+        setRead(data.items.length)
+        setTotal(data.total ?? data.items.length)
       })
-      .catch(() => !cancelled && setItems([]))
+      .catch((err) => {
+        if (cancelled) return
+        setItems(null)
+        setLoadError(errorMessage(err))
+      })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [attempt])
+
+  const showMore = async () => {
+    setLoadingMore(true)
+    try {
+      const data = await getJson<{ items: DiscordMediaItem[]; total: number }>(`/api/discord/media?filter=all&limit=${PAGE}&offset=${read}`)
+      setItems((prev) => [...(prev ?? []), ...data.items.filter((m) => m.isVideo && m.playable)])
+      setRead((n) => n + data.items.length)
+      setTotal((t) => data.total ?? t)
+    } catch (err) {
+      setLoadError(errorMessage(err))
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   const takeFile = (file: File | undefined) => {
     if (!file) return
@@ -65,9 +111,18 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
     )
   }, [items, query])
 
+  if (camera) {
+    const take = ({ file, athleteId, lift }: CameraTake) =>
+      onPick({ kind: 'local', name: file.name, url: URL.createObjectURL(file), file, preset: { athleteId, lift } })
+    return camera === 'phone'
+      ? <PhoneLink onCancel={() => setCamera(null)} onDone={take} />
+      : <CameraCapture onCancel={() => setCamera(null)} onDone={take} />
+  }
+
   return (
     <div className="space-y-6">
       <div
+        data-tour="analysis-start"
         onDragOver={(e) => {
           e.preventDefault()
           setDragging(true)
@@ -90,9 +145,19 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
             analysis.
           </p>
         </div>
-        <Button variant="outline" onClick={() => fileRef.current?.click()}>
-          <FolderOpen className="h-4 w-4" /> Choose a video
-        </Button>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button variant="outline" onClick={() => fileRef.current?.click()}>
+            <FolderOpen className="h-4 w-4" /> Choose a video
+          </Button>
+          {/* For coaching in person: film the set here and analyse it straight after. */}
+          <Button variant="outline" onClick={() => setCamera('computer')}>
+            <Video className="h-4 w-4" /> Record with a camera
+          </Button>
+          {/* D105: its own button. The phone films with its own camera app. */}
+          <Button variant="outline" onClick={() => setCamera('phone')}>
+            <Smartphone className="h-4 w-4" /> Send from my phone
+          </Button>
+        </div>
         <input
           ref={fileRef}
           type="file"
@@ -118,7 +183,13 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
           )}
         </div>
 
-        {items === null && <p className="text-sm text-muted-foreground">Loading videos…</p>}
+        {loadError ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-destructive">Could not load the synced videos. {loadError}</span>
+            <Button size="sm" variant="outline" onClick={() => setAttempt((n) => n + 1)}>Try again</Button>
+            <span className="text-muted-foreground">A file from your computer still works.</span>
+          </div>
+        ) : items === null && <p className="text-sm text-muted-foreground">Loading videos…</p>}
 
         {items?.length === 0 && (
           <p className="text-sm text-muted-foreground">
@@ -147,6 +218,16 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
                   ) : (
                     <Film className="h-6 w-6 text-muted-foreground" />
                   )}
+                  {/* Already analysed (BP19): working through an inbox means
+                      knowing which clips are done. */}
+                  {item.analysisCount > 0 && (
+                    <span
+                      className="absolute left-1 top-1 flex items-center gap-0.5 rounded bg-primary px-1 text-[10px] font-medium text-primary-foreground"
+                      title={item.analysisCount === 1 ? 'A saved analysis uses this clip' : `${item.analysisCount} saved analyses use this clip`}
+                    >
+                      <Check className="h-3 w-3" /> Done
+                    </span>
+                  )}
                   {item.durationMs != null && item.durationMs > 0 && (
                     <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[10px] font-medium text-white">
                       {fmtDuration(item.durationMs)}
@@ -168,6 +249,15 @@ export default function VideoPicker({ onPick }: { onPick: (source: AnalysisSourc
 
         {items !== null && items.length > 0 && filtered.length === 0 && (
           <p className="text-sm text-muted-foreground">Nothing matches that search.</p>
+        )}
+
+        {items !== null && read < total && (
+          <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <span>The newest {read} of {total} synced files{query.trim() ? ' — the search only looks through these' : ''}.</span>
+            <Button size="sm" variant="outline" onClick={showMore} disabled={loadingMore}>
+              {loadingMore ? 'Loading…' : 'Show older ones'}
+            </Button>
+          </div>
         )}
       </div>
     </div>

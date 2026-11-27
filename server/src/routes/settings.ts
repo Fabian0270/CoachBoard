@@ -2,6 +2,10 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { getSettings, saveSettings, EmailSettingsError } from '../services/emailSettingsService.js'
 import { sendTestEmail } from '../services/emailService.js'
+import { getDefaultUnit, setDefaultUnit } from '../services/unitService.js'
+import { getPreferences, setPreferences } from '../services/preferencesService.js'
+import { homeCurrency, setHomeCurrency } from '../services/ratesService.js'
+import { tourStatus, updateTourState } from '../services/tourStateService.js'
 
 const router = Router()
 
@@ -38,6 +42,71 @@ router.put('/email', async (req, res) => {
     }
     res.status(500).json({ error: 'Failed to save email settings' })
   }
+})
+
+// The unit new athletes start with (S3, D78).
+router.get('/units', async (_req, res) => {
+  res.json({ defaultUnit: await getDefaultUnit() })
+})
+
+router.put('/units', async (req, res) => {
+  const parsed = z.object({ defaultUnit: z.enum(['kg', 'lb']) }).safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'kg or lb' })
+    return
+  }
+  await setDefaultUnit(parsed.data.defaultUnit)
+  res.json({ defaultUnit: await getDefaultUnit() })
+})
+
+// The coach's own currency (S5, D84) — the same setting the Payments page's
+// Revenue card changes, so the two always agree.
+router.get('/currency', async (_req, res) => {
+  res.json({ home: await homeCurrency() })
+})
+
+router.put('/currency', async (req, res) => {
+  const parsed = z.object({ home: z.string().trim().regex(/^[A-Za-z]{3}$/, 'A three-letter currency code, like SEK') }).safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid currency' })
+    return
+  }
+  await setHomeCurrency(parsed.data.home)
+  res.json({ home: await homeCurrency() })
+})
+
+// Where the first-start tour and the setup checklist stand (T8).
+router.get('/tour', async (_req, res) => {
+  res.json(await tourStatus())
+})
+
+router.put('/tour', async (req, res) => {
+  const ids = z.array(z.string().max(40)).max(20)
+  const parsed = z.object({
+    welcomeAnswered: z.boolean().optional(),
+    tourAt: z.number().int().min(0).max(200).nullable().optional(),
+    tourFinished: z.boolean().optional(),
+    checklist: z.object({ completed: ids.optional(), skipped: ids.optional(), done: z.boolean().optional() }).optional(),
+  }).safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid tour state' })
+    return
+  }
+  res.json(await updateTourState(parsed.data))
+})
+
+// Switches such as the day editor's suggested loads.
+router.get('/preferences', async (_req, res) => {
+  res.json(await getPreferences())
+})
+
+router.put('/preferences', async (req, res) => {
+  const parsed = z.object({ loadHints: z.boolean().optional() }).safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid preferences' })
+    return
+  }
+  res.json(await setPreferences(parsed.data))
 })
 
 router.post('/email/test', async (_req, res) => {

@@ -5,6 +5,7 @@ import { originGuard, securityHeaders } from './lib/originGuard.js'
 import athletesRouter from './routes/athletes.js'
 import programsRouter from './routes/programs.js'
 import progressRouter from './routes/progress.js'
+import dashboardRouter from './routes/dashboard.js'
 import styleRouter from './routes/style.js'
 import paymentsRouter from './routes/payments.js'
 import exportStylesRouter from './routes/exportStyles.js'
@@ -15,6 +16,10 @@ import systemRouter from './routes/system.js'
 import backupRouter from './routes/backup.js'
 import analysisRouter, { ANALYSIS_JSON_LIMIT } from './routes/analysis.js'
 import recorderRouter from './routes/recorder.js'
+import phoneLinkRouter from './routes/phoneLink.js'
+import sampleRouter from './routes/sample.js'
+import { configureSampleClips } from './services/sampleService.js'
+import supportRouter, { REPORT_JSON_LIMIT } from './routes/support.js'
 
 export function createApp(staticDir?: string, logPath?: string) {
   const app = express()
@@ -47,6 +52,8 @@ export function createApp(staticDir?: string, logPath?: string) {
   // travel packed with their own raw parser (see routes/analysis.ts); this
   // limit covers the bar-path JSON.
   app.use('/api/analysis', express.json({ limit: ANALYSIS_JSON_LIMIT }), analysisRouter)
+  // A problem report may carry the Excel file that failed to import (S4).
+  app.use('/api/support', express.json({ limit: REPORT_JSON_LIMIT }), supportRouter)
 
   // JSON only. A urlencoded parser used to be mounted too, which nothing in the
   // client ever sent — but it is exactly the body an HTML <form> on another
@@ -56,6 +63,7 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api/athletes', athletesRouter)
   app.use('/api/programs', programsRouter)
   app.use('/api/progress', progressRouter)
+  app.use('/api/dashboard', dashboardRouter)
   app.use('/api/style-profile', styleRouter)
   app.use('/api/payments', paymentsRouter)
   app.use('/api/export-styles', exportStylesRouter)
@@ -66,11 +74,16 @@ export function createApp(staticDir?: string, logPath?: string) {
   app.use('/api/backup', backupRouter)
   // /api/analysis is mounted above, with its own body-size limit.
   app.use('/api/recorder', recorderRouter)
+  app.use('/api/phone-link', phoneLinkRouter)
+  app.use('/api/sample', sampleRouter)
 
   // Unknown API routes must 404 as JSON, not fall through to the static catch-all
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Not found' })
   })
+
+  // The sample athlete's squat clip ships in the client build (D110).
+  configureSampleClips(staticDir ? join(staticDir, 'sample') : null)
 
   if (staticDir) {
     app.use(express.static(staticDir))

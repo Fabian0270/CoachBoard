@@ -18,8 +18,23 @@ export interface AthleteTable {
   date_of_birth: string | null
   notes: string | null
   archived: number   // 0/1 — archived athletes are hidden from the active roster
+  /** 'kg' | 'lb' (S3, D76): the unit every load of this athlete is stored and shown in. */
+  unit: Generated<string>
+  /**
+   * 1 for the sample athlete the first-start tour runs on (T7, D111): labelled
+   * "Sample" everywhere, left out of the learned style, the dashboard counts,
+   * the needs-attention list, revenue and payment reminders, and removed with
+   * everything it owns in one click.
+   */
+  is_sample: Generated<number>
   created_at: string
   updated_at: string
+}
+
+/** Small app-wide preferences, kept in the database so a backup carries them (S3, D78). */
+export interface AppSettingTable {
+  key: string
+  value: string
 }
 
 export interface ProgramTable {
@@ -86,6 +101,14 @@ export interface ExerciseTable {
   rpe: string | null
   group_id: string | null
   suggestion_note: string | null
+  /**
+   * Reps the athlete actually did, when they differ from the plan (L1, D66):
+   * filled from a confirmed Discord caption. The report's e1RM uses it over
+   * the planned reps. Null almost always.
+   */
+  reps_done: Generated<string | null>
+  /** The row's velocity target as typed — "0.50", "0.45-0.55", "VL 20%" (BP39, D71). */
+  velocity: Generated<string | null>
 }
 
 export interface ProgressRecordTable {
@@ -106,6 +129,8 @@ export interface AthleteMaxTable {
   unit: string
   recorded_at: string
   notes: string | null
+  /** 1 when it is a bar path estimate the coach confirmed (BP34, D60), not a lifted max. Defaults to 0. */
+  estimated: Generated<number>
 }
 
 /** One athlete's measured 1RM bar speed for one lift. See the CREATE below. */
@@ -114,6 +139,17 @@ export interface AthleteMvtTable {
   /** A `VbtLift` id. */
   lift: string
   velocity: number
+  updated_at: string
+}
+
+/** An athlete's reference rep for one lift (BP28): one saved rep their other sets are drawn against. */
+export interface ReferenceRepTable {
+  athlete_id: string
+  /** A `VbtLift` id. */
+  lift: string
+  analysis_id: string
+  /** The rep's `index` in that analysis's metrics. */
+  rep_index: number
   updated_at: string
 }
 
@@ -127,6 +163,8 @@ export interface PaymentTable {
   paid: number
   paid_at: string | null
   notes: string | null
+  /** When a payment reminder was last emailed (S5, D87); null = never. */
+  reminded_at: Generated<string | null>
   created_at: string
   updated_at: string
 }
@@ -266,6 +304,11 @@ export interface VideoAnalysisTable {
    *  identical file. Either way the analysis can be replayed. */
   video_path: string | null
   video_bytes: number | null
+  /** The training day and the row of it this set was (L2, D67). Plain ids, no
+   *  foreign key: a deleted day reads as unlinked, and undoing the delete
+   *  (which restores the same ids) brings the link back. */
+  workout_id: Generated<string | null>
+  exercise_id: Generated<string | null>
   created_at: string
   updated_at: string
 }
@@ -314,12 +357,14 @@ export interface PoseCorrectionTable {
 
 export interface DB {
   athletes: AthleteTable
+  app_settings: AppSettingTable
   programs: ProgramTable
   workouts: WorkoutTable
   exercises: ExerciseTable
   progress_records: ProgressRecordTable
   athlete_maxes: AthleteMaxTable
   athlete_mvt: AthleteMvtTable
+  reference_reps: ReferenceRepTable
   payments: PaymentTable
   export_styles: ExportStyleTable
   template_blobs: TemplateBlobTable
@@ -487,12 +532,14 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
     )
   `.execute(_db)
 
-  const addColumnIfMissing = async (table: string, column: string, type: string): Promise<void> => {
+  /** Returns true when the column was added just now. */
+  const addColumnIfMissing = async (table: string, column: string, type: string): Promise<boolean> => {
     const result = await sql<{ name: string }>`PRAGMA table_info(${sql.raw(table)})`.execute(_db!)
     const exists = result.rows.some((row) => row.name === column)
     if (!exists) {
       await sql`ALTER TABLE ${sql.raw(table)} ADD COLUMN ${sql.raw(column)} ${sql.raw(type)}`.execute(_db!)
     }
+    return !exists
   }
 
   await sql`CREATE INDEX IF NOT EXISTS idx_programs_athlete_id ON programs(athlete_id)`.execute(_db)
@@ -505,6 +552,16 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   // scale, and nothing checked it. Height gives an independent expectation for
   // how far the bar should travel, which is checkable in a way velocity is not.
   await addColumnIfMissing('athletes', 'height_cm', 'INTEGER')
+  // S3 (D76): kg or lb per athlete. Everyone so far was kg.
+  await addColumnIfMissing('athletes', 'unit', "TEXT NOT NULL DEFAULT 'kg'")
+  // T7 (D111): the tour's sample athlete.
+  await addColumnIfMissing('athletes', 'is_sample', 'INTEGER NOT NULL DEFAULT 0')
+  await sql`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `.execute(_db)
   await addColumnIfMissing('programs', 'enabled_columns', 'TEXT')
   await addColumnIfMissing('programs', 'focus', 'TEXT')
   await addColumnIfMissing('programs', 'export_layout', 'TEXT')
@@ -594,6 +651,10 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   await addColumnIfMissing('exercises', 'rpe', 'TEXT')
   await addColumnIfMissing('exercises', 'group_id', 'TEXT')
   await addColumnIfMissing('exercises', 'suggestion_note', 'TEXT')
+  // L1 (D66): reps done when a confirmed caption differs from the plan.
+  await addColumnIfMissing('exercises', 'reps_done', 'TEXT')
+  // BP39 (D71): the row's velocity target, as the coach typed it.
+  await addColumnIfMissing('exercises', 'velocity', 'TEXT')
 
   await sql`
     CREATE TABLE IF NOT EXISTS progress_records (
@@ -624,6 +685,10 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   `.execute(_db)
 
   await sql`CREATE INDEX IF NOT EXISTS idx_athlete_maxes_athlete_id ON athlete_maxes(athlete_id)`.execute(_db)
+  // A max estimated from bar speed and confirmed by the coach (BP34, D60):
+  // load hints and generated blocks use it, the PR timeline does not, and the
+  // velocity estimates never calibrate against one (that would be circular).
+  await addColumnIfMissing('athlete_maxes', 'estimated', 'INTEGER NOT NULL DEFAULT 0')
 
   // The velocity an athlete's bar actually moves at on a true 1RM, per lift.
   //
@@ -691,6 +756,8 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   }
 
   await sql`CREATE INDEX IF NOT EXISTS idx_payments_athlete_id ON payments(athlete_id)`.execute(_db)
+  // S5 (D87): when a reminder was last emailed for the payment.
+  await addColumnIfMissing('payments', 'reminded_at', 'TEXT')
 
   // --- Discord integration -------------------------------------------------
   // ON DELETE SET NULL throughout: deleting an athlete returns their Discord
@@ -831,6 +898,11 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   await addColumnIfMissing('video_analyses', 'metric', 'TEXT')
   await addColumnIfMissing('video_analyses', 'video_path', 'TEXT')
   await addColumnIfMissing('video_analyses', 'video_bytes', 'INTEGER')
+  // L2 (D67): the training day and row a set was. Added once; that run also
+  // links the analyses saved before, where it is clear (D70).
+  const analysisLinkAdded = await addColumnIfMissing('video_analyses', 'workout_id', 'TEXT')
+  await addColumnIfMissing('video_analyses', 'exercise_id', 'TEXT')
+  await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_workout ON video_analyses(workout_id)`.execute(_db)
 
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_media ON video_analyses(media_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_video_analyses_athlete ON video_analyses(athlete_id)`.execute(_db)
@@ -866,6 +938,21 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
     )
   `.execute(_db)
 
+  // An athlete's reference rep per lift (BP28). CASCADE on both: it is a
+  // pointer, meaningless once the athlete or the set it points at is gone.
+  await sql`
+    CREATE TABLE IF NOT EXISTS reference_reps (
+      athlete_id TEXT NOT NULL,
+      lift TEXT NOT NULL,
+      analysis_id TEXT NOT NULL,
+      rep_index INTEGER NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (athlete_id, lift),
+      FOREIGN KEY (athlete_id) REFERENCES athletes(id) ON DELETE CASCADE,
+      FOREIGN KEY (analysis_id) REFERENCES video_analyses(id) ON DELETE CASCADE
+    )
+  `.execute(_db)
+
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_athlete ON discord_media(athlete_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_user ON discord_media(discord_user_id)`.execute(_db)
   await sql`CREATE INDEX IF NOT EXISTS idx_discord_media_reviewed ON discord_media(reviewed)`.execute(_db)
@@ -884,6 +971,20 @@ async function openAndMigrate(dbPath: string, verify: boolean): Promise<void> {
   // delete: deleting an athlete cascades to their programs inside SQLite, where
   // no application code sees it.
   const pruned = pruneOrphanTemplates(_sqlite!)
+
+  // D70: analyses saved before L2 from a Discord clip on a day. Imported late
+  // because the service reads through getDb(), which this module defines. A
+  // failure leaves them unlinked — the coach can link them by hand — and never
+  // stops the app from starting.
+  if (analysisLinkAdded) {
+    try {
+      const { backfillAnalysisLinks } = await import('./services/analysisLinkService.js')
+      const linked = await backfillAnalysisLinks()
+      if (linked > 0) log(`Linked ${linked} saved bar path ${linked === 1 ? 'analysis' : 'analyses'} to their training days`)
+    } catch (err) {
+      log(`Could not link saved analyses to their training days: ${String(err)}`)
+    }
+  }
 
   // Dropping a column frees its pages but does not shrink the file; VACUUM
   // does. Once, right after the move — that is the run where it pays off. A

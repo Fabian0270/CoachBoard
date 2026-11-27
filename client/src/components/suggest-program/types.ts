@@ -1,5 +1,5 @@
 export interface SelectableAthlete { id: string; name: string }
-export interface SelectableProgram { id: string; name: string; status: string; start_date: string | null }
+export interface SelectableProgram { id: string; name: string; status: string; start_date: string | null; bookmarked?: number }
 
 export interface Props {
   open: boolean

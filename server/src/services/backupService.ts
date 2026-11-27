@@ -19,6 +19,8 @@ import {
 import { userDataDir } from './secureStore.js'
 import { log } from '../lib/logger.js'
 import { writeZip, type ZipEntry } from '../lib/zipWriter.js'
+import { BACKUP_PREFIX, BACKUP_SUFFIX, KEEP_BACKUPS, backupFileName } from './backupFiles.js'
+import { copyToMirror } from './backupMirrorService.js'
 
 /**
  * Backup and restore of a coach's data.
@@ -39,12 +41,6 @@ import { writeZip, type ZipEntry } from '../lib/zipWriter.js'
  * write of a file too big to store anywhere is not a backup, it is a trap. The
  * Settings card says so plainly instead of implying otherwise.
  */
-
-/** How many rolling launch backups to keep. */
-const KEEP_BACKUPS = 5
-
-const BACKUP_PREFIX = 'coachboard-'
-const BACKUP_SUFFIX = '.sqlite'
 
 /** Name the database takes inside the archive. */
 const DB_ENTRY = 'coachboard.sqlite'
@@ -170,16 +166,63 @@ function pruneOldBackups(): void {
 export async function runStartupBackup(): Promise<string | null> {
   if (!backupsPossible()) return null
   try {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const dest = path.join(backupDir(), `${BACKUP_PREFIX}${stamp}${BACKUP_SUFFIX}`)
+    const dest = path.join(backupDir(), backupFileName())
     await writeBackupTo(dest)
     pruneOldBackups()
     log(`Startup backup written: ${dest}`)
+    // Also into the second backup folder, if the coach chose one (N4). Not
+    // awaited: a large database going to a slow USB drive must not hold up
+    // the app's start. Its outcome is recorded for Settings.
+    lastMirrorCopy = copyToMirror(dest)
     return dest
   } catch (err) {
     log(`Startup backup failed: ${err instanceof Error ? err.message : String(err)}`)
     return null
   }
+}
+
+let lastMirrorCopy: Promise<boolean> = Promise.resolve(false)
+/** The copy to the second folder that the last backup started. For tests and "Back up now". */
+export function mirrorCopyDone(): Promise<boolean> {
+  return lastMirrorCopy
+}
+
+/** The newest rolling backup on disk, or null. */
+export function newestBackupPath(): string | null {
+  if (!backupsPossible()) return null
+  const files = listBackups()
+  return files.length ? path.join(backupDir(), files[files.length - 1]) : null
+}
+
+const HOUR_MS = 60 * 60 * 1000
+
+/**
+ * A backup once a day while the app stays open (D92), not only at launch: a
+ * coach who leaves CoachBoard running all week still gets one a day, locally
+ * and in the second folder. Checked every hour; returns a stop function.
+ */
+export function startDailyBackups(opts: { checkEveryMs?: number; maxAgeMs?: number } = {}): () => void {
+  const maxAge = opts.maxAgeMs ?? 24 * HOUR_MS
+  let running = false
+  const check = async () => {
+    if (running) return
+    running = true
+    try {
+      const newest = newestBackupPath()
+      const age = newest ? Date.now() - fs.statSync(newest).mtimeMs : Infinity
+      if (age >= maxAge) {
+        log('Daily backup: the newest is a day old, taking another')
+        await runStartupBackup()
+      }
+    } catch (err) {
+      log(`Daily backup check failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      running = false
+    }
+  }
+  const timer = setInterval(() => void check(), opts.checkEveryMs ?? HOUR_MS)
+  timer.unref?.()
+  return () => clearInterval(timer)
 }
 
 export interface BackupInfo {

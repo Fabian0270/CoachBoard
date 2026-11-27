@@ -19,9 +19,22 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+// jsdom has no ResizeObserver, which the charts' container needs; the app's
+// Chromium does. Charts draw nothing at jsdom's zero size, which is fine: the
+// tests read the words around them.
+if (typeof window !== 'undefined') {
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver
+}
+
 /** What a fake route answers: a status and JSON body, or a network failure. */
 export type FakeResponse = { status?: number; body?: unknown } | 'network-error'
-type Handler = FakeResponse | ((url: URL, init?: RequestInit) => FakeResponse)
+// A handler may answer later (a promise), so a test can hold a save "in flight"
+// and act while it is — which is the only way to test what happens in between.
+type Handler = FakeResponse | ((url: URL, init?: RequestInit) => FakeResponse | Promise<FakeResponse>)
 
 export interface FakeServer {
   /** Every request made, as "METHOD /path?query". */
@@ -44,8 +57,11 @@ export function serve(routes: Record<string, Handler>): FakeServer {
     const method = (init?.method ?? 'GET').toUpperCase()
     calls.push(`${method} ${url.pathname}${url.search}`)
     const handler = table.get(`${method} ${url.pathname}`) ?? table.get(url.pathname)
-    const answer: FakeResponse = typeof handler === 'function' ? handler(url, init) : handler ?? { status: 404, body: { error: 'Not found' } }
+    const answer: FakeResponse = typeof handler === 'function' ? await handler(url, init) : handler ?? { status: 404, body: { error: 'Not found' } }
     if (answer === 'network-error') throw new TypeError('Failed to fetch')
+    // A 204 may not carry a body at all — the Response constructor throws, which
+    // the code under test would see as a network failure.
+    if (answer.status === 204) return new Response(null, { status: 204 })
     return new Response(JSON.stringify(answer.body ?? null), {
       status: answer.status ?? 200,
       headers: { 'Content-Type': 'application/json' },

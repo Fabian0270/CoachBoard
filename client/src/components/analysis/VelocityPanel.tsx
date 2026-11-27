@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Gauge, Ruler, TrendingDown, TriangleAlert } from 'lucide-react'
 import { RPE_VALUES } from 'coachboard-shared/rpe'
-import { looksMistracked, type RepMetrics } from 'coachboard-shared/videoAnalysis'
+import type { RepMetrics } from 'coachboard-shared/videoAnalysis'
 import {
   VBT_LIFTS,
   LRV_TOLERANCE_MS,
@@ -9,22 +9,12 @@ import {
   MIN_MVT,
   MAX_MVT,
   isPlausibleMvt,
-  bestRepVelocity,
-  buildLoadVelocityProfile,
   defaultVelocityMetric,
-  e1RMFromVelocity,
   checkScale,
   effectiveRpe,
   effortLabel,
-  recordedMaxFor,
-  resolveLvSlope,
-  resolveMvt,
   isVbtLift,
-  lastRepVelocity,
   liftLabel,
-  lrvChart,
-  rpeFromLastRepVelocity,
-  velocityLoss,
   zoneFor,
   type LrvAnchor,
   type LvPoint,
@@ -36,6 +26,7 @@ import {
 import { num } from '../../lib/num'
 import { Button } from '../ui/button'
 import LoadVelocityChart from './LoadVelocityChart'
+import { readSet } from './readSet'
 
 // ---------------------------------------------------------------------------
 // Velocity-based training readouts for one tracked set.
@@ -68,7 +59,7 @@ export function rememberedLift(): VbtLift {
   }
 }
 
-function rememberLift(lift: VbtLift): void {
+export function rememberLift(lift: VbtLift): void {
   try {
     localStorage.setItem(LIFT_STORAGE_KEY, lift)
   } catch {
@@ -77,7 +68,8 @@ function rememberLift(lift: VbtLift): void {
 }
 
 const fmtV = (v: number) => `${v.toFixed(2)} m/s`
-const fmtKg = (kg: number) => `${Math.round(kg * 2) / 2} kg`
+/** A load in the athlete's unit (S3), to the half: "182.5 kg", "405 lb". */
+const fmtLoadIn = (v: number, unit: string) => `${Math.round(v * 2) / 2} ${unit}`
 
 /**
  * Where the slope came from, in the coach's language.
@@ -85,11 +77,12 @@ const fmtKg = (kg: number) => `${Math.round(kg * 2) / 2} kg`
  * Said out loud on every estimate because it is the whole accuracy question: the
  * same set reads 245 kg on a population slope and 250 on this athlete's own.
  */
+// Neutral wording: this used to call every athlete "he" (BP5).
 const SLOPE_SOURCE: Record<SlopeSource, string> = {
-  profile: 'on his own load–velocity profile',
-  calibrated: 'calibrated to his recorded max',
+  profile: "on the athlete's own load–velocity profile",
+  calibrated: "calibrated to the athlete's recorded max",
   published: 'on the published slope for this lift',
-  estimated: 'on a generic slope — records a max or a second load to make it his',
+  estimated: "on a generic slope — record a max or a second load to make it the athlete's own",
 }
 
 const WARNING_TEXT: Record<LvWarning, string> = {
@@ -131,10 +124,16 @@ interface Props {
   maxes: { lift_name: string; weight: number }[]
   value: SetContextState
   onChange: (next: SetContextState) => void
+  /** Fields filled in from the Discord caption and not changed since (BP14). */
+  fromCaption?: ReadonlySet<'lift' | 'load' | 'reps' | 'rpe'>
   /** Puts the page into calibrate mode. The scale is the one thing standing
    *  between a coach and every reading here, so the fix belongs where they
    *  notice the problem, not only in the toolbar above the video. */
   onSetScale?: () => void
+  /** Told the estimated 1RM this panel shows (kg, or null), so the page can offer to record it (BP34). */
+  onEstimate?: (e1rm: number | null) => void
+  /** The athlete's unit (S3): every load here is in it. */
+  unit?: string
 }
 
 export default function VelocityPanel({
@@ -150,8 +149,12 @@ export default function VelocityPanel({
   maxes,
   value,
   onChange,
+  fromCaption,
   onSetScale,
+  onEstimate,
+  unit = 'kg',
 }: Props) {
+  const fmtKg = (v: number) => fmtLoadIn(v, unit)
   const [mvtText, setMvtText] = useState('')
   const [targetRpe, setTargetRpe] = useState(8)
 
@@ -160,40 +163,6 @@ export default function VelocityPanel({
   const validLoad = loadKg != null && Number.isFinite(loadKg) && loadKg > 0 ? loadKg : null
 
   const metric = value.metric ?? defaultVelocityMetric(lift)
-
-  /**
-   * Reps whose peak is wildly out of line with their mean.
-   *
-   * Peak is a near-single-sample statistic, so a tracker re-lock lands in it
-   * whole: a real 165 kg bench reported 1.69 m/s, which the panel then read as
-   * "RPE 5, easy" on a set called at 8.5. The page already refuses to show a
-   * track it does not trust, and this is the same rule one level down — no
-   * reading at all beats a confident wrong one.
-   */
-  const mistracked = useMemo(() => reps.filter(looksMistracked), [reps])
-  const trusted = useMemo(
-    () => reps.filter((r) => !looksMistracked(r)),
-    [reps],
-  )
-  const readable = metric === 'peak' ? trusted : reps
-
-  const lastV = calibrated ? lastRepVelocity(readable, metric) : null
-  const bestV = calibrated ? bestRepVelocity(readable, metric) : null
-
-  const chart = useMemo(() => lrvChart(lift, allAnchors), [lift, allAnchors])
-  const reading = useMemo(
-    () =>
-      lastV == null
-        ? null
-        : rpeFromLastRepVelocity(lift, lastV, { anchors: allAnchors, calledRpe: value.calledRpe }),
-    [lift, lastV, allAnchors, value.calledRpe],
-  )
-  const loss = useMemo(() => velocityLoss(reps), [reps])
-
-  /** What to put on screen — see effectiveRpe for why it is not always the bar's own number. */
-  const shownRpe = reading ? effectiveRpe(reading, value.calledRpe) : 0
-
-  const knownMax = useMemo(() => recordedMaxFor(lift, maxes), [lift, maxes])
 
   /**
    * The coach's own measured 1RM velocity for THIS athlete and THIS lift.
@@ -246,62 +215,24 @@ export default function VelocityPanel({
     [onSaveMvt, storedMvt],
   )
 
-  // The published band is the last resort, not the starting point: this
-  // athlete's stored number wins, then the RPE-10 row of their own LRV chart.
-  const suggestedMvt = useMemo(
-    () => resolveMvt(lift, { stored: storedMvt, anchors: allAnchors }),
-    [lift, storedMvt, allAnchors],
-  )
-  // An implausible typed value is ignored rather than estimated from — "25"
-  // meant as 0.25 would otherwise put a nonsense 1RM on screen.
+  // Every reading — the RPE, the 1RM velocity, the slope, the estimate — comes
+  // from readSet, the same function the saved page uses (BP3), so one set never
+  // reads two ways. Only the half-typed 1RM velocity above is the panel's own.
   const typedMvt = mvtText.trim() ? num(mvtText) : null
-  const mvt = isPlausibleMvt(typedMvt) ? typedMvt : suggestedMvt
-
-  const lvPoints = useMemo(() => {
-    const points = [...savedPoints]
-    if (validLoad != null && bestV != null) {
-      points.push({ load: validLoad, velocity: bestV, label: 'this set' })
-    }
-    return points
-  }, [savedPoints, validLoad, bestV])
-
-  const profile = useMemo(
-    () => (mvt != null ? buildLoadVelocityProfile(lvPoints, mvt) : null),
-    [lvPoints, mvt],
+  const read = useMemo(
+    () => readSet({
+      reps, lift, metric, calibrated, loadKg: validLoad, calledRpe: value.calledRpe,
+      anchors: allAnchors, storedMvt: storedMvt ?? null, typedMvt, savedPoints, maxes,
+    }),
+    [reps, lift, metric, calibrated, validLoad, value.calledRpe, allAnchors, storedMvt, typedMvt, savedPoints, maxes],
   )
+  const { mistracked, trusted, lastV, bestV, chart, reading, loss, knownMax, suggestedMvt, mvt, lvPoints, profile, slope, estimate } = read
+  // The exact figure shown here, rounded as shown, for the page's "record it as a max?" offer.
+  const shownE1rm = estimate ? Math.round(estimate.e1rm * 2) / 2 : null
+  useEffect(() => { onEstimate?.(shownE1rm) }, [shownE1rm]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Calibration deliberately uses the most recent SAVED set, never the current
-  // one: calibrating off the set you are estimating just hands the recorded max
-  // straight back.
-  const calibration = useMemo(
-    () =>
-      knownMax != null && mvt != null && savedPoints.length > 0
-        ? {
-            knownMax,
-            loadKg: savedPoints[0].load,
-            velocity: savedPoints[0].velocity,
-            mvt,
-          }
-        : null,
-    [knownMax, mvt, savedPoints],
-  )
-
-  const slope = useMemo(
-    () => resolveLvSlope(lift, { profile, calibration }),
-    [lift, profile, calibration],
-  )
-
-  // The FASTEST rep, not the last. The load-velocity relationship describes how
-  // fast a load moves under full intent when fresh; a fatigued last rep reads
-  // the load as far heavier than it is. On a real 180 kg five by a 250 kg
-  // squatter the last rep estimated 201 kg and the first 249.
-  const estimate = useMemo(
-    () =>
-      bestV != null && validLoad != null && mvt != null
-        ? e1RMFromVelocity({ loadKg: validLoad, velocity: bestV, mvt, slope })
-        : null,
-    [bestV, validLoad, mvt, slope],
-  )
+  /** What to put on screen — see effectiveRpe for why it is not always the bar's own number. */
+  const shownRpe = reading ? effectiveRpe(reading, value.calledRpe) : 0
 
   /**
    * Does the scale survive contact with anatomy?
@@ -370,7 +301,7 @@ export default function VelocityPanel({
       {/* 1. What the set was — none of the rest means anything without this. */}
       <div className="flex flex-wrap items-end gap-3 text-sm">
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">Lift</span>
+          <span className="text-xs text-muted-foreground">Lift<FromCaption on={fromCaption?.has('lift')} /></span>
           <select
             value={lift}
             onChange={(e) => setLift(e.target.value as VbtLift)}
@@ -385,12 +316,12 @@ export default function VelocityPanel({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">Load</span>
+          <span className="text-xs text-muted-foreground">Load<FromCaption on={fromCaption?.has('load')} /></span>
           <input
             value={value.loadText}
             onChange={(e) => onChange({ ...value, loadText: e.target.value })}
             inputMode="decimal"
-            placeholder="kg"
+            placeholder={unit}
             className="w-24 rounded-md border bg-background px-2 py-1 text-sm"
           />
         </label>
@@ -400,7 +331,7 @@ export default function VelocityPanel({
             skews everything below it; a number that disagrees is impossible to
             miss. */}
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">Reps in set</span>
+          <span className="text-xs text-muted-foreground">Reps in set<FromCaption on={fromCaption?.has('reps')} /></span>
           <input
             value={value.repsText}
             onChange={(e) => onChange({ ...value, repsText: e.target.value })}
@@ -411,7 +342,7 @@ export default function VelocityPanel({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">RPE called</span>
+          <span className="text-xs text-muted-foreground">RPE called<FromCaption on={fromCaption?.has('rpe')} /></span>
           <select
             value={value.calledRpe ?? ''}
             onChange={(e) =>
@@ -605,7 +536,7 @@ export default function VelocityPanel({
                   </span>
                   {pctOfRecorded != null && knownMax != null && (
                     <span className="block text-muted-foreground">
-                      His recorded max is {fmtKg(knownMax)}, so this set was{' '}
+                      {athleteName ? `${athleteName}'s` : 'The'} recorded max is {fmtKg(knownMax)}, so this set was{' '}
                       {Math.round(pctOfRecorded * 100)}% of it
                       {agreementNote(estimate.e1rm, knownMax)}.
                     </span>
@@ -712,14 +643,14 @@ export default function VelocityPanel({
 
             {profile ? (
               <>
-                <LoadVelocityChart profile={profile} />
+                <LoadVelocityChart profile={profile} unit={unit} />
                 <div className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
                   <Stat
                     label={`Estimated 1RM at ${mvt!.toFixed(2)} m/s`}
                     value={profile.oneRm ? fmtKg(profile.oneRm) : '—'}
                   />
                   <Stat label="Sets in the profile" value={`${profile.points.length}`} />
-                  <Stat label="Slope" value={`${(profile.fit.slope * 1000).toFixed(1)} m/s per 100 kg`} />
+                  <Stat label="Slope" value={`${(profile.fit.slope * 100).toFixed(2)} m/s per 100 ${unit}`} />
                   <Stat label="Fit (R²)" value={profile.fit.r2.toFixed(3)} />
                   {validLoad != null && profile.pctOf1RM(validLoad) != null && (
                     <Stat
@@ -812,8 +743,17 @@ function agreementNote(estimated: number, recorded: number): string {
   const gap = (estimated - recorded) / recorded
   if (Math.abs(gap) < 0.03) return ' — the estimate agrees with it'
   return estimated > recorded
-    ? ` — the bar says he is about ${Math.round(gap * 100)}% ahead of that`
-    : ` — the bar reads ${Math.round(-gap * 100)}% under it, so either he is down today or the max is stale`
+    ? ` — the bar reads about ${Math.round(gap * 100)}% ahead of that`
+    : ` — the bar reads ${Math.round(-gap * 100)}% under it, so either today is a down day or the max is stale`
+}
+
+/** The mark on a field the Discord caption filled in. */
+function FromCaption({ on }: { on?: boolean }) {
+  return on ? (
+    <span className="ml-1 text-primary" title="Read from the clip's Discord caption. Change it if it is wrong.">
+      · from caption
+    </span>
+  ) : null
 }
 
 /** What to do about it, in one sentence. */

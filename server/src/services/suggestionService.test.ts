@@ -624,3 +624,62 @@ describe('generateDraftProgram', () => {
     })
   })
 })
+
+// S3 (D76): a draft is in the unit of the athlete it is for, whatever the
+// source program was in.
+describe('generateDraftProgram for an athlete in pounds', () => {
+  const mainLifts = async (draftId: string) => getDb()
+    .selectFrom('exercises')
+    .innerJoin('workouts', 'workouts.id', 'exercises.workout_id')
+    .select(['exercises.name', 'exercises.weight', 'exercises.suggestion_note'])
+    .where('workouts.program_id', '=', draftId)
+    .where('exercises.name', 'in', ['Squat', 'Bench Press', 'Deadlift'])
+    .execute()
+
+  it('a kg block generated for a lb athlete comes out in lb, on 5 lb plates', async () => {
+    const lb = await createAthlete({ name: 'Pound Lifter', unit: 'lb' })
+    for (const [lift, weight] of [['Squat', 405], ['Bench Press', 275], ['Deadlift', 495]] as const) {
+      await getDb().insertInto('athlete_maxes').values({
+        id: `lb-${lift}`, athlete_id: lb.id, lift_name: lift, weight, unit: 'lb', recorded_at: '2026-01-01', notes: null,
+      }).execute()
+    }
+    const { draftProgramId } = await generateDraftProgram(completedProgramId, {
+      athleteId: lb.id, templateId: 'strength_linear', weeks: 4, trainingDaysPerWeek: 3, startDate: '2026-02-02',
+    })
+    const rows = await mainLifts(draftProgramId)
+    expect(rows.length).toBeGreaterThan(0)
+    for (const r of rows) {
+      expect(r.weight! % 5, `${r.name} ${r.weight}`).toBe(0)
+      expect(r.suggestion_note).toMatch(/ lb /)
+      expect(r.suggestion_note).not.toMatch(/ kg /)
+    }
+    // Loads near the lb maxes, not the kg source's numbers: a squat set of
+    // 3-5 reps from a 405 lb max sits well above anything in kg here.
+    const squat = rows.filter((r) => r.name === 'Squat').map((r) => r.weight!)
+    expect(Math.min(...squat)).toBeGreaterThan(250)
+    expect(Math.max(...squat)).toBeLessThanOrEqual(405)
+  })
+
+  it('a max the lb athlete still has in kg is converted, not read as lb', async () => {
+    const lb = await createAthlete({ name: 'Switched Lifter', unit: 'lb' })
+    await getDb().insertInto('athlete_maxes').values({
+      id: 'kg-kept', athlete_id: lb.id, lift_name: 'Squat', weight: 180, unit: 'kg', recorded_at: '2026-01-01', notes: null,
+    }).execute()
+    const { draftProgramId } = await generateDraftProgram(completedProgramId, {
+      athleteId: lb.id, templateId: 'strength_linear', weeks: 4, trainingDaysPerWeek: 3, startDate: '2026-02-02',
+    })
+    const squat = (await mainLifts(draftProgramId)).filter((r) => r.name === 'Squat').map((r) => r.weight!)
+    // 180 kg is about 397 lb: the loads are in the 300s, not under 180.
+    expect(Math.min(...squat)).toBeGreaterThan(250)
+    expect(squat.every((w) => w % 5 === 0)).toBe(true)
+  })
+
+  it('a kg athlete still gets kg on 2.5 kg plates', async () => {
+    const { draftProgramId } = await generateDraftProgram(completedProgramId, {
+      athleteId, templateId: 'strength_linear', weeks: 4, trainingDaysPerWeek: 3, startDate: '2026-02-02',
+    })
+    const rows = (await mainLifts(draftProgramId)).filter((r) => r.weight != null)
+    expect(rows.every((r) => r.weight! % 2.5 === 0)).toBe(true)
+    expect(rows.every((r) => / kg /.test(r.suggestion_note ?? ''))).toBe(true)
+  })
+})

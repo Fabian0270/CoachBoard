@@ -8,6 +8,7 @@ import {
   updateProgram,
   deleteProgram,
   setProgramDuration,
+  DurationWouldRemoveDays,
   createWorkout,
   updateWorkout,
   deleteWorkout,
@@ -15,8 +16,15 @@ import {
   updateExercise,
   deleteExercise,
   addSetToExercise,
+  duplicateExercise,
+  findExerciseNames,
+  pasteExercises,
+  updateExercisesInProgram,
   copyWorkoutDay,
   moveWorkoutDay,
+  restoreDays,
+  restoreExercises,
+  renameExerciseInProgram,
   reorderExercises,
   withoutTemplateBlob,
 } from '../services/programService.js'
@@ -30,6 +38,8 @@ import { getProgramReport } from '../services/analysisService.js'
 import { generateDraftProgram } from '../services/suggestionService.js'
 import type { ExternalParseOverrides } from 'coachboard-shared'
 import { fail } from '../lib/httpError.js'
+import { getDb } from '../db.js'
+import { duplicateProgram } from '../services/program/duplicateProgram.js'
 import { SheetTooLargeError } from '../lib/sheetBounds.js'
 
 const router = Router()
@@ -57,6 +67,7 @@ function externalOverridesFromQuery(q: Request['query']): ExternalParseOverrides
   const reps = asColumn(q.map_reps); if (reps !== undefined) o.reps = reps
   const load = asColumn(q.map_load); if (load !== undefined) o.load = load
   const rpe = asColumn(q.map_rpe); if (rpe !== undefined) o.rpe = rpe
+  const notes = asColumn(q.map_notes); if (notes !== undefined) o.notes = notes
   if (q.rpe_is_rir !== undefined) o.rpeFromRir = q.rpe_is_rir === '1' || q.rpe_is_rir === 'true'
   return Object.keys(o).length > 0 ? o : undefined
 }
@@ -76,6 +87,15 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     res.json(await findAllPrograms(athleteId))
   } catch (err) {
     fail(res, 'Failed to fetch programs', err)
+  }
+})
+
+// Before /:id, or "exercise-names" would be looked up as a program id.
+router.get('/exercise-names', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    res.json(await findExerciseNames())
+  } catch (err) {
+    fail(res, 'Failed to fetch exercise names', err)
   }
 })
 
@@ -125,10 +145,19 @@ router.put('/:programId/duration', async (req: Request, res: Response): Promise<
   const body = validate(schemas.program.duration, req.body, res)
   if (!body) return
   try {
-    const updated = await setProgramDuration(String(req.params.programId), body.start_date, body.weeks)
+    const updated = await setProgramDuration(
+      String(req.params.programId), body.start_date, body.weeks, body.remove_outside === true,
+    )
     if (!updated) { res.status(404).json({ error: 'Program not found' }); return }
     res.json(withoutTemplateBlob(updated))
   } catch (err) {
+    if (err instanceof DurationWouldRemoveDays) {
+      // Nothing was changed. The page asks the coach first and sends again.
+      res.status(409).json({
+        error: err.message, code: 'would_remove_days', days: err.days, daysWithResults: err.daysWithResults,
+      })
+      return
+    }
     fail(res, 'Failed to update program duration', err)
   }
 })
@@ -242,15 +271,121 @@ router.post('/:programId/workouts/:workoutId/exercises/:exerciseId/add-set', asy
   }
 })
 
+// Before the :exerciseId routes, or "paste" would be read as an exercise id.
+router.post('/:programId/workouts/:workoutId/exercises/paste', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.pasteExercises, req.body, res)
+  if (!body) return
+  try {
+    const result = await pasteExercises(
+      String(req.params.workoutId), String(req.params.programId),
+      body.anchorId ?? null, body.anchorPatch ?? null, body.rows,
+    )
+    if (!result) { res.status(404).json({ error: 'That training day or exercise no longer exists' }); return }
+    res.status(201).json(result)
+  } catch (err) {
+    fail(res, 'Failed to paste the rows', err)
+  }
+})
+
+router.post('/:programId/workouts/:workoutId/exercises/:exerciseId/duplicate', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await duplicateExercise(
+      String(req.params.exerciseId),
+      String(req.params.workoutId),
+      String(req.params.programId),
+    )
+    if (!result) { res.status(404).json({ error: 'Exercise not found' }); return }
+    res.status(201).json(result)
+  } catch (err) {
+    fail(res, 'Failed to duplicate exercise', err)
+  }
+})
+
 router.post('/:programId/move-day', async (req: Request, res: Response): Promise<void> => {
   const body = validate(schemas.moveDay, req.body, res)
   if (!body) return
   try {
-    await moveWorkoutDay(String(req.params.programId), body.sourceDate, body.targetDate)
+    await moveWorkoutDay(String(req.params.programId), body.sourceDate, body.targetDate, body.replace === true)
     res.json({ ok: true })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Move failed'
     res.status(msg.includes('No workout') ? 400 : 500).json({ error: msg })
+  }
+})
+
+// Undo: put whole days back as they were before a clear, copy, paste or move.
+// Answers with the program, so the page shows exactly what is now stored.
+router.put('/:programId/days/restore', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.restoreDays, req.body, res)
+  if (!body) return
+  try {
+    const programId = String(req.params.programId)
+    if (!(await restoreDays(programId, body.days))) { res.status(404).json({ error: 'Program not found' }); return }
+    const program = await findProgramById(programId)
+    if (!program) { res.status(404).json({ error: 'Program not found' }); return }
+    res.json(withoutTemplateBlob(program))
+  } catch (err) {
+    fail(res, 'Failed to undo', err)
+  }
+})
+
+// Undo of a deleted exercise: the rows go back into the day they came from.
+router.post('/:programId/workouts/:workoutId/exercises/restore', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.restoreExercises, req.body, res)
+  if (!body) return
+  try {
+    const exercises = await restoreExercises(String(req.params.programId), String(req.params.workoutId), body.exercises)
+    if (!exercises) { res.status(404).json({ error: 'That training day no longer exists' }); return }
+    res.json({ exercises })
+  } catch (err) {
+    fail(res, 'Failed to undo', err)
+  }
+})
+
+router.post('/:programId/duplicate', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.duplicateProgram, req.body, res)
+  if (!body) return
+  try {
+    if (body.athlete_id) {
+      const athlete = await getDb().selectFrom('athletes').select(['id']).where('id', '=', body.athlete_id).executeTakeFirst()
+      if (!athlete) { res.status(400).json({ error: 'That athlete no longer exists' }); return }
+    }
+    const result = await duplicateProgram(String(req.params.programId), {
+      athleteId: body.athlete_id,
+      name: body.name,
+      startDate: body.start_date,
+      keepResults: body.keep_results === true,
+      scaleLoads: body.scale_loads === true,
+    })
+    if (!result) { res.status(404).json({ error: 'Program not found' }); return }
+    res.status(201).json(result)
+  } catch (err) {
+    fail(res, 'Failed to duplicate the program', err)
+  }
+})
+
+// A batch of changes across the program (progression fill), all or nothing.
+router.put('/:programId/exercises', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.updateExercises, req.body, res)
+  if (!body) return
+  try {
+    const n = await updateExercisesInProgram(String(req.params.programId), body.updates)
+    if (n === null) { res.status(400).json({ error: 'Some of those exercises are not in this program. Nothing was changed.' }); return }
+    res.json({ updated: n })
+  } catch (err) {
+    fail(res, 'Failed to update the exercises', err)
+  }
+})
+
+router.post('/:programId/rename-exercise', async (req: Request, res: Response): Promise<void> => {
+  const body = validate(schemas.renameExercise, req.body, res)
+  if (!body) return
+  try {
+    const result = await renameExerciseInProgram(String(req.params.programId), body.from, body.to, body.from_date ?? null)
+    if (!result) { res.status(404).json({ error: 'Program not found' }); return }
+    res.json(result)
+  } catch (err) {
+    fail(res, 'Failed to replace the exercise', err)
   }
 })
 

@@ -15,6 +15,8 @@ export interface Athlete {
   date_of_birth: string | null
   notes: string | null
   archived: number   // 0/1 — archived athletes (e.g. historical back-catalogue imports) are hidden from the active roster
+  /** 'kg' | 'lb' (S3): every load of this athlete is stored and shown in it. Optional for older fixtures; missing = kg. */
+  unit?: string
   created_at: string
   updated_at: string
 }
@@ -50,6 +52,11 @@ export interface Exercise {
   intensity: string | null
   load_used: string | null
   rpe: string | null
+  /** Reps the athlete actually did, when a Discord caption said they differed
+   *  from the plan (L1, D66). Cleared when Load Used is typed or imported. */
+  reps_done?: string | null
+  /** The velocity target as typed, shown when the program's Velocity column is on (BP39). */
+  velocity?: string | null
   group_id: string | null
   suggestion_note: string | null
 }
@@ -65,8 +72,17 @@ export interface Workout {
   exercises: Exercise[]
 }
 
-export type ToggleableColumn = 'rest_time' | 'intensity' | 'load_cap' | 'load_used' | 'rpe'
-export const TOGGLEABLE_COLUMNS: ToggleableColumn[] = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe']
+export type ToggleableColumn = 'rest_time' | 'intensity' | 'load_cap' | 'load_used' | 'rpe' | 'notes' | 'velocity'
+/** Every column a coach can switch on or off, in the order they appear. */
+export const TOGGLEABLE_COLUMNS: ToggleableColumn[] = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe', 'notes', 'velocity']
+/**
+ * The columns a program has when it has never been given a choice
+ * (enabled_columns is null). Everything except Notes and Velocity (BP39, D71):
+ * both are opt-in,
+ * so programs made before it existed — and new ones — look exactly as before
+ * until the coach switches it on.
+ */
+export const DEFAULT_ENABLED_COLUMNS: ToggleableColumn[] = ['rest_time', 'intensity', 'load_cap', 'load_used', 'rpe']
 
 export interface Program {
   id: string
@@ -86,6 +102,8 @@ export interface Program {
   // on export so this program looks like the coach's own sheet. null = generic.
   export_layout: ExportLayoutTemplate | null
   bookmarked?: number   // 0/1 — coach favorited this program for reuse
+  /** 'kg' | 'lb' (S3): the unit its loads are in — its athlete's. Only on the single-program read. */
+  unit?: string
   workouts?: Workout[]
 }
 
@@ -117,6 +135,8 @@ export interface AthleteMax {
   unit: string
   recorded_at: string
   notes: string | null
+  /** 1 for a bar path estimate the coach confirmed (BP34, D60). Absent from older servers. */
+  estimated?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +165,8 @@ export interface Payment {
   paid_through: string     // ISO date — coverage end / next payment due by this date
   paid: number             // 0/1
   paid_at: string | null   // ISO date when marked paid
+  /** When a reminder was last emailed (S5); missing on older fixtures. */
+  reminded_at?: string | null
   notes: string | null
   created_at: string
   updated_at: string
@@ -227,7 +249,7 @@ export interface ImportPreview {
 // CoachBoard's own export. Parser discovers structure rather than replaying it.
 // ---------------------------------------------------------------------------
 
-export type ExternalColumnKey = 'exercise' | 'sets' | 'reps' | 'load' | 'rpe'
+export type ExternalColumnKey = 'exercise' | 'sets' | 'reps' | 'load' | 'rpe' | 'notes' | 'velocity'
 
 export interface ExternalColumnMapping {
   // 1-based worksheet column index detected for each key, or null if not found
@@ -236,6 +258,10 @@ export interface ExternalColumnMapping {
   reps: number | null
   load: number | null
   rpe: number | null
+  /** The coach's own notes / comments / cues column, read into the cue column. */
+  notes: number | null
+  /** The coach's velocity target column (BP39, D73). */
+  velocity?: number | null
   rpeFromRir: boolean   // true when the RPE column was actually an RIR column (converted)
 }
 
@@ -264,6 +290,10 @@ export interface ExternalExerciseRow {
   intensity?: string | null  // "Intensity/Weight" — prescribed
   loadCap?: number | null    // "Load Cap" — prescribed weight
   restTime?: string | null   // "Rest Time"
+  /** The coach's cue from a notes / comments column. Turns the program's cue column on. */
+  notes?: string | null
+  /** The velocity target from a velocity / speed column (BP39). Turns the Velocity column on. */
+  velocity?: string | null
   // Server-internal: absolute 1-based worksheet columns for each writable field
   // on this row (sheetRow). Used only by the scaffold export engine to locate and
   // rewrite the original file's cells; ignored by capture/commit and the client.
@@ -279,6 +309,8 @@ export interface ExternalExerciseRow {
     restTime?: number | null  // "Rest Time" column
     rpe: number | null
     erpe: number | null
+    notes?: number | null     // the sheet's own notes / comments column
+    velocity?: number | null  // the sheet's own velocity target column (BP39)
   }
 }
 
@@ -295,6 +327,8 @@ export interface ExternalParseOverrides {
   reps?: number | null
   load?: number | null
   rpe?: number | null
+  notes?: number | null
+  velocity?: number | null
   rpeFromRir?: boolean            // treat the RPE column as RIR (convert to RPE)
 }
 
@@ -359,6 +393,56 @@ export interface RPEDeviationRow {
   prescribedRpe: number | null
   reportedRpe: number | null
   delta: number | null
+}
+
+/** An athlete's progress across every block (I1). */
+export interface AthleteProgress {
+  /** e1RM of each competition lift, the best set of each week, oldest first. */
+  e1rm: { liftKey: 'squat' | 'bench' | 'deadlift'; displayName: string; points: ProgressE1RMPoint[] }[]
+  /** Recorded maxes that beat every earlier one for their lift, newest first. */
+  prs: ProgressPR[]
+}
+
+export interface ProgressE1RMPoint {
+  /** Monday of the week (YYYY-MM-DD). */
+  week: string
+  /** The day the set was trained. */
+  date: string
+  e1rm: number
+  weight: number
+  reps: number
+  rpe: number
+  exerciseName: string
+  programId: string
+  programName: string
+}
+
+export interface ProgressPR {
+  liftName: string
+  weight: number
+  unit: string
+  date: string
+  /** The best before it, or null for the first one recorded. */
+  previous: number | null
+}
+
+/** One line of the dashboard's "needs attention" list (I2). */
+export interface AttentionItem {
+  /**
+   * block-ending: ends within a week with no next program. no-program: no active program.
+   * slow-session: a bar path session in the last week read 7 % or more under the athlete's usual max (BP33, D59).
+   * (Unlogged training days were taken out, D114: programs come back as Excel when the block is done.)
+   */
+  kind: 'block-ending' | 'no-program' | 'slow-session'
+  athleteId: string
+  athleteName: string
+  programId: string | null
+  programName: string | null
+  /** block-ending: the end date. slow-session: the session's day. */
+  date: string | null
+  /** slow-session: the lift (a VbtLift id) and how far under the usual, as a fraction (0.09 = 9 % under). */
+  lift?: string
+  under?: number
 }
 
 export interface ProgramReport {

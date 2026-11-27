@@ -94,6 +94,8 @@ export function parseWeekGrid(
       const repsText = get(fields.reps)
       const loadText = get(fields.load)
       const rpeText = get(fields.rpe)
+      const notesText = get(fields.notes)
+      const velocityText = get(fields.velocity)
 
       const hasData = !!(setsText || repsText || loadText || rpeText)
       if (!name || !hasData) continue
@@ -113,6 +115,8 @@ export function parseWeekGrid(
         rpeIsResult: fields.rpeIsResult,
         sheetRow: r,
         intensity,
+        notes: notesText || null,
+        velocity: velocityText || null,
         refillCols: {
           name: fields.name !== null ? base + fields.name : null,
           sets: fields.sets !== null ? base + fields.sets : null,
@@ -120,6 +124,8 @@ export function parseWeekGrid(
           load: fields.load !== null ? base + fields.load : null,
           rpe: fields.rpe !== null ? base + fields.rpe : null,
           erpe: fields.erpe !== null ? base + fields.erpe : null,
+          notes: fields.notes !== null ? base + fields.notes : null,
+          velocity: fields.velocity !== null ? base + fields.velocity : null,
         },
       })
     }
@@ -132,6 +138,8 @@ export function parseWeekGrid(
     reps: fields.reps !== null ? b0 + fields.reps : null,
     load: fields.load !== null ? b0 + fields.load : null,
     rpe: fields.rpe !== null ? b0 + fields.rpe : null,
+    notes: fields.notes !== null ? b0 + fields.notes : null,
+    velocity: fields.velocity !== null ? b0 + fields.velocity : null,
     rpeFromRir: fields.rpeFromRir,
   }
 

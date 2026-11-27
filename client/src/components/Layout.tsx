@@ -4,9 +4,11 @@ import { cn } from '../lib/utils'
 import ThemeToggle from './ThemeToggle'
 import UpdateNotice from './UpdateNotice'
 import BrandMark from './BrandMark'
+import QuickSearch from './QuickSearch'
 import { useDiscordInboxCounts } from '../hooks/useDiscordInboxCounts'
 import { useDiscordConfigured } from '../hooks/useDiscordConfigured'
 import { useRecorder } from './recorder/RecorderProvider'
+import { useBackupMirrorAlert } from '../hooks/useBackupMirrorAlert'
 
 interface NavItem {
   to: string
@@ -50,6 +52,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { configured: discordConfigured } = useDiscordConfigured()
   const { startRecording, isRecording } = useRecorder()
   const inboxBadge = inboxCounts.unmatched + inboxCounts.unreviewed + inboxCounts.unreadMessages
+  useBackupMirrorAlert()
 
   /**
    * Whether a nav entry owns the current screen.
@@ -93,7 +96,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background md:flex-row">
-      <nav className="flex w-full shrink-0 border-b bg-sidebar bg-glow-side md:h-screen md:w-60 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r">
+      <nav data-tour="sidebar" className="flex w-full shrink-0 border-b bg-sidebar bg-glow-side md:h-screen md:w-60 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r">
         <Link to="/" className="hidden items-center gap-2.5 px-5 pb-5 pt-5 md:flex" aria-label="CoachBoard home">
           <BrandMark className="h-[18px] w-auto" />
           <span className="text-[15px] font-semibold tracking-tight">CoachBoard</span>
@@ -133,6 +136,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </nav>
       <main className="h-full min-w-0 flex-1 overflow-auto bg-glow-main p-6 md:px-10 md:py-8">{children}</main>
       <UpdateNotice />
+      <QuickSearch />
     </div>
   )
 }

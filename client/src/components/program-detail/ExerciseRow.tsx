@@ -1,16 +1,38 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { GripVertical, Plus, Trash2 } from 'lucide-react'
+import { GripVertical, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '../ui/popover'
 import { EXERCISE_NAMES } from 'coachboard-shared/exercises'
 import { type Exercise, type ColDef, exerciseValue } from '../../lib/programUtils'
 import { failedEditKeyForColumn } from '../../lib/failedEdits'
+import { useToast } from '../ui/toast'
+import { matchSuggestions } from '../../lib/exerciseSuggestions'
+import type { LoadHint } from '../../lib/loadHint'
+import { isCellBlock } from '../../lib/pasteGrid'
 
 interface ExerciseRowProps {
+  /** The program's unit (S3), for the load hint's wording. */
+  unit?: string
   exercise: Exercise
   columns: ColDef[]
-  onSave: (patch: Partial<Exercise>) => void
-  onDelete: () => void
+  /** Resolves true once the server has stored the change. */
+  onSave: (patch: Partial<Exercise>) => Promise<boolean>
+  /** Resolves false when the exercise could not be deleted and is still there. */
+  onDelete: () => Promise<boolean>
   onAddSet?: () => void
+  /**
+   * A key that moves the cursor or acts on the whole row. The editor owns
+   * these, because where "next" is depends on the rows around this one.
+   */
+  onKey: (action: RowKeyAction, colKey: string) => void
+  /** A block of cells pasted from a spreadsheet into this row, at this column. */
+  onPasteBlock?: (colKey: string, text: string) => void
+  /** The coach's own exercise names, most used first. Offered before the built-in list. */
+  suggestions?: readonly string[]
+  /** What this row was a week earlier, e.g. "Last week: 5×5 · RPE 8 → did 140 @8". */
+  lastWeek?: string
+  /** A suggested Load Cap from the athlete's max, offered while the cell is empty. */
+  loadHint?: LoadHint | null
   isSubSet?: boolean
   isInGroup?: boolean
   isDragging?: boolean
@@ -24,7 +46,38 @@ interface ExerciseRowProps {
   portalContainer?: HTMLElement | null
 }
 
-export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAddSet, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
+export type RowKeyAction =
+  | 'next'        // Enter: the next field, then the next exercise, then a new one
+  | 'up' | 'down' // the same field on the row above / below
+  | 'left' | 'right' // the field before / after, in the same row
+  | 'add-set'     // Ctrl+Enter
+  | 'duplicate'   // Ctrl+D
+  | 'delete'      // Ctrl+Delete — the row is about to go; move the cursor off it
+  | 'move-up' | 'move-down' // Alt+Up / Alt+Down
+
+const NO_NAMES: readonly string[] = []
+
+/**
+ * Whether ← / → should go to the next field rather than move the cursor in
+ * this one: the cell was just arrived in (its whole value selected, as Enter
+ * and the arrows leave it) or is empty, or the cursor is already at that end
+ * of the text. Inside the text the arrows move the cursor as always.
+ */
+export function arrowLeavesCell(el: HTMLInputElement | HTMLTextAreaElement, left: boolean): boolean {
+  const len = el.value.length
+  const start = el.selectionStart ?? 0
+  const end = el.selectionEnd ?? len
+  if (start === 0 && end === len) return true
+  return left ? start === 0 && end === 0 : start === len && end === len
+}
+
+/** Whether a just-focused element got there by keyboard (Tab, arrows) rather than a click. */
+function focusedByKeyboard(el: Element): boolean {
+  try { return el.matches(':focus-visible') } catch { return false }
+}
+
+export default function ExerciseRow({ unit = 'kg', exercise, columns, onSave, onDelete, onAddSet, onKey, onPasteBlock, suggestions = NO_NAMES, lastWeek, loadHint, isSubSet, isInGroup, isDragging, unsavedKeys, onGroupDragStart, onSetDragStart, onDragEnd, onDragOverRow, onDropRow, portalContainer }: ExerciseRowProps) {
+  const toast = useToast()
   /**
    * Whether this cell holds a value the server has not accepted.
    *
@@ -43,18 +96,64 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
     return d
   }
   const [draft, setDraft] = useState<Record<string, string>>(initDraft)
+
+  // ── What the coach typed is never dropped ──────────────────────────────
+  // A cell shows a local draft and saves when focus leaves it. Two ways that
+  // lost work, both reproduced in the 1.17.0 build:
+  //
+  //   1. Esc closed the day with the cursor still in a cell. A focused element
+  //      that unmounts never blurs, so the cell never saved — the day closed
+  //      and the server kept the old value.
+  //   2. Every draft in the row was reset whenever ANY saved field changed. A
+  //      save answering while the coach typed in the next cell put that cell
+  //      back to its stored value, and the typed text was never sent.
+  //
+  // `dirty` is what the coach has typed and not yet handed over. `pending` is
+  // what has been handed over and not yet answered — still theirs, not the
+  // server's, until the answer lands. Neither is ever overwritten from props.
+  const dirtyRef = useRef(new Set<string>())
+  const pendingRef = useRef(new Map<string, string>())
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  const exerciseRef = useRef(exercise)
+  exerciseRef.current = exercise
+  const columnsRef = useRef(columns)
+  columnsRef.current = columns
+  const onSaveRef = useRef(onSave)
+  onSaveRef.current = onSave
+  /** Set when this row is being deleted: there is nothing left to save into. */
+  const discardRef = useRef(false)
+  // Bumped when a save is answered, so the draft re-reads the stored value.
+  const [, setAnswered] = useState(0)
+
+  const edit = (key: string, value: string) => {
+    dirtyRef.current.add(key)
+    setDraft((d) => ({ ...d, [key]: value }))
+  }
   // Exercise-name autocomplete (exercise directory).
   const [nameFocused, setNameFocused] = useState(false)
+  // The suggestion note's popover (P5).
+  const [noteOpen, setNoteOpen] = useState(false)
   const nameInputRef = useRef<HTMLTextAreaElement>(null)
   // Anchor rect for the suggestion menu, which renders in a portal so it
   // escapes the day dialog's scroll/overflow clipping.
   const [menuRect, setMenuRect] = useState<{ left: number; top: number; width: number } | null>(null)
-  const nameQuery = (draft.name ?? '').trim().toLowerCase()
-  const nameMatches = nameFocused && nameQuery.length >= 1
-    ? EXERCISE_NAMES.filter(
-        (n) => n.toLowerCase().includes(nameQuery) && n.toLowerCase() !== nameQuery,
-      ).slice(0, 8)
-    : []
+  // The list opens when the coach TYPES in the name, not when the cursor merely
+  // lands there — otherwise every day would open with a list over its first
+  // exercise, and Esc would close that list instead of the day. Esc closes the
+  // list without closing the day; typing again reopens it.
+  const [listClosed, setListClosed] = useState(true)
+  // Nothing is highlighted until the coach presses an arrow key. Otherwise Enter
+  // after typing "Squat" would swap it for the first suggestion.
+  const [highlight, setHighlight] = useState(-1)
+  const nameMatches = nameFocused && !listClosed ? matchSuggestions(suggestions, EXERCISE_NAMES, draft.name ?? '') : []
+  // The list is shorter than its longest set of names: the arrows have to
+  // scroll it along, or the last names are chosen out of sight.
+  const suggestionListRef = useRef<HTMLUListElement>(null)
+  useEffect(() => {
+    if (highlight < 0) return
+    suggestionListRef.current?.children[highlight]?.scrollIntoView?.({ block: 'nearest' })
+  }, [highlight])
 
   useEffect(() => {
     if (nameMatches.length === 0 || !portalContainer) {
@@ -79,22 +178,197 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
     }
   }, [nameMatches.length, portalContainer])
 
+  // Follow the stored exercise — but only in cells the coach is not in the
+  // middle of. Runs after every render on purpose: it is cheap, and a dependency
+  // list here is exactly what went stale before. It cannot loop: setDraft
+  // hands back the same object when nothing changed, and React stops there.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately every render
   useEffect(() => {
-    setDraft(initDraft())
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exercise.id, exercise.name, exercise.sets, exercise.reps, exercise.weight, exercise.rest_time, exercise.intensity, exercise.load_used, exercise.rpe, columns.length])
+    setDraft((prev) => {
+      let next = prev
+      for (const c of columns) {
+        const stored = exerciseValue(exercise, c.key)
+        // A pending value the server now agrees with has been answered (a retry
+        // of a failed save lands this way, not through the promise above).
+        if (pendingRef.current.get(c.key) === stored) pendingRef.current.delete(c.key)
+        if (dirtyRef.current.has(c.key) || pendingRef.current.has(c.key)) continue
+        if (prev[c.key] !== stored) {
+          if (next === prev) next = { ...prev }
+          next[c.key] = stored
+        }
+      }
+      return next
+    })
+  })
 
+  /** Hand one cell's draft to the server, if it differs from what is stored. */
   const commit = (col: ColDef) => {
-    const v = draft[col.key] ?? ''
-    if (v === exerciseValue(exercise, col.key)) return
-    if (col.key === 'name') {
-      onSave({ name: v })
+    const key = col.key
+    const v = draftRef.current[key] ?? ''
+    dirtyRef.current.delete(key)
+    if (v === exerciseValue(exerciseRef.current, key)) return
+    let patch: Partial<Exercise>
+    if (key === 'name') {
+      patch = { name: v }
     } else if (col.numeric) {
-      const num = v === '' ? null : Number(v)
-      if (num !== null && Number.isNaN(num)) return
-      onSave({ weight: num })
+      // A decimal comma is how a Swedish keyboard types 102,5.
+      const text = v.trim().replace(',', '.')
+      const num = text === '' ? null : Number(text)
+      if (num !== null && (Number.isNaN(num) || num < 0)) {
+        // Put the stored value back rather than leave text in the cell that
+        // looks saved and is not.
+        setDraft((d) => ({ ...d, [key]: exerciseValue(exerciseRef.current, key) }))
+        toast.error(`${col.label} takes a number, so "${v}" was not saved.`)
+        return
+      }
+      if (num === exerciseRef.current.weight) {
+        setDraft((d) => ({ ...d, [key]: exerciseValue(exerciseRef.current, key) }))
+        return
+      }
+      patch = { weight: num }
     } else {
-      onSave({ [col.key]: v || null } as Partial<Exercise>)
+      patch = { [key]: v || null } as Partial<Exercise>
+    }
+    pendingRef.current.set(key, v)
+    void Promise.resolve(onSaveRef.current(patch)).then((saved) => {
+      // A failed save stays pending: the cell keeps what was typed (and is
+      // marked unsaved) instead of snapping back to the stored value.
+      if (!saved || pendingRef.current.get(key) !== v) return
+      pendingRef.current.delete(key)
+      setAnswered((n) => n + 1)
+    })
+  }
+
+  // Closing the day (Esc, the ×, paging to another day) unmounts the row with
+  // the cursor possibly still in a cell. Save whatever is in hand on the way out.
+  useEffect(() => {
+    return () => {
+      if (discardRef.current) return
+      // The CURRENT contents of the ref, on purpose: what is unsaved at the
+      // moment the row goes, not what was unsaved when it appeared.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      for (const key of [...dirtyRef.current]) {
+        const col = columnsRef.current.find((c) => c.key === key)
+        if (col) commit(col)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reads refs only
+  }, [])
+
+  // The hint is offered only while Load Cap is empty: the coach's own number,
+  // once there, is never second-guessed.
+  const hintOffered = !!loadHint && (draft.load_cap ?? '').trim() === '' && columns.some((c) => c.key === 'load_cap')
+  /** Put the suggested load in Load Cap and save it. */
+  const applyLoadHint = () => {
+    const col = columns.find((c) => c.key === 'load_cap')
+    if (!hintOffered || !col || !loadHint) return
+    const v = String(loadHint.kg)
+    edit(col.key, v)
+    draftRef.current = { ...draftRef.current, [col.key]: v }
+    commit(col)
+  }
+
+  const pickSuggestion = (col: ColDef, name: string) => {
+    edit(col.key, name)
+    draftRef.current = { ...draftRef.current, [col.key]: name }
+    commit(col)
+    setListClosed(true)
+    setHighlight(-1)
+  }
+
+  const removeRow = () => {
+    // Nothing typed in this row should be saved on its way out.
+    discardRef.current = true
+    void onDelete().then((gone) => { if (!gone) discardRef.current = false })
+  }
+
+  /**
+   * A block of cells from a spreadsheet goes to the editor, which spreads it
+   * over this row and new ones. Ordinary text pastes into the cell as usual.
+   */
+  const onCellPaste = (e: React.ClipboardEvent, col: ColDef) => {
+    const text = e.clipboardData.getData('text/plain')
+    if (!onPasteBlock || !isCellBlock(text)) return
+    e.preventDefault()
+    // What was typed in this row before the paste is not saved over it: the
+    // paste is what the coach meant.
+    dirtyRef.current.clear()
+    onPasteBlock(col.key, text)
+  }
+
+  /**
+   * Keys inside a cell. Everything the mouse can do in the table has a key
+   * here; the list of them is in Settings → Help.
+   */
+  const onCellKey = (e: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>, col: ColDef) => {
+    const el = e.currentTarget
+    const plain = !e.ctrlKey && !e.altKey && !e.metaKey
+
+    // The suggestion list takes the arrows, Enter/Tab and Esc while it is open.
+    if (col.key === 'name' && nameMatches.length > 0 && plain) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        const n = nameMatches.length
+        setHighlight((h) => (e.key === 'ArrowDown' ? (h + 1) % n : (h <= 0 ? n : h) - 1))
+        return
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && highlight >= 0 && highlight < nameMatches.length) {
+        pickSuggestion(col, nameMatches[highlight])
+        if (e.key === 'Enter') { e.preventDefault(); onKey('next', col.key) }
+        return // Tab carries on to the next field by itself
+      }
+      if (e.key === 'Escape') {
+        // The dialog sees the open list and leaves the day open (see
+        // onEscapeKeyDown in ProgramDetail); this closes just the list.
+        setListClosed(true)
+        setHighlight(-1)
+        return
+      }
+    }
+
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey) {
+      e.preventDefault()
+      onKey(e.ctrlKey ? 'add-set' : 'next', col.key)
+      return
+    }
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
+      e.preventDefault()
+      applyLoadHint()
+      return
+    }
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'd') {
+      e.preventDefault()
+      onKey('duplicate', col.key)
+      return
+    }
+    if (e.ctrlKey && !e.altKey && e.key === 'Delete') {
+      e.preventDefault()
+      onKey('delete', col.key)
+      removeRow()
+      return
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      const up = e.key === 'ArrowUp'
+      if (e.altKey && !e.ctrlKey) {
+        e.preventDefault()
+        onKey(up ? 'move-up' : 'move-down', col.key)
+        return
+      }
+      if (!plain || e.shiftKey) return
+      // In a cell with several lines the arrows walk the lines first.
+      const v = el.value
+      const onEdgeLine = up
+        ? !v.slice(0, el.selectionStart ?? 0).includes('\n')
+        : !v.slice(el.selectionEnd ?? v.length).includes('\n')
+      if (!onEdgeLine) return
+      e.preventDefault()
+      onKey(up ? 'up' : 'down', col.key)
+      return
+    }
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && plain && !e.shiftKey) {
+      if (!arrowLeavesCell(el, e.key === 'ArrowLeft')) return
+      e.preventDefault()
+      onKey(e.key === 'ArrowLeft' ? 'left' : 'right', col.key)
     }
   }
 
@@ -123,6 +397,7 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                     <GripVertical className="h-3 w-3" />
                   </span>
                   <span className="text-xs text-muted-foreground/40 select-none">↳</span>
+                  {lastWeek && <span className="min-w-0 truncate text-[10.5px] text-muted-foreground" title={lastWeek}>{lastWeek}</span>}
                 </div>
               ) : (
                 <div className="flex items-start">
@@ -134,43 +409,70 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                   >
                     <GripVertical className="h-3.5 w-3.5" />
                   </span>
+                  <Popover open={noteOpen} onOpenChange={setNoteOpen}>
+                  <PopoverAnchor asChild>
                   <div className="relative flex-1 min-w-0">
                     <textarea
                       ref={nameInputRef}
                       rows={1}
                       value={draft[c.key] ?? ''}
-                      onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
-                      onFocus={() => setNameFocused(true)}
-                      onBlur={() => { commit(c); setNameFocused(false) }}
+                      data-cell={`${exercise.id}:${c.key}`}
+                      onChange={(e) => { edit(c.key, e.target.value); setListClosed(false); setHighlight(-1) }}
+                      onKeyDown={(e) => onCellKey(e, c)}
+                      onPaste={(e) => onCellPaste(e, c)}
+                      onFocus={(e) => {
+                        setNameFocused(true)
+                        // P5 (D90): arriving by keyboard shows the note too, since
+                        // the marker is left out of the Tab order like Add set.
+                        if (exercise.suggestion_note && focusedByKeyboard(e.currentTarget)) setNoteOpen(true)
+                      }}
+                      onBlur={() => { commit(c); setNameFocused(false); setListClosed(true); setHighlight(-1); setNoteOpen(false) }}
                       placeholder={c.placeholder}
                       style={textareaStyle}
-                      title={
-                        isUnsaved(c.key)
-                          ? 'Not saved yet — use "Try again" above'
-                          : exercise.suggestion_note ?? undefined
-                      }
+                      title={isUnsaved(c.key) ? 'Not saved yet — use "Try again" above' : undefined}
                       className={
                         'w-full bg-transparent px-1 py-1.5 text-sm outline-none focus:bg-accent/30 focus:ring-1 focus:ring-inset focus:ring-primary resize-none block leading-snug' +
+                        (exercise.suggestion_note ? ' pr-6' : '') +
                         unsavedCls(c.key)
                       }
                     />
+                    {exercise.suggestion_note && (
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          // Skipped by Tab, which walks the cells; focusing the
+                          // name cell from the keyboard opens the note instead.
+                          tabIndex={-1}
+                          onMouseDown={(e) => e.preventDefault()}
+                          aria-label="Why this exercise"
+                          title="Why this exercise"
+                          className="absolute right-1 top-1.5 rounded p-0.5 text-primary/70 hover:bg-primary/10 hover:text-primary"
+                        >
+                          <Sparkles className="h-3.5 w-3.5" />
+                        </button>
+                      </PopoverTrigger>
+                    )}
                     {nameMatches.length > 0 && menuRect && portalContainer && createPortal(
                       <ul
+                        ref={suggestionListRef}
+                        // Marks an open list for the dialog, which then keeps Esc
+                        // from closing the day.
+                        data-exercise-suggestions
+                        role="listbox"
                         style={{ position: 'absolute', left: menuRect.left, top: menuRect.top, width: menuRect.width }}
                         className="z-[60] mt-0.5 max-h-56 overflow-auto rounded-lg border bg-popover py-1 text-sm shadow-xl shadow-black/20"
                       >
-                        {nameMatches.map((name) => (
-                          <li key={name}>
+                        {nameMatches.map((name, i) => (
+                          <li key={name} role="option" aria-selected={i === highlight}>
                             <button
                               type="button"
+                              tabIndex={-1}
                               // mousedown fires before the textarea blur, so the pick lands.
                               onMouseDown={(e) => {
                                 e.preventDefault()
-                                setDraft((d) => ({ ...d, name }))
-                                if (name !== exercise.name) onSave({ name })
-                                setNameFocused(false)
+                                pickSuggestion(c, name)
                               }}
-                              className="block w-full px-3 py-1.5 text-left hover:bg-accent"
+                              className={`block w-full px-3 py-1.5 text-left hover:bg-accent ${i === highlight ? 'bg-accent' : ''}`}
                             >
                               {name}
                             </button>
@@ -179,7 +481,27 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                       </ul>,
                       portalContainer,
                     )}
+                    {lastWeek && (
+                      <div className="truncate px-1 pb-1 text-[10.5px] leading-tight text-muted-foreground" title={lastWeek}>
+                        {lastWeek}
+                      </div>
+                    )}
                   </div>
+                  </PopoverAnchor>
+                  {exercise.suggestion_note && (
+                    <PopoverContent
+                      container={portalContainer}
+                      side="bottom"
+                      // The cursor stays in the cell: the note is read, not edited.
+                      onOpenAutoFocus={(e) => e.preventDefault()}
+                      onCloseAutoFocus={(e) => e.preventDefault()}
+                      aria-label="Why this exercise"
+                    >
+                      <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-primary"><Sparkles className="h-3.5 w-3.5" />Suggested</p>
+                      <p className="text-sm leading-snug">{exercise.suggestion_note}</p>
+                    </PopoverContent>
+                  )}
+                  </Popover>
                 </div>
               )}
             </td>,
@@ -187,12 +509,16 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
         }
         const unsavedTitle = isUnsaved(c.key) ? 'Not saved yet — use "Try again" above' : undefined
         const cellContent = c.numeric ? (
+          // A text field, not type="number": a number field changes its value
+          // under the scroll wheel and the arrow keys, and refuses "102,5".
           <input
-            type="number"
-            min="0"
-            step="0.5"
+            type="text"
+            inputMode="decimal"
             value={draft[c.key] ?? ''}
-            onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
+            data-cell={`${exercise.id}:${c.key}`}
+            onChange={(e) => edit(c.key, e.target.value)}
+            onKeyDown={(e) => onCellKey(e, c)}
+                      onPaste={(e) => onCellPaste(e, c)}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
             title={unsavedTitle}
@@ -202,7 +528,10 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
           <textarea
             rows={1}
             value={draft[c.key] ?? ''}
-            onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}
+            data-cell={`${exercise.id}:${c.key}`}
+            onChange={(e) => edit(c.key, e.target.value)}
+            onKeyDown={(e) => onCellKey(e, c)}
+                      onPaste={(e) => onCellPaste(e, c)}
             onBlur={() => commit(c)}
             placeholder={c.placeholder}
             title={unsavedTitle}
@@ -211,8 +540,45 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
           />
         )
         const mainTd = (
-          <td key={c.key} className="border-b border-r border-border p-0 align-top">
-            {cellContent}
+          <td key={c.key} className={`border-b border-r border-border p-0 align-top${c.key === 'load_cap' && hintOffered ? ' relative' : ''}`}>
+            {c.key === 'load_cap' && hintOffered && loadHint ? (
+              <>
+                {/* The suggestion sits in the empty cell as its placeholder. */}
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={draft[c.key] ?? ''}
+                  data-cell={`${exercise.id}:${c.key}`}
+                  onChange={(e) => edit(c.key, e.target.value)}
+                  onKeyDown={(e) => onCellKey(e, c)}
+                      onPaste={(e) => onCellPaste(e, c)}
+                  onBlur={() => commit(c)}
+                  placeholder={`≈ ${loadHint.kg}`}
+                  title={`Suggested from ${loadHint.basis}. Ctrl+L or "Use" fills it in.`}
+                  className={inputCls + ' num pr-9 placeholder:text-primary/70' + unsavedCls(c.key)}
+                />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={applyLoadHint}
+                  title={`Use ${loadHint.kg} ${unit} — ${loadHint.basis} (Ctrl+L)`}
+                  aria-label={`Use the suggested load, ${loadHint.kg} ${unit}`}
+                  className="absolute right-1 top-1.5 rounded px-1 text-[10px] font-semibold text-primary hover:bg-primary/10"
+                >
+                  Use
+                </button>
+              </>
+            ) : cellContent}
+            {/* L1 (D66): reps the athlete's caption said were done, when not the plan. */}
+            {c.key === 'reps' && exercise.reps_done && (
+              <div
+                className="num px-1 pb-1 text-[10.5px] leading-tight text-primary"
+                title="Reps done, from the athlete's Discord caption. Used for the e1RM."
+              >
+                {exercise.reps_done} done
+              </div>
+            )}
           </td>
         )
         if (c.key === 'sets') {
@@ -223,9 +589,11 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
                 <button
                   type="button"
                   onClick={onAddSet}
+                  // Skipped by Tab, which walks the cells; the key is Ctrl+Enter.
+                  tabIndex={-1}
                   className="p-1 text-muted-foreground hover:text-primary"
                   aria-label="Add set"
-                  title="Add set"
+                  title="Add set (Ctrl+Enter)"
                 >
                   <Plus className="h-3 w-3" />
                 </button>
@@ -238,7 +606,9 @@ export default function ExerciseRow({ exercise, columns, onSave, onDelete, onAdd
       <td className="border-b border-border p-0 text-center align-middle">
         <button
           type="button"
-          onClick={onDelete}
+          onClick={removeRow}
+          tabIndex={-1}
+          title="Delete exercise (Ctrl+Delete)"
           className="p-1 text-muted-foreground hover:text-destructive"
           aria-label="Delete exercise"
         >

@@ -17,6 +17,8 @@ interface Athlete {
   sport: string | null
   email: string | null
   archived: number
+  /** The tour's sample athlete (T7): labelled, never mistaken for a real one. */
+  is_sample?: number
 }
 
 export default function AthletesList() {
@@ -82,6 +84,7 @@ export default function AthletesList() {
           <div className="flex items-center gap-2 font-medium">
             <span className="truncate">{athlete.name}</span>
             {athlete.archived ? <Badge variant="outline">Archived</Badge> : null}
+            {athlete.is_sample ? <Badge variant="outline" className="border-primary/40 text-primary">Sample</Badge> : null}
           </div>
           {athlete.email && <div className="truncate text-xs text-muted-foreground">{athlete.email}</div>}
         </div>
@@ -100,7 +103,7 @@ export default function AthletesList() {
   )
 
   const renderList = (list: Athlete[]) => (
-    <ul className="divide-y overflow-hidden rounded-xl border bg-card">{list.map(renderRow)}</ul>
+    <ul data-tour="athlete-list" className="divide-y overflow-hidden rounded-xl border bg-card">{list.map(renderRow)}</ul>
   )
 
   return (

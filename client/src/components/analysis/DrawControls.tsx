@@ -1,15 +1,18 @@
-import { Eraser, Pencil, Undo2 } from 'lucide-react'
+import { Circle, Eraser, MoveUpRight, MoveVertical, Pencil, Slash, Undo2, type LucideIcon } from 'lucide-react'
 import { Button } from '../ui/button'
 import type { StageMode } from './AnalysisStage'
-import type { Stroke } from './annotations'
+import type { PenTool, Stroke } from './annotations'
+import { usePenTool } from './penTool'
 
 // ---------------------------------------------------------------------------
-// The pen, and the two ways to take it back.
+// The pen, its shapes, and the two ways to take it back.
 //
 // Shared rather than written twice because drawing has to behave identically
 // wherever a lift is on screen: a coach explaining a knee angle should not find
 // that the pen works on one page and not the next. Undo and Erase appear only
 // once there is something to undo, so the row stays quiet until it is used.
+// The shapes (BP30) show while drawing: freehand, line, arrow, circle, and a
+// plumb line straight up and down through a click.
 // ---------------------------------------------------------------------------
 
 interface Props {
@@ -22,6 +25,14 @@ interface Props {
   compact?: boolean
 }
 
+const TOOLS: { tool: PenTool; label: string; icon: LucideIcon }[] = [
+  { tool: 'free', label: 'Freehand', icon: Pencil },
+  { tool: 'line', label: 'Straight line', icon: Slash },
+  { tool: 'arrow', label: 'Arrow', icon: MoveUpRight },
+  { tool: 'circle', label: 'Circle — drag from its centre', icon: Circle },
+  { tool: 'plumb', label: 'Plumb line — straight up and down through a click', icon: MoveVertical },
+]
+
 export default function DrawControls({
   mode,
   onModeChange,
@@ -30,6 +41,7 @@ export default function DrawControls({
   compact,
 }: Props) {
   const drawing = mode === 'draw'
+  const [tool, setTool] = usePenTool()
   return (
     <div className="flex items-center gap-1">
       <Button
@@ -44,6 +56,23 @@ export default function DrawControls({
         <Pencil className="h-4 w-4" />
         {compact ? null : drawing ? 'Drawing' : 'Draw'}
       </Button>
+      {drawing && (
+        <div role="group" aria-label="Pen shape" className="flex items-center rounded-md border p-0.5">
+          {TOOLS.map(({ tool: t, label, icon: Icon }) => (
+            <button
+              key={t}
+              type="button"
+              aria-pressed={tool === t}
+              aria-label={label}
+              title={label}
+              onClick={() => setTool(t)}
+              className={`rounded p-1 transition-colors ${tool === t ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+            </button>
+          ))}
+        </div>
+      )}
       {strokes.length > 0 && (
         <>
           <Button

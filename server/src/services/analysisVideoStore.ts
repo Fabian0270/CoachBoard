@@ -36,7 +36,7 @@ const ID_PATTERN = /^[0-9a-f-]{36}$/
  */
 const ALLOWED_EXT = new Set(['.mp4', '.mov', '.webm', '.m4v', '.avi', '.mkv'])
 
-function extensionFor(filename: string | undefined): string {
+export function extensionFor(filename: string | undefined): string {
   const ext = path.extname(filename ?? '').toLowerCase()
   return ALLOWED_EXT.has(ext) ? ext : '.mp4'
 }
@@ -99,6 +99,18 @@ export async function finishVideo(id: string, ext: string): Promise<StoredVideo>
   }
   await fsp.rename(part, final)
   return { relPath: `analyses/${id}${ext}`, bytes: stat.size }
+}
+
+/**
+ * Stores a copy of a file already on this computer, the way an upload would
+ * be. Only the app's own files come through here (the sample lift, D110),
+ * never a path from a request.
+ */
+export async function adoptVideoFile(src: string): Promise<StoredVideo> {
+  const { id, ext } = await beginVideo(src)
+  const { part } = pathsFor(id, ext)
+  await fsp.copyFile(src, part)
+  return finishVideo(id, ext)
 }
 
 /** Absolute path for the file route, or null when it is gone. */

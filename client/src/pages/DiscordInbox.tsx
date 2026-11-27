@@ -14,9 +14,11 @@ import MediaThumb from '../components/discord/MediaThumb'
 import MediaPlayerDialog from '../components/discord/MediaPlayerDialog'
 import LinkUserDialog from '../components/discord/LinkUserDialog'
 import LoadError from '../components/LoadError'
-import { errorMessage, getJson, getList } from '../lib/api'
+import CaptionLogDialog, { captionResult } from '../components/discord/CaptionLogDialog'
+import { errorMessage, getJson, getList, sendJson } from '../lib/api'
 import type {
   DiscordMediaItem, DiscordUserItem, WorkoutCandidate, PublicDiscordSettings, UnreadThread,
+  CaptionLogCandidates, CaptionLogRow,
 } from 'coachboard-shared/discord'
 
 /**
@@ -34,6 +36,10 @@ export default function DiscordInbox() {
   const [playing, setPlaying] = useState<DiscordMediaItem | null>(null)
   const [linking, setLinking] = useState<DiscordUserItem | null>(null)
   const [picking, setPicking] = useState<DiscordMediaItem | null>(null)
+  // L1: videos whose caption result the coach ticked to log on attaching.
+  const [logTicked, setLogTicked] = useState<Set<string>>(() => new Set())
+  // The row picker, when more than one row (or no row clearly) fits.
+  const [logPick, setLogPick] = useState<{ mediaId: string; data: CaptionLogCandidates } | null>(null)
 
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -80,12 +86,51 @@ export default function DiscordInbox() {
     return false
   }
 
+  const logOn = async (mediaId: string, row: CaptionLogRow, result: string) => {
+    try {
+      await sendJson('POST', `/api/discord/media/${mediaId}/log`, { exerciseId: row.exerciseId })
+      toast.success(`Logged ${result} on ${row.name}`)
+    } catch (err) {
+      toast.error(`Attached, but the result was not logged. ${errorMessage(err)}`)
+    }
+  }
+
+  /** After attaching: log on the one row that fits, or let the coach pick. */
+  const logAfterAttach = async (item: DiscordMediaItem, workoutId: string) => {
+    let data: CaptionLogCandidates
+    try {
+      data = await getJson<CaptionLogCandidates>(
+        `/api/discord/media/${item.id}/log-candidates?workoutId=${encodeURIComponent(workoutId)}`,
+      )
+    } catch (err) {
+      toast.error(`Attached, but the result was not logged. ${errorMessage(err)}`)
+      return
+    }
+    const open = data.rows.filter((r) => r.fits && !r.alreadyLogged)
+    if (open.length === 1 && data.rows.filter((r) => r.fits).length === 1) {
+      await logOn(item.id, open[0], captionResult(data.caption))
+    } else {
+      setLogPick({ mediaId: item.id, data })
+    }
+  }
+
   const confirmWorkout = async (item: DiscordMediaItem, workoutId: string) => {
     if (await post(`/api/discord/media/${item.id}/workout`, { workoutId }, 'Could not attach it to the training day.')) {
-      toast.success('Attached to the training day')
+      if (logTicked.has(item.id) && item.parsedCaption?.weight != null) {
+        await logAfterAttach(item, workoutId)
+      } else {
+        toast.success('Attached to the training day')
+      }
     }
     void load()
   }
+
+  const toggleLog = (id: string, on: boolean) => setLogTicked((s) => {
+    const next = new Set(s)
+    if (on) next.add(id)
+    else next.delete(id)
+    return next
+  })
 
   const markReviewed = async (item: DiscordMediaItem) => {
     await post(`/api/discord/media/${item.id}/reviewed`, { reviewed: true }, 'Could not mark it reviewed.')
@@ -133,7 +178,7 @@ export default function DiscordInbox() {
   }
 
   return (
-    <div className="space-y-4">
+    <div data-tour="discord" className="space-y-4">
       <Header unmatchedCount={unmatched.length} unreviewedCount={unreviewed.length} />
       {loadError && (
         <p className="text-sm text-destructive">
@@ -243,6 +288,17 @@ export default function DiscordInbox() {
                         Attach to a day…
                       </Button>
                     )}
+                    {!item.workoutId && item.parsedCaption?.weight != null && (
+                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 accent-primary"
+                          checked={logTicked.has(item.id)}
+                          onChange={(e) => toggleLog(item.id, e.target.checked)}
+                        />
+                        Also log {captionResult(item.parsedCaption)} on the day
+                      </label>
+                    )}
                     {!item.workoutId && (
                       <button
                         type="button"
@@ -293,6 +349,14 @@ export default function DiscordInbox() {
         onPicked={(workoutId) => {
           if (picking) void confirmWorkout(picking, workoutId)
           setPicking(null)
+        }}
+      />
+      <CaptionLogDialog
+        data={logPick?.data ?? null}
+        onClose={() => setLogPick(null)}
+        onPick={(row) => {
+          if (logPick) void logOn(logPick.mediaId, row, captionResult(logPick.data.caption))
+          setLogPick(null)
         }}
       />
     </div>
@@ -350,13 +414,9 @@ function MediaRowList({
 /** Parsed-caption chips like "180 kg × 2 @8" — the athlete's own numbers at a glance. */
 function CaptionChips({ item }: { item: DiscordMediaItem }) {
   const p = item.parsedCaption
-  if (!p || (p.weightKg == null && p.reps == null && p.rpe == null)) return null
-  const parts: string[] = []
-  if (p.weightKg != null) parts.push(`${p.weightKg} kg`)
-  if (p.reps != null) parts.push(`× ${p.reps}`)
-  if (p.rpe != null) parts.push(`@${p.rpe}`)
+  if (!p || (p.weight == null && p.reps == null && p.rpe == null)) return null
   return (
-    <Badge className="bg-primary/10 text-primary hover:bg-primary/10">{parts.join(' ')}</Badge>
+    <Badge className="bg-primary/10 text-primary hover:bg-primary/10">{captionResult(p)}</Badge>
   )
 }
 
@@ -427,23 +487,26 @@ function WorkoutPickerDialog({
   onPicked: (workoutId: string) => void
 }) {
   const [candidates, setCandidates] = useState<WorkoutCandidate[] | null>(null)
+  // A failed load used to read as "No training days scheduled within a week".
+  const [candidatesError, setCandidatesError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     if (!item) return
     setCandidates(null)
+    setCandidatesError(null)
     let cancelled = false
-    fetch(`/api/discord/media/${item.id}/workout-candidates`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((rows: WorkoutCandidate[]) => {
+    getList<WorkoutCandidate>(`/api/discord/media/${item.id}/workout-candidates`)
+      .then((rows) => {
         if (!cancelled) setCandidates(rows)
       })
-      .catch(() => {
-        if (!cancelled) setCandidates([])
+      .catch((err) => {
+        if (!cancelled) setCandidatesError(errorMessage(err))
       })
     return () => {
       cancelled = true
     }
-  }, [item])
+  }, [item, attempt])
 
   const postedDate = item?.postedAt.slice(0, 10) ?? ''
 
@@ -468,7 +531,9 @@ function WorkoutPickerDialog({
             training days within a week.
           </p>
         )}
-        {candidates === null ? (
+        {candidatesError ? (
+          <LoadError what="the training days" message={candidatesError} onRetry={() => setAttempt((n) => n + 1)} />
+        ) : candidates === null ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : candidates.length === 0 ? (
           <p className="text-sm text-muted-foreground">

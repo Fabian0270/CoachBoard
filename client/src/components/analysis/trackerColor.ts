@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { PLATE_DIAMETERS_MM } from 'coachboard-shared/videoAnalysis'
 
 // ---------------------------------------------------------------------------
 // Overlay colour for the bar path and tracking dot.
@@ -88,6 +89,70 @@ export function useShowPose(): [boolean, (next: boolean) => void] {
   }, [])
 
   return [show, setShow]
+}
+
+const ANGLES_STORAGE_KEY = 'coachboard-show-angles'
+
+/**
+ * Whether the skeleton's joints carry their degrees (D56). Off by default so
+ * the picture stays clean until wanted; remembered like the skeleton switch.
+ */
+export function useShowAngles(): [boolean, (next: boolean) => void] {
+  return useRememberedSwitch(ANGLES_STORAGE_KEY)
+}
+
+/** The line straight up from mid-foot (BP31, D58). Off by default, remembered. */
+export function useShowMidFoot(): [boolean, (next: boolean) => void] {
+  return useRememberedSwitch('coachboard-show-midfoot')
+}
+
+/** An on/off switch kept across sessions, off until turned on. */
+function useRememberedSwitch(key: string): [boolean, (next: boolean) => void] {
+  const [show, setShowState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(key) === 'true'
+    } catch {
+      return false
+    }
+  })
+  const setShow = useCallback((next: boolean) => {
+    setShowState(next)
+    try {
+      localStorage.setItem(key, String(next))
+    } catch {
+      /* not worth surfacing */
+    }
+  }, [key])
+  return [show, setShow]
+}
+
+const PLATE_STORAGE_KEY = 'coachboard-plate-mm'
+
+/**
+ * The plate size for the scale, remembered across clips (BP18). A coach's
+ * gym has the plates it has; it used to go back to 450 mm on every visit.
+ * Only a size from the list is taken back, so a stale value cannot stick.
+ */
+export function usePlateMm(): [number, (mm: number) => void] {
+  const [mm, setMmState] = useState<number>(() => {
+    try {
+      const stored = Number(localStorage.getItem(PLATE_STORAGE_KEY))
+      return PLATE_DIAMETERS_MM.some((d) => d.value === stored) ? stored : PLATE_DIAMETERS_MM[0].value
+    } catch {
+      return PLATE_DIAMETERS_MM[0].value
+    }
+  })
+
+  const setMm = useCallback((next: number) => {
+    setMmState(next)
+    try {
+      localStorage.setItem(PLATE_STORAGE_KEY, String(next))
+    } catch {
+      /* not worth surfacing */
+    }
+  }, [])
+
+  return [mm, setMm]
 }
 
 /** Same colour at reduced opacity, for the dashed search box. */

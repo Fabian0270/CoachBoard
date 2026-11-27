@@ -1,9 +1,11 @@
+import { lazy, Suspense } from 'react'
 import { HashRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastProvider } from './components/ui/toast'
 import { ConfirmProvider } from './components/ui/confirm-dialog'
 import RecorderProvider from './components/recorder/RecorderProvider'
+import TourProvider from './tour/TourProvider'
 import Dashboard from './pages/Dashboard'
 import AthletesList from './pages/AthletesList'
 import AthleteDetail from './pages/AthleteDetail'
@@ -17,9 +19,14 @@ import Payments from './pages/Payments'
 import ExportStyles from './pages/ExportStyles'
 import Settings from './pages/Settings'
 import DiscordInbox from './pages/DiscordInbox'
-import VideoAnalysis from './pages/VideoAnalysis'
-import SavedAnalysis from './pages/SavedAnalysis'
-import CompareAnalyses from './pages/CompareAnalyses'
+// The bar path pages carry the tracker, the pose model's loader and their
+// charts; most visits to the app never open them, so they load when first
+// opened instead of with everything else at start (N5).
+const VideoAnalysis = lazy(() => import('./pages/VideoAnalysis'))
+const SavedAnalysis = lazy(() => import('./pages/SavedAnalysis'))
+const CompareAnalyses = lazy(() => import('./pages/CompareAnalyses'))
+
+const RouteLoading = () => <p className="text-sm text-muted-foreground">Loading…</p>
 
 export default function App() {
   return (
@@ -31,7 +38,10 @@ export default function App() {
             through the app, so a recorder owned by a route would unmount
             mid-take. See RecorderProvider. */}
         <RecorderProvider>
+        {/* Inside the router: the tour moves between pages itself (T1). */}
+        <TourProvider>
         <Layout>
+          <Suspense fallback={<RouteLoading />}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/athletes" element={<AthletesList />} />
@@ -52,7 +62,9 @@ export default function App() {
             <Route path="/analysis/:mediaId" element={<VideoAnalysis />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
+          </Suspense>
         </Layout>
+        </TourProvider>
         </RecorderProvider>
         </ConfirmProvider>
         </ToastProvider>

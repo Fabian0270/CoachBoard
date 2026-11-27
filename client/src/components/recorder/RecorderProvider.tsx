@@ -1,9 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { HEARTBEAT_MS, openControlsChannel, type ControlsMessage } from './controlsChannel'
 import { useToast } from '../ui/toast'
-import PreflightDialog from './PreflightDialog'
 import RecordingPill from './RecordingPill'
-import ReviewDialog from './ReviewDialog'
+// Only drawn while setting up a recording or reviewing one: loaded then (N5).
+// The editor and the export that the review dialog carries are the bulk.
+const PreflightDialog = lazy(() => import('./PreflightDialog'))
+const ReviewDialog = lazy(() => import('./ReviewDialog'))
 import { isCapturing } from './recorder.core'
 import { useRecorderEngine, type RecorderOptions } from './useRecorderEngine'
 import { useUnsavedWork } from '../../lib/unsavedWork'
@@ -143,7 +145,9 @@ export default function RecorderProvider({ children }: { children: React.ReactNo
       {children}
 
       {engine.state === 'preflight' && (
-        <PreflightDialog onStart={onStart} onCancel={() => engine.send('cancel')} />
+        <Suspense fallback={null}>
+          <PreflightDialog onStart={onStart} onCancel={() => engine.send('cancel')} />
+        </Suspense>
       )}
 
       {isCapturing(engine.state) && !barIsOpen && (
@@ -164,16 +168,18 @@ export default function RecorderProvider({ children }: { children: React.ReactNo
       )}
 
       {engine.state === 'review' && engine.recordingId && (
-        <ReviewDialog
-          recordingId={engine.recordingId}
-          bytes={engine.bytes}
-          error={engine.error}
-          cameraOffsetMs={engine.cameraOffsetMs}
-          corner={engine.bubbleCorner}
-          onSaved={onSaved}
-          onSent={onSent}
-          onDiscard={onDiscard}
-        />
+        <Suspense fallback={null}>
+          <ReviewDialog
+            recordingId={engine.recordingId}
+            bytes={engine.bytes}
+            error={engine.error}
+            cameraOffsetMs={engine.cameraOffsetMs}
+            corner={engine.bubbleCorner}
+            onSaved={onSaved}
+            onSent={onSent}
+            onDiscard={onDiscard}
+          />
+        </Suspense>
       )}
 
       {/* A failure before anything was captured has no review to surface it. */}

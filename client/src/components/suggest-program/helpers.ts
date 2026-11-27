@@ -2,9 +2,12 @@ import type { SuggestionGoal, RepRangeBucket } from 'coachboard-shared'
 import { REP_MIDPOINT, GOAL_REP } from './constants'
 import type { Step } from './types'
 
-export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10)
-}
+/**
+ * Where a generated block starts by default: the coming Monday (today, on a
+ * Monday). It used to be today in UTC — so a block generated on a Wednesday
+ * started mid-week, and one generated just after midnight started yesterday.
+ */
+export { nextMonday as defaultStartDate } from '../../lib/dates'
 
 export const clampDays = (n: number): 3 | 4 | 5 => (n <= 3 ? 3 : n >= 5 ? 5 : 4)
 

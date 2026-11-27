@@ -34,10 +34,12 @@
     --input: 50 12% 82%;
     --ring: 81 60% 30%;
     --sidebar: 53 19% 92%;
-    /* Chart series: Moss, steel blue, ember. Distinct in hue and lightness. */
+    /* Chart series: Moss, steel blue, ember. Distinct in hue and lightness.
+       chart-4 (violet) is bar speed, on the Progress tab and the bar path page. */
     --chart-1: 81 60% 32%;
     --chart-2: 208 65% 42%;
     --chart-3: 22 85% 48%;
+    --chart-4: 268 45% 50%;
     /* Ambient glow: moss, stronger in light so it reads on paper */
     --glow: 77 51% 56%;
     --glow-main: 0.3;
@@ -74,6 +76,7 @@
     --chart-1: 77 51% 56%;
     --chart-2: 208 75% 66%;
     --chart-3: 24 92% 62%;
+    --chart-4: 268 70% 74%;
     --glow-main: 0.16;
     --glow-side: 0.22;
     --glow-hero: 0.12;

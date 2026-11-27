@@ -196,6 +196,23 @@ describe('deleteMedia', () => {
   })
 })
 
+describe('listMedia — analysisCount (BP19)', () => {
+  it('says how many saved analyses use each clip', async () => {
+    const done = await createDownloadedMedia({ userId: 'u1', postedAt: '2026-07-02T10:00:00.000Z', bytes: 5, relPath: 'media/discord/a.mp4' })
+    const fresh = await createDownloadedMedia({ userId: 'u1', postedAt: '2026-07-01T10:00:00.000Z', bytes: 5, relPath: 'media/discord/b.mp4' })
+    const save = () => saveAnalysis({
+      mediaId: done, athleteId: null, sourceLabel: 'a.mp4',
+      track: [{ t: 0, x: 1, y: 2 }, { t: 1, x: 1, y: 3 }],
+      calibration: null, metrics: [], notes: null, lift: null, loadKg: null, calledRpe: null, metric: null,
+    })
+    await save()
+    await save()
+    const { items } = await listMedia({ filter: 'all' })
+    expect(items.find((m) => m.id === done)?.analysisCount).toBe(2)
+    expect(items.find((m) => m.id === fresh)?.analysisCount).toBe(0)
+  })
+})
+
 describe('applyRetention', () => {
   it('deletes media older than the window, keeps newer, and files too', async () => {
     const oldRel = 'media/discord/2020-01/old.mp4'

@@ -9,6 +9,8 @@ import { Textarea } from './ui/textarea'
 import { Badge } from './ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 import { useToast } from './ui/toast'
+import { errorMessage, getList } from '../lib/api'
+import LoadError from './LoadError'
 import { useConfirm } from './ui/confirm-dialog'
 import { Plus, Trash2, RefreshCw, Check, Undo2 } from 'lucide-react'
 import { PAYMENT_STATUS_META, CURRENCY_OPTIONS, formatAmount, todayIso, addDays } from '../lib/paymentDisplay'
@@ -35,15 +37,20 @@ export default function PaymentsSection({ athleteId }: { athleteId: string }) {
   const [saving, setSaving] = useState(false)
   const today = todayIso()
 
+  // A failed load used to show "No payments recorded yet" — for an athlete who
+  // may well owe money.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    fetch(`/api/payments?athlete_id=${athleteId}`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data) => { if (!cancelled) { setPayments(Array.isArray(data) ? data : []); setLoading(false) } })
-      .catch(() => { if (!cancelled) setLoading(false) })
+    setLoadError(null)
+    getList<Payment>(`/api/payments?athlete_id=${encodeURIComponent(athleteId)}`)
+      .then((data) => { if (!cancelled) setPayments(data) })
+      .catch((err) => { if (!cancelled) setLoadError(errorMessage(err)) })
+      .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [athleteId])
+  }, [athleteId, attempt])
 
   // Keep the list ordered by coverage date, newest first (matches the API).
   const sortInto = (list: Payment[]) =>
@@ -125,6 +132,7 @@ export default function PaymentsSection({ athleteId }: { athleteId: string }) {
   }
 
   if (loading) return <div className="text-muted-foreground">Loading…</div>
+  if (loadError) return <LoadError what="this athlete's payments" message={loadError} onRetry={() => setAttempt((n) => n + 1)} />
 
   return (
     <div className="space-y-4">

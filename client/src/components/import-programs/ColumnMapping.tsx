@@ -8,6 +8,7 @@ export default function ColumnMapping({ mapping }: { mapping: ExternalColumnMapp
   if (mapping.reps) parts.push(`Reps → ${colLetter(mapping.reps)}`)
   if (mapping.load) parts.push(`Load → ${colLetter(mapping.load)}`)
   if (mapping.rpe) parts.push(`${mapping.rpeFromRir ? 'RIR' : 'RPE'} → ${colLetter(mapping.rpe)}`)
+  if (mapping.notes) parts.push(`Notes → ${colLetter(mapping.notes)}`)
   return (
     <div className="text-sm">
       <span className="font-semibold">Detected columns: </span>

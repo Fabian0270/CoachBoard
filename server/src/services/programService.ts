@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { sql } from 'kysely'
 import { getDb } from '../db.js'
 import { serializeEnabledColumns, withParsedColumns } from './program/columns.js'
+import { programUnit } from './unitService.js'
 
 // Re-export the column helpers + workout/exercise services so existing
 // consumers can keep importing everything from './programService.js'.
@@ -12,6 +13,9 @@ export {
   deleteWorkout,
   copyWorkoutDay,
   moveWorkoutDay,
+  restoreDays,
+  restoreExercises,
+  renameExerciseInProgram,
 } from './program/workoutService.js'
 export {
   createExercise,
@@ -19,6 +23,10 @@ export {
   deleteExercise,
   reorderExercises,
   addSetToExercise,
+  duplicateExercise,
+  findExerciseNames,
+  pasteExercises,
+  updateExercisesInProgram,
 } from './program/exerciseService.js'
 
 const toIso = (d: Date) => d.toISOString().slice(0, 10)
@@ -92,6 +100,8 @@ export async function findProgramById(id: string) {
 
   return {
     ...withParsedColumns(program),
+    // The unit its loads are in (S3): the athlete's, or the default for a template.
+    unit: await programUnit(program.athlete_id),
     workouts: workouts.map((w) => ({
       ...w,
       exercises: exercises.filter((e) => e.workout_id === w.id),
@@ -123,11 +133,12 @@ export async function findProgramForExport(id: string) {
         .execute()
     : []
 
-  return { program, workouts, exercises }
+  return { program: { ...program, unit: await programUnit(program.athlete_id) }, workouts, exercises }
 }
 
 export async function createProgram(data: {
-  athlete_id: string
+  /** null = no athlete: a template. */
+  athlete_id: string | null
   name: string
   description?: string | null
   start_date?: string | null
@@ -241,21 +252,102 @@ export async function deleteProgram(id: string) {
   return getDb().deleteFrom('programs').where('id', '=', id).returningAll().executeTakeFirst()
 }
 
-export async function setProgramDuration(id: string, startDate: string, weeks: number) {
-  const [sy, sm, sd] = startDate.split('-').map(Number)
-  const monday = mondayOf(new Date(Date.UTC(sy, sm - 1, sd)))
+const parseIso = (iso: string): Date => {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d))
+}
+
+/**
+ * Thrown when a new duration would leave training days outside the program and
+ * the caller has not said they may be removed. Carries what would be lost, so
+ * the question put to the coach can be specific.
+ */
+export class DurationWouldRemoveDays extends Error {
+  constructor(readonly days: number, readonly daysWithResults: number) {
+    super(`This would remove ${days} training day${days === 1 ? '' : 's'} that fall outside the new dates`)
+    this.name = 'DurationWouldRemoveDays'
+  }
+}
+
+/**
+ * Set where a program starts and how many weeks it runs.
+ *
+ * The training days travel with the start date. This used to change only the
+ * program's two dates: postponing a block by a week left every training day on
+ * its old date, so week 1 showed empty and the last week's days dropped off the
+ * end of the calendar — still stored, never shown.
+ *
+ * Days that end up outside the new dates (shortening the program) are removed,
+ * but only when `removeOutside` says so; otherwise nothing is changed and
+ * DurationWouldRemoveDays reports what is at stake.
+ */
+export async function setProgramDuration(id: string, startDate: string, weeks: number, removeOutside = false) {
+  const monday = mondayOf(parseIso(startDate))
   const end = new Date(monday)
   end.setUTCDate(monday.getUTCDate() + weeks * 7 - 1)
+  const newStart = toIso(monday)
+  const newEnd = toIso(end)
 
-  const row = await getDb()
-    .updateTable('programs')
-    .set({
-      start_date: toIso(monday),
-      end_date: toIso(end),
-      updated_at: new Date().toISOString(),
-    })
-    .where('id', '=', id)
-    .returningAll()
-    .executeTakeFirst()
-  return row ? withParsedColumns(row) : undefined
+  return getDb().transaction().execute(async (trx) => {
+    const program = await trx.selectFrom('programs').select(['id', 'start_date']).where('id', '=', id).executeTakeFirst()
+    if (!program) return undefined
+
+    // Whole days between the old first Monday and the new one. A program that
+    // had no dates yet has nothing to move.
+    const shiftDays = program.start_date
+      ? Math.round((monday.getTime() - mondayOf(parseIso(program.start_date)).getTime()) / 86_400_000)
+      : 0
+
+    const workouts = await trx
+      .selectFrom('workouts')
+      .select(['id', 'name', 'scheduled_date'])
+      .where('program_id', '=', id)
+      .execute()
+    const planned = workouts
+      .filter((w): w is typeof w & { scheduled_date: string } => !!w.scheduled_date)
+      .map((w) => {
+        const moved = parseIso(w.scheduled_date)
+        moved.setUTCDate(moved.getUTCDate() + shiftDays)
+        return { ...w, newDate: toIso(moved) }
+      })
+
+    const outside = planned.filter((w) => w.newDate < newStart || w.newDate > newEnd)
+    if (outside.length > 0) {
+      if (!removeOutside) {
+        const logged = await trx
+          .selectFrom('exercises')
+          .select('workout_id')
+          .distinct()
+          .where('workout_id', 'in', outside.map((w) => w.id))
+          .where((eb) => eb.or([
+            eb.and([eb('load_used', 'is not', null), eb(sql`TRIM(load_used)`, '<>', '')]),
+            eb.and([eb('rpe', 'is not', null), eb(sql`TRIM(rpe)`, '<>', '')]),
+          ]))
+          .execute()
+        throw new DurationWouldRemoveDays(outside.length, logged.length)
+      }
+      await trx.deleteFrom('workouts').where('id', 'in', outside.map((w) => w.id)).execute()
+    }
+
+    if (shiftDays !== 0) {
+      const gone = new Set(outside.map((w) => w.id))
+      for (const w of planned) {
+        if (gone.has(w.id)) continue
+        await trx
+          .updateTable('workouts')
+          // A day is named after its date unless the coach named it.
+          .set({ scheduled_date: w.newDate, name: w.name === w.scheduled_date ? w.newDate : w.name })
+          .where('id', '=', w.id)
+          .execute()
+      }
+    }
+
+    const row = await trx
+      .updateTable('programs')
+      .set({ start_date: newStart, end_date: newEnd, updated_at: new Date().toISOString() })
+      .where('id', '=', id)
+      .returningAll()
+      .executeTakeFirst()
+    return row ? withParsedColumns(row) : undefined
+  })
 }

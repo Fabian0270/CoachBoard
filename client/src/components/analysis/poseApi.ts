@@ -5,11 +5,11 @@ import {
   decodePoseTrack,
   encodePoseTrack,
   packPose,
-  smooth,
   unpackPose,
   type PoseCorrection,
   type PoseFrame,
 } from 'coachboard-shared/pose'
+import { displayPose } from 'coachboard-shared/poseRefine'
 
 // ---------------------------------------------------------------------------
 // Reading and writing a saved skeleton (Feature 11e-4).
@@ -26,7 +26,9 @@ export interface LoadedPose {
   measured: PoseFrame[]
   /** The coach's fixes, kept separate so they can be layered or taken back. */
   corrections: PoseCorrection[]
-  /** Jitter-filtered, with the fixes on top — what to draw and measure from. */
+  /** Legs rebuilt where needed and jitter-filtered, without the fixes (displayPose). */
+  display: PoseFrame[]
+  /** `display` with the fixes on top — what to draw and measure from. */
   frames: PoseFrame[]
 }
 
@@ -59,12 +61,13 @@ export async function loadPose(analysisId: string): Promise<LoadedPose | null> {
   })
   const measured = unpackPose(packed)
   const corrections: PoseCorrection[] = (meta as { corrections?: PoseCorrection[] }).corrections ?? []
-  // Smoothed for display, raw in `measured`. What was stored is the
-  // measurement; the median filter is a reconstruction, so it is applied on the
-  // way OUT rather than baked into the row — the same split the corrections use.
-  // Corrections go on last so a hand-placed joint wins over the filter. One pass
-  // on load, not per frame.
-  return { measured, corrections, frames: applyCorrections(smooth(measured), corrections) }
+  // Rebuilt and smoothed for display, raw in `measured`. What was stored is the
+  // measurement; the leg rebuild and the median filter are reconstructions, so
+  // they are applied on the way OUT rather than baked into the row — the same
+  // split the corrections use. Corrections go on last so a hand-placed joint
+  // wins over both. One pass on load, not per frame.
+  const display = displayPose(measured)
+  return { measured, corrections, display, frames: applyCorrections(display, corrections) }
 }
 
 /** Records or moves one hand-placed landmark. */

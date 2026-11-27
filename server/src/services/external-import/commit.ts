@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../../db.js'
 import { findAthleteById } from '../athleteService.js'
 import { storeTemplate } from '../templateBlobStore.js'
+import { DEFAULT_ENABLED_COLUMNS } from 'coachboard-shared'
 import type {
   ExternalExerciseRow,
   ExternalImportCommitResult,
@@ -83,6 +84,16 @@ export async function commitExternalProgram(
   const lastOffset = Math.max(0, ...blocks.keys())
   const weeks = Math.max(meta.weeks, Math.floor(lastOffset / 7) + 1, 1)
 
+  // A sheet that carried the coach's cues in a notes / comments column comes in
+  // with the cue column on, so they show in the day editor and go back out on
+  // export. A sheet without any keeps the columns a program always had.
+  const hasCues = exercises.some((ex) => !!ex.notes?.trim())
+  // The same for velocity targets (BP39).
+  const hasVelocity = exercises.some((ex) => !!ex.velocity?.trim())
+  const enabledColumns = hasCues || hasVelocity
+    ? JSON.stringify([...DEFAULT_ENABLED_COLUMNS, ...(hasCues ? ['notes'] : []), ...(hasVelocity ? ['velocity'] : [])])
+    : null
+
   const db = getDb()
   await db.transaction().execute(async (trx) => {
     // Stored in the same transaction, so a failed import leaves no workbook
@@ -98,7 +109,7 @@ export async function commitExternalProgram(
         start_date: toIso(startMonday),
         end_date: addDays(startMonday, weeks * 7 - 1),
         status: meta.status,
-        enabled_columns: null,
+        enabled_columns: enabledColumns,
         focus: meta.focus ?? null,
         export_layout: meta.exportLayout ? JSON.stringify(meta.exportLayout) : null,
         export_template_sha: templateSha,
@@ -149,12 +160,13 @@ export async function commitExternalProgram(
             weight: row.loadCap ?? null,
             duration: null,
             distance: null,
-            notes: null,
+            notes: row.notes?.trim() || null,
             order_index: i,
             rest_time: row.restTime ?? null,
             intensity: row.intensity ?? null,
             load_used: row.load,
             rpe: row.rpe,
+            velocity: row.velocity?.trim() || null,
             group_id: groupId,
             suggestion_note: null,
           })

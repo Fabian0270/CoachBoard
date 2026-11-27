@@ -70,5 +70,58 @@ export async function getList<T>(path: string, init?: RequestInit): Promise<T[]>
   return data as T[]
 }
 
+/**
+ * Send a change to the server, throwing on anything that is not a success.
+ *
+ * The write-side twin of getJson. Reads were made unable to fail silently in
+ * 1.17.0; writes were left as bare `fetch` calls, and several of them still
+ * ignored the answer — moving a day, activating a draft, changing a status, and
+ * deleting a program (which navigated away whether or not anything was
+ * deleted). A caller of this cannot ignore a refusal without writing a catch.
+ *
+ * A 4xx carries the server's own `error` text, which is written to be shown
+ * ("Invalid athlete_id"). A 5xx never does: its text is about the server, not
+ * about anything the coach can change.
+ *
+ * Resolves `undefined` for an empty answer (204), which is what DELETE returns.
+ */
+export async function sendJson<T = unknown>(
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(path, {
+      method,
+      ...(body === undefined
+        ? {}
+        : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+    })
+  } catch {
+    throw new ApiError('CoachBoard could not reach its own server, so nothing was changed.', 0)
+  }
+  if (!res.ok) {
+    let detail: string | null = null
+    if (res.status >= 400 && res.status < 500) {
+      try {
+        const data = (await res.json()) as { error?: unknown }
+        if (typeof data?.error === 'string' && data.error.trim()) detail = data.error
+      } catch {
+        /* no readable body — fall through to the generic message */
+      }
+    }
+    throw new ApiError(detail ?? `The server could not make that change (${res.status}).`, res.status)
+  }
+  if (res.status === 204) return undefined as T
+  const text = await res.text()
+  if (text === '') return undefined as T
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new ApiError('The server sent something CoachBoard could not read.', res.status)
+  }
+}
+
 export const errorMessage = (err: unknown): string =>
   err instanceof Error ? err.message : 'Something went wrong.'

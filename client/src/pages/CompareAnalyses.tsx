@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, FileVideo, X } from 'lucide-react'
 import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
-import { pixelsPerMetreFromPlate } from 'coachboard-shared/videoAnalysis'
+import { analysisPixelsPerMetre } from 'coachboard-shared/videoAnalysis'
 import {
   defaultVelocityMetric,
   e1RMFromVelocity,
@@ -20,11 +20,12 @@ import {
 import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
 import { errorMessage, getJson, getList } from '../lib/api'
-import AnalysisStage, { type StageMode } from '../components/analysis/AnalysisStage'
+import AnalysisStage, { repWindows, type StageMode } from '../components/analysis/AnalysisStage'
 import DrawControls from '../components/analysis/DrawControls'
 import PathPlot from '../components/analysis/PathPlot'
+import ComparePathPlot, { type CompareSide } from '../components/analysis/ComparePathPlot'
 import type { Stroke } from '../components/analysis/annotations'
-import { useTrackerColor } from '../components/analysis/trackerColor'
+import { TRACKER_COLORS, useTrackerColor } from '../components/analysis/trackerColor'
 import { useAthleteMvt, useVbtHistory } from '../components/analysis/useVbtHistory'
 
 // ---------------------------------------------------------------------------
@@ -56,6 +57,35 @@ export default function CompareAnalyses() {
   const [right, setRight] = useState<Side>({ kind: 'empty' })
   const [savedError, setSavedError] = useState<string | null>(null)
   const toast = useToast()
+  // Held here so "Start both at rep N" can put both videos in place (BP26).
+  const leftVideo = useRef<HTMLVideoElement | null>(null)
+  const rightVideo = useRef<HTMLVideoElement | null>(null)
+  // The right side in a colour of its own, so the two read apart on one plot.
+  const rightColor = otherColor(color)
+  const [focusRep, setFocusRep] = useState<number | null>(null)
+  useEffect(() => setFocusRep(null), [left, right])
+
+  // Rep against rep (BP37): ?leftRep=0&rightRep=4 opens with each side at the
+  // bottom of its own rep — the first rep and the last of one set, side by
+  // side, to show what fatigue changed. Only while the sides are the linked ones.
+  const repParam = (key: string) => (params.get(key) != null && /^\d+$/.test(params.get(key)!) ? Number(params.get(key)) : null)
+  const linkedReps: [number | null, number | null] = [
+    left.kind === 'saved' && left.analysis.id === params.get('left') ? repParam('leftRep') : null,
+    right.kind === 'saved' && right.analysis.id === params.get('right') ? repParam('rightRep') : null,
+  ]
+  useEffect(() => {
+    const sides = [[left, leftVideo, linkedReps[0]], [right, rightVideo, linkedReps[1]]] as const
+    for (const [side, ref, n] of sides) {
+      if (side.kind !== 'saved' || n == null) continue
+      const sorted = [...side.analysis.metrics].sort((a, b) => a.startT - b.startT)
+      const bottom = sorted[n]?.startT
+      const video = ref.current
+      if (bottom == null || !video) continue
+      const place = () => { video.pause(); video.currentTime = bottom }
+      if (video.readyState >= 1) place()
+      else video.addEventListener('loadedmetadata', place, { once: true })
+    }
+  }, [left, right, linkedReps[0], linkedReps[1]]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // The list is fetched without tracks — the paths are only needed once a side
   // actually picks one, and a whole history of them is megabytes. A failure
@@ -102,9 +132,32 @@ export default function CompareAnalyses() {
       </p>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Pane side={left} onChange={setLeft} saved={saved} savedError={savedError} color={color} label="Left" />
-        <Pane side={right} onChange={setRight} saved={saved} savedError={savedError} color={color} label="Right" />
+        <Pane side={left} onChange={setLeft} saved={saved} savedError={savedError} color={color} label="Left" videoRef={leftVideo} />
+        <Pane side={right} onChange={setRight} saved={saved} savedError={savedError} color={rightColor} label="Right" videoRef={rightVideo} />
       </div>
+
+      {left.kind === 'saved' && right.kind === 'saved' && (
+        <BothPaths
+          a={left.analysis}
+          b={right.analysis}
+          colors={[color, rightColor]}
+          focusRep={focusRep}
+          focus={focusRep == null && (linkedReps[0] != null || linkedReps[1] != null) ? linkedReps : undefined}
+          onStartAt={(n) => {
+            setFocusRep(n)
+            if (n == null) return
+            // Each video to the top before its own rep N; from there they play
+            // on their own as before.
+            for (const [x, ref] of [[left.analysis, leftVideo], [right.analysis, rightVideo]] as const) {
+              const top = x.track?.length ? repWindows(x.metrics, x.track[0].t)[n]?.from : undefined
+              if (top != null && ref.current) {
+                ref.current.pause()
+                ref.current.currentTime = top
+              }
+            }
+          }}
+        />
+      )}
 
       {left.kind === 'saved' && right.kind === 'saved' && (
         <Numbers a={left.analysis} b={right.analysis} />
@@ -120,6 +173,7 @@ function Pane({
   savedError,
   color,
   label,
+  videoRef,
 }: {
   side: Side
   onChange: (next: Side) => void
@@ -127,9 +181,9 @@ function Pane({
   savedError: string | null
   color: string
   label: string
+  videoRef: React.MutableRefObject<HTMLVideoElement | null>
 }) {
   const toast = useToast()
-  const videoRef = useRef<HTMLVideoElement | null>(null)
   const emptyLivePath = useRef<never[]>([])
   // Per side, not per page: the two lifts are being contrasted, so a mark drawn
   // on one is about that one. Held here for the same reason the tracking page
@@ -213,16 +267,7 @@ function Pane({
         ? `/api/analysis/${analysis!.id}/video`
         : null
 
-  const pixelsPerMetre =
-    analysis?.calibration != null
-      ? pixelsPerMetreFromPlate(
-          Math.hypot(
-            analysis.calibration.b.x - analysis.calibration.a.x,
-            analysis.calibration.b.y - analysis.calibration.a.y,
-          ),
-          analysis.calibration.plateDiameterMm,
-        )
-      : null
+  const pixelsPerMetre = analysis ? analysisPixelsPerMetre(analysis) : null
 
   return (
     <div className="space-y-2 rounded-md border p-3">
@@ -333,11 +378,11 @@ function Numbers({ a, b }: { a: VideoAnalysisDto; b: VideoAnalysisDto }) {
           : null
       return {
         lift: liftLabel(lift),
-        load: x.loadKg != null ? `${x.loadKg} kg` : '—',
+        load: x.loadKg != null ? `${x.loadKg} ${x.athleteUnit ?? 'kg'}` : '—',
         reps: String(x.metrics.length),
         last: fmt(lastRepVelocity(x.metrics, metric)),
         best: best > 0 ? `${best.toFixed(2)} m/s` : '—',
-        e1rm: estimate ? `${Math.round(estimate.e1rm)} kg` : '—',
+        e1rm: estimate ? `${Math.round(estimate.e1rm)} ${x.athleteUnit ?? 'kg'}` : '—',
       }
     }
     const ra = read(a, ctxA, historyA.anchors, mvtA.byLift)
@@ -380,11 +425,57 @@ function Numbers({ a, b }: { a: VideoAnalysisDto; b: VideoAnalysisDto }) {
   )
 }
 
+/** Both sets' paths on one plot, and "start both at rep N" (BP26). */
+function BothPaths({ a, b, colors, focusRep, focus, onStartAt }: {
+  a: VideoAnalysisDto
+  b: VideoAnalysisDto
+  colors: [string, string]
+  focusRep: number | null
+  /** A rep per side (BP37); used when no "start both at" rep is chosen. */
+  focus?: [number | null, number | null]
+  onStartAt: (rep: number | null) => void
+}) {
+  const sides = useMemo<[CompareSide, CompareSide]>(() => [
+    { label: `Left: ${describe(a)}`, color: colors[0], track: a.track ?? [], reps: a.metrics, pixelsPerMetre: analysisPixelsPerMetre(a) },
+    { label: `Right: ${describe(b)}`, color: colors[1], track: b.track ?? [], reps: b.metrics, pixelsPerMetre: analysisPixelsPerMetre(b) },
+  ], [a, b, colors])
+  // Only reps both sets have.
+  const shared = Math.min(a.metrics.length, b.metrics.length)
+  return (
+    <div className="space-y-2 rounded-md border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-medium">Both paths</h2>
+        {shared > 0 && (
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Start both at</span>
+            <select
+              value={focusRep ?? ''}
+              onChange={(e) => onStartAt(e.target.value === '' ? null : Number(e.target.value))}
+              className="rounded-md border bg-background px-2 py-1 text-sm"
+            >
+              <option value="">—</option>
+              {Array.from({ length: shared }, (_, i) => (
+                <option key={i} value={i}>rep {i + 1}</option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
+      <ComparePathPlot sides={sides} focusRep={focusRep} focus={focus} />
+    </div>
+  )
+}
+
+/** A second overlay colour that is not the coach's own. */
+function otherColor(color: string): string {
+  return TRACKER_COLORS.find((c) => c.value !== color && c.name !== 'White')?.value ?? '#e879f9'
+}
+
 const fmt = (v: number | null) => (v == null ? '—' : `${v.toFixed(2)} m/s`)
 
 function describe(a: VideoAnalysisDto): string {
   const lift = isVbtLift(a.lift) ? liftLabel(a.lift) : a.sourceLabel
-  const load = a.loadKg != null ? ` ${a.loadKg} kg` : ''
+  const load = a.loadKg != null ? ` ${a.loadKg} ${a.athleteUnit ?? 'kg'}` : ''
   const who = a.athleteName ? ` — ${a.athleteName}` : ''
   return `${lift}${load}${who} · ${a.createdAt.slice(0, 10)}`
 }

@@ -118,6 +118,19 @@ export async function sendAttachmentEmail(input: SendProgramEmailInput): Promise
   }
 }
 
+/** A plain message with no attachment — a payment reminder (S5). */
+export async function sendTextEmail(input: { to: string; subject: string; body: string }): Promise<SendResult> {
+  const t = await buildTransport()
+  if (!t) return NOT_CONFIGURED
+  try {
+    await t.transport.sendMail({ from: t.from, to: input.to, subject: input.subject, text: input.body })
+    return { ok: true }
+  } catch (err) {
+    const { code, error } = mapSendError(err)
+    return { ok: false, status: 502, code, error }
+  }
+}
+
 /** The program export's own name for the above. Unchanged behaviour. */
 export const sendProgramEmail = sendAttachmentEmail
 

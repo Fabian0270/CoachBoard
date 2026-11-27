@@ -7,7 +7,7 @@ import {
   rememberFailure,
   type FailedEditMap,
 } from '../lib/failedEdits'
-import { useConfirm } from '../components/ui/confirm-dialog'
+import { errorMessage, sendJson } from '../lib/api'
 
 type SetProgram = React.Dispatch<React.SetStateAction<Program | null>>
 type FlashCell = (date: string, status: 'saving' | 'saved' | 'error') => void
@@ -30,7 +30,6 @@ export function useWorkoutActions(
   flashCell: FlashCell,
   onSaveError?: (message: string) => void,
 ) {
-  const confirm = useConfirm()
   const [failedEdits, setFailedEdits] = useState<FailedEditMap>({})
 
   const updateWorkout = (workoutId: string, mut: (w: Workout) => Workout) => {
@@ -66,23 +65,25 @@ export function useWorkoutActions(
     return promise
   }
 
-  const addExercise = async (date: string): Promise<void> => {
-    if (!id) return
+  const addExercise = async (date: string): Promise<boolean> => {
+    if (!id) return false
     flashCell(date, 'saving')
     try {
       const workout = await ensureWorkout(date)
-      if (!workout) { flashCell(date, 'error'); return }
+      if (!workout) { flashCell(date, 'error'); return false }
       const res = await fetch(`/api/programs/${id}/workouts/${workout.id}/exercises`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: '', order_index: workout.exercises.length }),
       })
-      if (!res.ok) { flashCell(date, 'error'); return }
+      if (!res.ok) { flashCell(date, 'error'); return false }
       const ex: Exercise = await res.json()
       updateWorkout(workout.id, (w) => ({ ...w, exercises: [...w.exercises, ex] }))
       flashCell(date, 'saved')
+      return true
     } catch {
       flashCell(date, 'error')
+      return false
     }
   }
 
@@ -148,52 +149,95 @@ export function useWorkoutActions(
     return { recovered, stillFailing: pending.length - recovered }
   }
 
-  const deleteExercise = async (date: string, workoutId: string, exerciseId: string): Promise<void> => {
-    if (!id) return
+  /** Resolves false when the exercise is still there (the delete was refused). */
+  const deleteExercise = async (date: string, workoutId: string, exerciseId: string): Promise<boolean> => {
+    if (!id) return false
     flashCell(date, 'saving')
     try {
       const res = await fetch(`/api/programs/${id}/workouts/${workoutId}/exercises/${exerciseId}`, { method: 'DELETE' })
-      if (!res.ok && res.status !== 404) { flashCell(date, 'error'); return }
+      if (!res.ok && res.status !== 404) {
+        // Used to flash the day cell red and nothing else — invisible from
+        // inside the open day, where the row simply stayed put.
+        flashCell(date, 'error')
+        onSaveError?.(`Could not delete that exercise (server said ${res.status}). It is still there.`)
+        return false
+      }
       updateWorkout(workoutId, (w) => ({ ...w, exercises: w.exercises.filter((ex) => ex.id !== exerciseId) }))
       // A deleted exercise cannot have outstanding edits; leaving them would
       // keep the unsaved banner up forever with nothing behind it to retry.
       setFailedEdits((prev) => clearFailuresForExercise(prev, exerciseId))
       flashCell(date, 'saved')
+      return true
     } catch {
       flashCell(date, 'error')
+      onSaveError?.('Could not delete that exercise — CoachBoard could not reach its own server. It is still there.')
+      return false
     }
   }
 
-  const deleteWorkout = async (workoutId: string, onDeleted: () => void): Promise<void> => {
-    if (!id) return
-    if (!(await confirm({ title: 'Clear this day?', description: 'All exercises will be removed.', confirmLabel: 'Clear', destructive: true }))) return
-    try {
-      const res = await fetch(`/api/programs/${id}/workouts/${workoutId}`, { method: 'DELETE' })
-      if (!res.ok && res.status !== 404) return
-      setProgram((p) => p ? { ...p, workouts: p.workouts.filter((w) => w.id !== workoutId) } : p)
-      onDeleted()
-    } catch { /* leave state unchanged on network failure */ }
-  }
-
-  const addSet = async (date: string, workoutId: string, exerciseId: string): Promise<void> => {
-    if (!id) return
+  const addSet = async (date: string, workoutId: string, exerciseId: string): Promise<boolean> => {
+    if (!id) return false
     flashCell(date, 'saving')
     try {
       const res = await fetch(
         `/api/programs/${id}/workouts/${workoutId}/exercises/${exerciseId}/add-set`,
         { method: 'POST' },
       )
-      if (!res.ok) { flashCell(date, 'error'); return }
+      if (!res.ok) { flashCell(date, 'error'); return false }
       const data: { exercises: Exercise[] } = await res.json()
       updateWorkout(workoutId, (w) => ({ ...w, exercises: data.exercises }))
       flashCell(date, 'saved')
+      return true
     } catch {
       flashCell(date, 'error')
+      return false
     }
   }
 
-  const reorderExercises = async (date: string, workoutId: string, exerciseIds: string[]): Promise<void> => {
-    if (!id) return
+  /**
+   * The coach's own note for a day. Saving one on an empty day creates the day.
+   * Resolves false when it did not save (and says why).
+   */
+  const saveDayNote = async (date: string, notes: string): Promise<boolean> => {
+    if (!id) return false
+    const existing = workoutByDate.get(date)
+    if (!existing && notes.trim() === '') return true
+    flashCell(date, 'saving')
+    try {
+      const workout = existing ?? (await ensureWorkout(date))
+      if (!workout) throw new Error('The day could not be created.')
+      const saved = await sendJson<Workout>('PUT', `/api/programs/${id}/workouts/${workout.id}`, { notes: notes.trim() || null })
+      updateWorkout(workout.id, (w) => ({ ...w, notes: saved.notes }))
+      flashCell(date, 'saved')
+      return true
+    } catch (err) {
+      flashCell(date, 'error')
+      onSaveError?.(`Could not save the note for this day. ${errorMessage(err)}`)
+      return false
+    }
+  }
+
+  /** Copy an exercise (with its set rows) directly under itself. */
+  const duplicateExercise = async (date: string, workoutId: string, exerciseId: string): Promise<boolean> => {
+    if (!id) return false
+    flashCell(date, 'saving')
+    try {
+      const data = await sendJson<{ exercises: Exercise[] }>(
+        'POST',
+        `/api/programs/${id}/workouts/${workoutId}/exercises/${exerciseId}/duplicate`,
+      )
+      updateWorkout(workoutId, (w) => ({ ...w, exercises: data.exercises }))
+      flashCell(date, 'saved')
+      return true
+    } catch (err) {
+      flashCell(date, 'error')
+      onSaveError?.(`Could not duplicate that exercise. ${errorMessage(err)}`)
+      return false
+    }
+  }
+
+  const reorderExercises = async (date: string, workoutId: string, exerciseIds: string[]): Promise<boolean> => {
+    if (!id) return false
     flashCell(date, 'saving')
     try {
       const res = await fetch(`/api/programs/${id}/workouts/${workoutId}/exercises/reorder`, {
@@ -201,21 +245,25 @@ export function useWorkoutActions(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ exerciseIds }),
       })
-      if (!res.ok) { flashCell(date, 'error'); return }
+      if (!res.ok) { flashCell(date, 'error'); return false }
       const data: { exercises: Exercise[] } = await res.json()
       updateWorkout(workoutId, (w) => ({ ...w, exercises: data.exercises }))
       flashCell(date, 'saved')
+      return true
     } catch {
       flashCell(date, 'error')
+      return false
     }
   }
 
   return {
+    ensureWorkout,
     addExercise,
     saveExerciseField,
     deleteExercise,
-    deleteWorkout,
     addSet,
+    duplicateExercise,
+    saveDayNote,
     reorderExercises,
     failedEdits,
     retryFailedEdits,

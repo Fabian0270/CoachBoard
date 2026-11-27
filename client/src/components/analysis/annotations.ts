@@ -16,10 +16,18 @@ export interface Point {
   y: number
 }
 
-/** One freehand stroke. */
+/**
+ * What the pen draws (BP30, D55/D56): freehand, or a straight line, an arrow,
+ * a circle (centre, then a point on its edge), or a plumb line — straight up
+ * and down through one point, to judge the bar path against.
+ */
+export type PenTool = 'free' | 'line' | 'arrow' | 'circle' | 'plumb'
+
+/** One mark. Without a kind it is freehand, as every mark was before the shapes. */
 export interface Stroke {
   color: string
   points: Point[]
+  kind?: PenTool
 }
 
 /**
@@ -81,5 +89,11 @@ function perpendicularDistance(p: Point, a: Point, b: Point): number {
  * on the frame becomes an invisible mark sitting in the undo stack.
  */
 export function isDrawable(stroke: Stroke): boolean {
-  return stroke.points.length > 1
+  const kind = stroke.kind ?? 'free'
+  // A plumb line is one click: the point it passes through.
+  if (kind === 'plumb') return stroke.points.length >= 1
+  if (kind === 'free') return stroke.points.length > 1
+  // A shape needs a drag: a line, arrow or circle of no size is a stray tap.
+  const [a, b] = [stroke.points[0], stroke.points[stroke.points.length - 1]]
+  return stroke.points.length >= 2 && Math.hypot(b.x - a.x, b.y - a.y) >= 3
 }

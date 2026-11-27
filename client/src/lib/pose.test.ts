@@ -17,6 +17,8 @@ import {
   applyCorrections,
   anglesAgainstBar,
   stickingPoint,
+  midFootAt,
+  repMidFoot,
   insertFrame,
   correctionsAtTimes,
   FLOATS_PER_LANDMARK,
@@ -174,12 +176,48 @@ describe('cameraSide', () => {
   })
 })
 
+describe('bar over mid-foot (BP31)', () => {
+  // Facing right: heel at 100, toe at 160, so mid-foot is x = 130.
+  const foot = (t: number) => frame(t, { [LM.LEFT_HEEL]: at(100, 400), [LM.LEFT_FOOT_INDEX]: at(160, 400) })
+  it('mid-foot is between heel and toe, facing the toes', () => {
+    expect(midFootAt(foot(0), 'left')).toEqual({ x: 130, y: 400, toes: 1 })
+  })
+  it('per rep, how far the bar went in front of and behind the line', () => {
+    const frames = [foot(0), foot(0.5), foot(1)]
+    const track = [{ t: 0, x: 130, y: 0 }, { t: 0.4, x: 150, y: 50 }, { t: 0.8, x: 120, y: 0 }]
+    expect(repMidFoot(frames, track, [{ from: 0, to: 1 }], 200, 'left')).toEqual([{ frontPx: 20, behindPx: 10, frontM: 0.1, behindM: 0.05 }])
+  })
+  it('nothing for a rep where the foot was never seen', () => {
+    expect(repMidFoot([foot(0)], [{ t: 5, x: 0, y: 0 }], [{ from: 4, to: 6 }], null, 'left')).toEqual([null])
+  })
+})
+
 describe('frameAngles', () => {
   it('reads a standing lifter as straight legs and an upright torso', () => {
     const [a] = frameAngles([STANDING], 'left')
     expect(a.knee).toBeCloseTo(180, 4)
     expect(a.hip).toBeCloseTo(180, 4)
     expect(a.torsoLean).toBeCloseTo(0, 4)
+  })
+
+  it('reads the elbow and shoulder too (D56): a bench press arm, bent then locked', () => {
+    // Lying lifter: hip and shoulder level, upper arm straight up from the shoulder.
+    const bent = frame(0, {
+      [LM.LEFT_HIP]: at(0, 300),
+      [LM.LEFT_SHOULDER]: at(200, 300),
+      [LM.LEFT_ELBOW]: at(200, 200),
+      [LM.LEFT_WRIST]: at(300, 200),
+    })
+    const [a] = frameAngles([bent], 'left')
+    expect(a.elbow).toBeCloseTo(90, 4)
+    expect(a.shoulder).toBeCloseTo(90, 4)
+    const locked = frame(0, {
+      [LM.LEFT_HIP]: at(0, 300),
+      [LM.LEFT_SHOULDER]: at(200, 300),
+      [LM.LEFT_ELBOW]: at(200, 200),
+      [LM.LEFT_WRIST]: at(200, 100),
+    })
+    expect(frameAngles([locked], 'left')[0].elbow).toBeCloseTo(180, 4)
   })
 
   it('closes the knee as the lifter squats', () => {
@@ -692,7 +730,7 @@ describe('correctionsAtTimes', () => {
 
 describe('anglesAgainstBar', () => {
   const angles = (ts: number[]) =>
-    ts.map((t) => ({ t, knee: 90, hip: 90, ankle: 90, torsoLean: 0, metric: true }))
+    ts.map((t) => ({ t, knee: 90, hip: 90, ankle: 90, torsoLean: 0, elbow: null, shoulder: null, metric: true }))
 
   it('samples the nearest velocity reading to each pose frame', () => {
     const out = anglesAgainstBar(angles([0, 0.1, 0.2]), [

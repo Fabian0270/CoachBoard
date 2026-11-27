@@ -15,11 +15,7 @@ export function colLetter(n: number): string {
 }
 
 /** Local YYYY-MM-DD for an <input type="date"> default. */
-export function todayIso(): string {
-  const d = new Date()
-  const off = d.getTimezoneOffset()
-  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10)
-}
+export { localToday as todayIso } from '../../lib/dates'
 
 // A file is importable if it parsed, has no fatal errors, and has exercises.
 export function isImportable(e: Entry): boolean {
@@ -40,14 +36,17 @@ export function overrideParams(o: ExternalParseOverrides): URLSearchParams {
   col('map_reps', o.reps)
   col('map_load', o.load)
   col('map_rpe', o.rpe)
+  col('map_notes', o.notes)
   if (o.rpeFromRir !== undefined) p.set('rpe_is_rir', o.rpeFromRir ? '1' : '0')
   return p
 }
 
-export const MAP_FIELDS: { key: 'exercise' | 'sets' | 'reps' | 'load' | 'rpe'; label: string; required?: boolean }[] = [
+export const MAP_FIELDS: { key: 'exercise' | 'sets' | 'reps' | 'load' | 'rpe' | 'notes' | 'velocity'; label: string; required?: boolean }[] = [
   { key: 'exercise', label: 'Exercise', required: true },
   { key: 'sets', label: 'Sets', required: true },
   { key: 'reps', label: 'Reps', required: true },
   { key: 'load', label: 'Load' },
   { key: 'rpe', label: 'RPE / RIR' },
+  { key: 'notes', label: 'Notes / cues' },
+  { key: 'velocity', label: 'Velocity target' },
 ]

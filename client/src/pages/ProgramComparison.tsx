@@ -1,19 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { getList, errorMessage } from '../lib/api'
+import { ApiError, getList, errorMessage, sendJson } from '../lib/api'
 import LoadError from '../components/LoadError'
 import { Button } from '../components/ui/button'
 import PageHeader from '../components/PageHeader'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { useToast } from '../components/ui/toast'
 import { useConfirm } from '../components/ui/confirm-dialog'
-import { Plus, Dumbbell, MoreHorizontal, Check, ChevronDown, Sparkles, FileUp, Pencil, X, UserPlus, Star, Search } from 'lucide-react'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup,
+  DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu'
+import { Plus, CopyPlus, Dumbbell, MoreHorizontal, Check, Pencil, X, UserPlus, Star, Search } from 'lucide-react'
 import { Input } from '../components/ui/input'
 import { matchesSearch } from '../lib/search'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import ImportProgramsDialog from '../components/import-programs/ImportProgramsDialog'
 import BookmarkStar from '../components/BookmarkStar'
+import DuplicateProgramDialog from '../components/DuplicateProgramDialog'
+import NewProgramChooser from '../components/NewProgramChooser'
 import { cn } from '../lib/utils'
 
 interface Athlete { id: string; name: string }
@@ -27,6 +33,7 @@ const UNASSIGNED = '__unassigned__'
 const ROW_GRID = 'sm:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_120px_110px]'
 
 const STATUS_DOT: Record<string, string> = {
+  draft: 'bg-warning',
   active: 'bg-primary',
   completed: 'bg-info',
   archived: 'bg-muted-foreground/50',
@@ -55,6 +62,7 @@ export default function ProgramComparison() {
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [duplicating, setDuplicating] = useState<Program | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [savingRename, setSavingRename] = useState(false)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
@@ -65,8 +73,6 @@ export default function ProgramComparison() {
   const [assigning, setAssigning] = useState<Program | null>(null)
   const [assignTo, setAssignTo] = useState<string>('')
   const [savingAssign, setSavingAssign] = useState(false)
-  const menuRef = useRef<HTMLLIElement>(null)
-  const newMenuRef = useRef<HTMLDivElement>(null)
 
   const loadData = useCallback(async () => {
     setLoadError(null)
@@ -97,19 +103,7 @@ export default function ProgramComparison() {
     }
   }, [searchParams, setSearchParams])
 
-  useEffect(() => {
-    if (!menuOpen) return
-    const close = () => setMenuOpen(null)
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [menuOpen])
 
-  useEffect(() => {
-    if (!newMenuOpen) return
-    const close = () => setNewMenuOpen(false)
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [newMenuOpen])
 
   const handleAssign = async () => {
     if (!assigning || !assignTo) return
@@ -151,16 +145,14 @@ export default function ProgramComparison() {
     }
   }
 
+  // Both of these used to do nothing at all when the server refused.
   const handleStatusChange = async (programId: string, status: string) => {
     setMenuOpen(null)
-    const res = await fetch(`/api/programs/${programId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
-    })
-    if (res.ok) {
-      const updated = await res.json()
+    try {
+      const updated = await sendJson<{ status: string }>('PUT', `/api/programs/${programId}`, { status })
       setPrograms((prev) => prev.map((p) => p.id === programId ? { ...p, status: updated.status } : p))
+    } catch (err) {
+      toast.error(`Could not change the status. ${errorMessage(err)}`)
     }
   }
 
@@ -172,10 +164,15 @@ export default function ProgramComparison() {
       confirmLabel: 'Delete',
       destructive: true,
     }))) return
-    const res = await fetch(`/api/programs/${program.id}`, { method: 'DELETE' })
-    if (res.ok || res.status === 404) {
-      setPrograms((prev) => prev.filter((p) => p.id !== program.id))
+    try {
+      await sendJson('DELETE', `/api/programs/${program.id}`)
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 404)) {
+        toast.error(`Could not delete "${program.name}". ${errorMessage(err)}`)
+        return
+      }
     }
+    setPrograms((prev) => prev.filter((p) => p.id !== program.id))
   }
 
   const startRename = (program: Program) => {
@@ -236,30 +233,9 @@ export default function ProgramComparison() {
         description={programs.length > 0 ? `${programs.length} program${programs.length === 1 ? '' : 's'}` : undefined}
         actions={
         <>
-          <Button variant="outline" onClick={() => setImportOpen(true)}>
-            <FileUp className="h-4 w-4 mr-2" />Import programs
+          <Button onClick={() => setNewMenuOpen(true)} data-tour="new-program">
+            <Plus className="h-4 w-4 mr-2" />New program
           </Button>
-          <div className="relative" ref={newMenuRef}>
-            <Button onClick={(e) => { e.stopPropagation(); setNewMenuOpen((v) => !v) }}>
-              <Plus className="h-4 w-4 mr-2" />New Program<ChevronDown className="h-4 w-4 ml-2" />
-            </Button>
-            {newMenuOpen && (
-              <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-lg border bg-popover py-1 shadow-xl shadow-black/20" onClick={(e) => e.stopPropagation()}>
-                <Link to="/programs/new" onClick={() => setNewMenuOpen(false)}>
-                  <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent">
-                    <Plus className="h-4 w-4" />New program
-                  </button>
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => { setNewMenuOpen(false); setSuggestOpen(true) }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-                >
-                  <Sparkles className="h-4 w-4" />Generate next program
-                </button>
-              </div>
-            )}
-          </div>
         </>
         }
       />
@@ -289,6 +265,7 @@ export default function ProgramComparison() {
           <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="draft">Draft</SelectItem>
             <SelectItem value="active">Active</SelectItem>
             <SelectItem value="completed">Completed</SelectItem>
             <SelectItem value="archived">Archived</SelectItem>
@@ -330,7 +307,7 @@ export default function ProgramComparison() {
           </div>
           <ul className="divide-y">
           {filtered.map((program) => (
-            <li key={program.id} className="group relative" ref={menuOpen === program.id ? menuRef : null}>
+            <li key={program.id} className="group relative">
               {renamingId === program.id ? (
                 <div className="px-4 py-3">
                   <div>
@@ -400,68 +377,46 @@ export default function ProgramComparison() {
 
               {/* Three-dot menu button */}
               {renamingId !== program.id && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setMenuOpen(menuOpen === program.id ? null : program.id)
-                  }}
-                  className={`absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground transition-opacity hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary ${menuOpen === program.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                  aria-label="Program options"
+                <DropdownMenu
+                  open={menuOpen === program.id}
+                  onOpenChange={(o) => setMenuOpen(o ? program.id : null)}
                 >
-                  <MoreHorizontal className="h-4 w-4" />
-                </button>
-              )}
-
-              {/* Dropdown menu */}
-              {menuOpen === program.id && (
-                <div
-                  className="absolute right-3 top-[calc(50%+18px)] z-20 min-w-[160px] rounded-lg border border-border bg-popover py-1 shadow-xl shadow-black/20"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <p className="px-3 py-1 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Status</p>
-                  {STATUSES.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => handleStatusChange(program.id, s)}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent capitalize"
-                    >
-                      <span className="w-3">
-                        {program.status === s && <Check className="h-3 w-3" />}
-                      </span>
-                      {s}
-                    </button>
-                  ))}
-                  <div className="my-1 border-t border-border" />
-                  {program.athlete_id === null && (
+                  <DropdownMenuTrigger asChild>
                     <button
                       type="button"
-                      onClick={() => { setMenuOpen(null); setAssignTo(''); setAssigning(program) }}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
+                      className={`absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground transition-opacity hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary focus-visible:opacity-100 ${menuOpen === program.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                      aria-label="Program options"
                     >
-                      <UserPlus className="h-3 w-3" />
-                      Assign to athlete
+                      <MoreHorizontal className="h-4 w-4" />
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => startRename(program)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
-                  >
-                    <Pencil className="h-3 w-3" />
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(program)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10"
-                  >
-                    <span className="w-3" />
-                    Delete
-                  </button>
-                </div>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[160px]">
+                    <DropdownMenuLabel>Status</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={program.status}
+                      onValueChange={(s) => handleStatusChange(program.id, s as typeof STATUSES[number])}
+                    >
+                      {STATUSES.map((s) => (
+                        <DropdownMenuRadioItem key={s} value={s} className="capitalize">{s}</DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                    <DropdownMenuSeparator />
+                    {program.athlete_id === null && (
+                      <DropdownMenuItem className="py-1.5" onSelect={() => { setAssignTo(''); setAssigning(program) }}>
+                        <UserPlus className="h-3 w-3" />Assign to athlete
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem className="py-1.5" onSelect={() => startRename(program)}>
+                      <Pencil className="h-3 w-3" />Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="py-1.5" onSelect={() => setDuplicating(program)}>
+                      <CopyPlus className="h-3 w-3" />Duplicate…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="py-1.5" destructive onSelect={() => handleDelete(program)}>
+                      <span className="w-3" />Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </li>
           ))}
@@ -472,6 +427,17 @@ export default function ProgramComparison() {
         open={suggestOpen}
         onOpenChange={setSuggestOpen}
         onCreated={(draftId) => navigate(`/programs/${draftId}`)}
+      />
+      <NewProgramChooser
+        open={newMenuOpen}
+        onOpenChange={setNewMenuOpen}
+        onGenerate={() => setSuggestOpen(true)}
+        onImport={() => setImportOpen(true)}
+      />
+      <DuplicateProgramDialog
+        program={duplicating}
+        open={duplicating !== null}
+        onOpenChange={(o) => { if (!o) setDuplicating(null) }}
       />
       <ImportProgramsDialog
         open={importOpen}

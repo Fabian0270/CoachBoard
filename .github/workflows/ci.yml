@@ -25,9 +25,43 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+      - name: Lint (React hooks)
+        run: npm run lint
 
       - name: Server tests
         run: npm run test -w server
 
       - name: Client tests
         run: npm run test -w client
+
+  # The app ships on Windows, where file locks, path separators and drive
+  # letters behave differently from Linux — backups, restore, the import
+  # watcher and the data folder all touch them. The server tests run there too.
+  # better-sqlite3's npm package carries a win32-x64 binary, so the install is
+  # the same as above.
+  server-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # The runner's Defender scans every file as it is created. The server
+      # tests create thousands of small files (SQLite makes and deletes a
+      # journal file per statement on a test database), and with scanning on
+      # they ran many times slower than on a Windows dev PC and timed out
+      # (first run of this job, 1.18.0). The runner is thrown away after the
+      # job; coaches' machines are not affected by this.
+      - name: Turn off Defender real-time scanning (this runner only)
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
+      - name: Server tests
+        run: npm run test -w server

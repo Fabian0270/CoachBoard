@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   LineChart,
@@ -19,7 +19,13 @@ import type { Program } from '../lib/programUtils'
 import { SuggestProgramDialog } from '../components/suggest-program/SuggestProgramDialog'
 import { useToast } from '../components/ui/toast'
 import LoadError from '../components/LoadError'
-import { ApiError, errorMessage, getJson } from '../lib/api'
+import { ApiError, errorMessage, getJson, getList } from '../lib/api'
+import { barSpeedSets, type BarSpeedSet } from '../lib/barSpeedReport'
+import { shortDay } from '../components/analysis/TrainingDayLink'
+import { unitOf, type LoadUnit } from 'coachboard-shared/units'
+import type { VideoAnalysisDto } from 'coachboard-shared/videoAnalysis'
+import { localToday } from '../lib/dates'
+import { computeVolume, VOLUME_LABELS, VOLUME_LIFTS, type VolumeLift } from '../lib/volume'
 
 const LIFT_COLORS: Record<string, string> = {
   squat: 'hsl(var(--chart-1))',
@@ -56,6 +62,162 @@ function deviationLabel(delta: number): string {
   if (delta > 0.4) return 'text-destructive'
   if (delta < -0.4) return 'text-info'
   return 'text-success'
+}
+
+const n1 = (v: number) => (Math.round(v * 10) / 10).toLocaleString('en-GB')
+const kg = (v: number) => Math.round(v).toLocaleString('en-GB')
+
+/**
+ * Weekly sets and tonnage per lift, done against planned (I3). Shown before
+ * any results come in too: the planned side is useful on its own.
+ */
+function VolumeCard({ program, maxes, unit }: { program: Program; maxes: ProgramReport['storedMaxes']; unit: LoadUnit }) {
+  const weeks = useMemo(() => computeVolume(program.workouts, program.start_date, maxes, unit), [program, maxes, unit])
+  const lifts = VOLUME_LIFTS.filter((l) => weeks.some((w) => w.byLift[l].plannedSets > 0))
+  if (lifts.length === 0) return null
+  const total = (l: VolumeLift) => weeks.reduce((t, w) => {
+    const c = w.byLift[l]
+    return { plannedSets: t.plannedSets + c.plannedSets, doneSets: t.doneSets + c.doneSets, plannedKg: t.plannedKg + c.plannedKg, doneKg: t.doneKg + c.doneKg, estimated: t.estimated || c.estimated }
+  }, { plannedSets: 0, doneSets: 0, plannedKg: 0, doneKg: 0, estimated: false })
+  const anyEstimated = weeks.some((w) => lifts.some((l) => w.byLift[l].estimated))
+  const cells = (c: ReturnType<typeof total>, strong = false) => (
+    <>
+      <td className={`num border-l py-1.5 pl-3 pr-2 ${strong ? 'font-semibold' : ''}`}>
+        {n1(c.doneSets)} <span className="text-muted-foreground">/ {n1(c.plannedSets)}</span>
+      </td>
+      <td className={`num py-1.5 pr-3 ${strong ? 'font-semibold' : ''}`}>
+        {c.plannedKg > 0 || c.doneKg > 0 ? (
+          // A planned 0 means no planned load was known, not that none was planned.
+          <>{kg(c.doneKg)} <span className="text-muted-foreground">/ {c.plannedKg > 0 ? `${c.estimated ? '≈' : ''}${kg(c.plannedKg)}` : '—'}</span></>
+        ) : <span className="text-muted-foreground">—</span>}
+      </td>
+    </>
+  )
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Volume</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Sets and tonnage ({unit}) per week, done / planned. Squat, Bench and Deadlift are the competition lifts; every variation is under Other.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" aria-label="Volume per week">
+            <thead>
+              <tr className="text-left text-muted-foreground">
+                <th rowSpan={2} className="pb-2 pr-6 align-bottom font-medium">Week</th>
+                {lifts.map((l) => <th key={l} colSpan={2} className="border-l pb-1 pl-3 font-semibold text-foreground">{VOLUME_LABELS[l]}</th>)}
+              </tr>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                {lifts.map((l) => (
+                  <Fragment key={l}>
+                    <th className="border-l pb-2 pl-3 pr-2 font-medium">Sets</th>
+                    <th className="pb-2 pr-3 font-medium">Tonnage</th>
+                  </Fragment>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {weeks.map((w) => (
+                <tr key={w.weekIndex} className="border-b">
+                  <td className="py-1.5 pr-6">Wk {w.weekIndex + 1}</td>
+                  {lifts.map((l) => <Fragment key={l}>{cells(w.byLift[l])}</Fragment>)}
+                </tr>
+              ))}
+              <tr>
+                <td className="py-1.5 pr-6 font-semibold">Block</td>
+                {lifts.map((l) => <Fragment key={l}>{cells(total(l), true)}</Fragment>)}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Done counts each logged row at its prescribed sets and reps with the load the athlete logged.
+          {anyEstimated && ' ≈ includes suggested loads for rows with no Load Cap (from the max, or the set above for a back-off).'}
+        </p>
+      </CardContent>
+    </Card>
+  )
+}
+
+const LIFT_NAMES: Record<string, string> = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' }
+
+/**
+ * Bar speed from the saved sets linked to this program's days (L2, D68): the
+ * load, the fastest rep, and that day's estimated max from bar speed beside the
+ * week's e1RM from logged sets. Never mixed into the e1RM above (D69).
+ */
+function BarSpeedCard({ program, trends, athleteId, unit }: { program: Program; trends: ProgramReport['e1rmTrends']; athleteId: string; unit: LoadUnit }) {
+  const [sets, setSets] = useState<BarSpeedSet[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    const aid = encodeURIComponent(athleteId)
+    Promise.all([
+      getList<VideoAnalysisDto>(`/api/analysis?athleteId=${aid}&withTrack=0`),
+      getJson<Record<string, number>>(`/api/athletes/${aid}/mvt`).catch(() => ({} as Record<string, number>)),
+    ])
+      .then(([analyses, mvt]) => { if (!cancelled) { setSets(barSpeedSets(program, analyses, mvt, trends)); setError(null) } })
+      .catch((e) => { if (!cancelled) setError(errorMessage(e)) })
+    return () => { cancelled = true }
+  }, [program, trends, athleteId, attempt])
+
+  if (error) return <LoadError what="the bar speed sets" message={error} onRetry={() => setAttempt((n) => n + 1)} />
+  if (!sets || sets.length === 0) return null
+  // The week's lift label and e1RM only on its first row.
+  const firstOf = (i: number) => i === 0 || sets[i - 1].weekIndex !== sets[i].weekIndex || sets[i - 1].liftKey !== sets[i].liftKey
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Bar speed</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Saved bar path sets linked to this program&rsquo;s days. The day&rsquo;s max is read from that day&rsquo;s sets,
+          as on the Progress tab; the e1RM beside it is the week&rsquo;s from logged sets, and the two are kept apart.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" aria-label="Bar speed per week">
+            <thead>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                <th className="pb-2 pr-4 font-medium">Week</th>
+                <th className="pb-2 pr-4 font-medium">Lift</th>
+                <th className="pb-2 pr-4 font-medium">Day</th>
+                <th className="pb-2 pr-4 text-right font-medium">Load</th>
+                <th className="pb-2 pr-4 text-right font-medium">Fastest rep</th>
+                <th className="pb-2 pr-4 text-right font-medium">Day&rsquo;s max (bar speed)</th>
+                <th className="pb-2 pr-4 text-right font-medium">Week e1RM (RPE)</th>
+                <th className="pb-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {sets.map((s, i) => (
+                <tr key={s.analysisId} className={firstOf(i) ? 'border-t' : ''}>
+                  <td className="py-1.5 pr-4">{firstOf(i) ? `Wk ${s.weekIndex + 1}` : ''}</td>
+                  <td className="py-1.5 pr-4 font-medium">{firstOf(i) ? LIFT_NAMES[s.liftKey] : ''}</td>
+                  <td className="py-1.5 pr-4 text-muted-foreground">
+                    {shortDay(s.date)} · {s.workoutName}{s.exerciseName ? ` — ${s.exerciseName}` : ''}
+                  </td>
+                  <td className="num py-1.5 pr-4 text-right">{s.loadKg != null ? `${s.loadKg} ${unit}` : '—'}</td>
+                  <td className="num py-1.5 pr-4 text-right">{s.speed != null ? `${s.speed.toFixed(2)} m/s` : '—'}</td>
+                  <td className="num py-1.5 pr-4 text-right">{s.dayMax != null ? `${Math.round(s.dayMax)} ${unit}` : <span className="text-muted-foreground">—</span>}</td>
+                  <td className="num py-1.5 pr-4 text-right">{firstOf(i) ? (s.rpeE1rm != null ? `${fmt(s.rpeE1rm)} ${unit}` : <span className="text-muted-foreground">—</span>) : ''}</td>
+                  <td className="py-1.5 text-right">
+                    <Link to={`/analysis/saved/${s.analysisId}`} className="text-xs text-primary underline-offset-2 hover:underline">Open</Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          A day&rsquo;s max needs at least three sets of the lift that day with a clear load-speed line; — means there were too few.
+        </p>
+      </CardContent>
+    </Card>
+  )
 }
 
 export default function ProgramReport() {
@@ -110,8 +272,8 @@ export default function ProgramReport() {
         body: JSON.stringify({
           lift_name: displayName,
           weight: e1rm,
-          unit: 'kg',
-          recorded_at: new Date().toISOString().slice(0, 10),
+          unit,
+          recorded_at: localToday(),
           notes: 'Estimated 1RM from program analysis',
         }),
       })
@@ -134,6 +296,8 @@ export default function ProgramReport() {
   if (error) return <LoadError what="the report" message={error} onRetry={() => setAttempt((n) => n + 1)} />
   if (notFound || !report || !program) return <div className="text-muted-foreground">Report not found.</div>
 
+  // The unit the program's loads are in (S3): its athlete's.
+  const unit = unitOf(program.unit)
   const hasData = report.exercisesCompleted > 0
   const completionPct = Math.round(report.completionRate * 100)
   const hasRpeDeviation = report.rpeDeviations.some((r) => r.delta !== null)
@@ -172,7 +336,7 @@ export default function ProgramReport() {
       )}
 
       {/* Stats row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div data-tour="program-report" className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-6">
             <div className="text-3xl font-bold">{completionPct}%</div>
@@ -212,6 +376,10 @@ export default function ProgramReport() {
         </Card>
       </div>
 
+      <VolumeCard program={program} maxes={report.storedMaxes} unit={unit} />
+
+      {report.athleteId && <BarSpeedCard program={program} trends={report.e1rmTrends} athleteId={report.athleteId} unit={unit} />}
+
       {!hasData ? (
         <Card>
           <CardContent className="py-16 text-center text-muted-foreground">
@@ -249,8 +417,8 @@ export default function ProgramReport() {
                   <div key={trend.liftKey}>
                     <div className="flex items-center gap-2 mb-3">
                       <span className="font-semibold">{trend.displayName}</span>
-                      <Badge variant="outline">Best {fmt(trend.bestE1RM)} kg</Badge>
-                      <Badge variant="outline">Latest {fmt(trend.latestE1RM)} kg</Badge>
+                      <Badge variant="outline">Best {fmt(trend.bestE1RM)} {unit}</Badge>
+                      <Badge variant="outline">Latest {fmt(trend.latestE1RM)} {unit}</Badge>
                     </div>
                     {trend.dataPoints.length > 1 ? (
                       <ResponsiveContainer width="100%" height={180}>
@@ -272,7 +440,7 @@ export default function ProgramReport() {
                             padding={{ left: 16, right: 16 }}
                           />
                           {/* No per-tick "kg": at this width it wrapped every label onto
-                              two lines and clipped the top one. The badges above say kg. */}
+                              two lines and clipped the top one. The badges above say the unit. */}
                           <YAxis
                             {...(() => {
                               const ticks = kgTicks(trend.dataPoints.map((d) => d.e1rm))
@@ -285,7 +453,7 @@ export default function ProgramReport() {
                             width={40}
                           />
                           <Tooltip
-                            formatter={(value: number) => [`${value} kg`, 'e1RM']}
+                            formatter={(value: number) => [`${value} ${unit}`, 'e1RM']}
                             labelFormatter={(label: number) => `Week ${label + 1}`}
                             contentStyle={{
                               background: 'hsl(var(--popover))',
@@ -309,7 +477,7 @@ export default function ProgramReport() {
                       </ResponsiveContainer>
                     ) : (
                       <p className="text-sm text-muted-foreground">
-                        Only one data point — {fmt(trend.dataPoints[0]?.e1rm)} kg
+                        Only one data point — {fmt(trend.dataPoints[0]?.e1rm)} {unit}
                         (Week {(trend.dataPoints[0]?.weekIndex ?? 0) + 1})
                       </p>
                     )}
@@ -345,8 +513,8 @@ export default function ProgramReport() {
                           <span className="font-medium">{trend.displayName}</span>
                           <div className="text-sm text-muted-foreground mt-0.5">
                             {storedMax
-                              ? `Stored max: ${storedMax.weight} ${storedMax.unit}  →  e1RM this block: ${fmt(trend.latestE1RM)} kg`
-                              : `No stored max  →  e1RM this block: ${fmt(trend.latestE1RM)} kg`}
+                              ? `Stored max: ${storedMax.weight} ${storedMax.unit}  →  e1RM this block: ${fmt(trend.latestE1RM)} ${unit}`
+                              : `No stored max  →  e1RM this block: ${fmt(trend.latestE1RM)} ${unit}`}
                           </div>
                         </div>
                         {!report.athleteId ? (
@@ -369,7 +537,7 @@ export default function ProgramReport() {
                               )
                             }
                           >
-                            {isUpdating ? 'Saving…' : `Set PR to ${fmt(trend.latestE1RM)} kg`}
+                            {isUpdating ? 'Saving…' : `Set PR to ${fmt(trend.latestE1RM)} ${unit}`}
                           </Button>
                         ) : (
                           <span className="text-sm text-muted-foreground">At or below max</span>

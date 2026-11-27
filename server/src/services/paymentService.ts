@@ -124,10 +124,13 @@ export async function getPaymentAlerts(today = todayIso()): Promise<PaymentAlert
       'payments.paid as paid',
       'payments.paid_at as paid_at',
       'payments.notes as notes',
+      'payments.reminded_at as reminded_at',
       'payments.created_at as created_at',
       'payments.updated_at as updated_at',
       'athletes.name as athleteName',
     ])
+    // No reminders for the tour's sample athlete (T7).
+    .where('athletes.is_sample', '=', 0)
     .execute()
 
   // Keep only the latest period per athlete.

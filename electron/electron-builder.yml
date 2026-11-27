@@ -29,10 +29,16 @@ icon: build/icon.png
 # electron-builder otherwise treats this block as "upload the artifacts yourself"
 # and fails the whole build with "GitHub Personal Access Token is not set". The
 # release workflow attaches the assets with `gh release` instead.
+#
+# From 1.18.0 the installed app looks in Fabian0270/CoachBoard-releases, a public
+# repo holding only releases, so the code repo can go private without stopping
+# updates (a private repo answers the updater "not found", silently). 1.18.0
+# itself is published to BOTH repos: installs older than 1.18.0 still look in
+# CoachBoard, find it there, and update into a version that looks here.
 publish:
   provider: github
   owner: Fabian0270
-  repo: CoachBoard
+  repo: CoachBoard-releases
 
 files:
   - dist/**/*

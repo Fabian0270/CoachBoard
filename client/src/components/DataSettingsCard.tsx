@@ -4,7 +4,9 @@ import { Button } from './ui/button'
 import { useToast } from './ui/toast'
 import { useConfirm } from './ui/confirm-dialog'
 import { humanBytes } from '../lib/formatBytes'
+import BackupMirrorSection from './BackupMirrorSection'
 import { getJson } from '../lib/api'
+import { localToday } from '../lib/dates'
 import { AlertTriangle, Download, FolderOpen, RotateCcw, Save, Undo2 } from 'lucide-react'
 
 interface BackupInfo {
@@ -86,6 +88,7 @@ export default function DataSettingsCard() {
   const [paths, setPaths] = useState<SystemPaths | null>(null)
   const [storage, setStorage] = useState<StorageBreakdown | null>(null)
   const [busy, setBusy] = useState<'backup' | 'export' | 'restore' | 'undo' | null>(null)
+  const [mirrorRefresh, setMirrorRefresh] = useState(0)
 
   const load = async () => {
     try {
@@ -110,8 +113,12 @@ export default function DataSettingsCard() {
     setBusy('backup')
     try {
       const res = await fetch('/api/backup/now', { method: 'POST' })
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Backup failed')
-      toast.success('Backup saved.')
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error ?? 'Backup failed')
+      const mirror = body.mirror as { dir: string | null; error: string | null } | undefined
+      if (mirror?.dir && mirror.error) toast.error(`Backup saved on this computer, but not copied to your second folder: ${mirror.error}`)
+      else toast.success(mirror?.dir ? 'Backup saved, and copied to your second folder.' : 'Backup saved.')
+      setMirrorRefresh((n) => n + 1)
       await load()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Backup failed.')
@@ -130,7 +137,7 @@ export default function DataSettingsCard() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `coachboard-backup-${new Date().toISOString().slice(0, 10)}.zip`
+      a.download = `coachboard-backup-${localToday()}.zip`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -235,13 +242,13 @@ export default function DataSettingsCard() {
   }
 
   return (
-    <Card>
+    <Card data-tour="your-data">
       <CardHeader>
         <CardTitle>Your data</CardTitle>
         <CardDescription>
           Your athletes, programs and payments live in a single database file on this computer,
-          alongside your email and Discord settings. A backup holds all of it. It is never
-          uploaded anywhere.
+          alongside your email and Discord settings. A backup holds all of it. CoachBoard never
+          uploads it anywhere; you can choose a second folder for the backups below.
         </CardDescription>
       </CardHeader>
 
@@ -321,6 +328,9 @@ export default function DataSettingsCard() {
           copy the data folder itself if you need them. Saved passwords only work again on this
           computer; restoring onto a new one asks you to enter them once more.
         </p>
+
+        {/* Re-read after "Back up now", which also copies there. */}
+        <BackupMirrorSection refreshKey={mirrorRefresh} />
 
         <div className="flex flex-wrap gap-2">
           <Button onClick={saveCopy} disabled={busy !== null}>

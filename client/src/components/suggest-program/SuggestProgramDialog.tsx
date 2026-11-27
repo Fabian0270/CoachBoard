@@ -5,7 +5,7 @@ import { SUGGESTION_TEMPLATES } from 'coachboard-shared'
 import { knowledgeDefaultsForGoal } from 'coachboard-shared/knowledge'
 import type { SuggestionGoal, SuggestionTemplateInfo, SuggestionStyleAdjust, DetectedPattern } from 'coachboard-shared'
 import type { Props, SelectableProgram, Step } from './types'
-import { clampDays, firstStep, repBiasFor, todayIso } from './helpers'
+import { clampDays, firstStep, repBiasFor, defaultStartDate } from './helpers'
 import { usePatterns } from './hooks/usePatterns'
 import { useStyleProfile } from './hooks/useStyleProfile'
 import { useSourceSelection } from './hooks/useSourceSelection'
@@ -43,7 +43,7 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
   // default so the draft only ever mirrors the coach's own accessories.
   const [enrichAccessories, setEnrichAccessories] = useState(false)
   const [weeks, setWeeks] = useState(4)
-  const [startDate, setStartDate] = useState(todayIso)
+  const [startDate, setStartDate] = useState(() => defaultStartDate())
   // '' = inherit the source program's template; otherwise a built-in id.
   const [builtinTemplate, setBuiltinTemplate] = useState('')
   const [loading, setLoading] = useState(false)
@@ -77,7 +77,7 @@ export function SuggestProgramDialog({ open, onOpenChange, programId, athleteId,
     setShowSplitPicker(false)
     setEnrichAccessories(false)
     setWeeks(4)
-    setStartDate(todayIso())
+    setStartDate(defaultStartDate())
     setBuiltinTemplate('')
     setLoading(false)
     setError(null)

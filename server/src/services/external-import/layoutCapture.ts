@@ -38,7 +38,7 @@ function cellFont(ws: ExcelJS.Worksheet, row: number, col: number): Partial<Exce
 }
 
 const EXTERNAL_TO_EXPORT_KEY: Record<ExternalColumnKey, ExportColumnKey> = {
-  exercise: 'name', sets: 'sets', reps: 'reps', load: 'load_used', rpe: 'rpe',
+  exercise: 'name', sets: 'sets', reps: 'reps', load: 'load_used', rpe: 'rpe', notes: 'notes', velocity: 'velocity',
 }
 
 /** Distinctly-Swedish weekday prefixes (accented + ASCII-safe forms). */
@@ -68,7 +68,9 @@ export function captureLayoutTemplate(
   // logged set.
   const loadIsResult = exercises.some((e) => e.loadIsResult)
   const rpeIsResult = exercises.some((e) => e.rpeIsResult)
-  for (const extKey of ['exercise', 'sets', 'reps', 'load', 'rpe'] as ExternalColumnKey[]) {
+  // The coach's notes / comments column, when the sheet has one, goes last; a
+  // velocity target column (BP39) just before it.
+  for (const extKey of ['exercise', 'sets', 'reps', 'load', 'rpe', 'velocity', 'notes'] as ExternalColumnKey[]) {
     const colIdx = columnMapping[extKey]
     if (typeof colIdx !== 'number') continue
     const expKey =

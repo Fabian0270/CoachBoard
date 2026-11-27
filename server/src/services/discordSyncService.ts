@@ -29,6 +29,7 @@ import {
   MediaDownloadError,
 } from './mediaStore.js'
 import { parseCaption, suggestWorkout, type CandidateWorkout } from './captionMatcher.js'
+import { unitOf } from 'coachboard-shared/units'
 import type { SyncStatusDto, StartSyncResult, SyncChannelProgress } from 'coachboard-shared/discord'
 
 // ---------------------------------------------------------------------------
@@ -525,7 +526,9 @@ export async function computeSuggestedWorkoutId(
     }
   }
 
-  return suggestWorkout([...byWorkout.values()], parseCaption(caption), postedDate)
+  // Read in the athlete's unit (S3), as their Load Caps are.
+  const athlete = await db.selectFrom('athletes').select('unit').where('id', '=', athleteId).executeTakeFirst()
+  return suggestWorkout([...byWorkout.values()], parseCaption(caption, unitOf(athlete?.unit)), postedDate)
 }
 
 // --- Downloads ---------------------------------------------------------------
