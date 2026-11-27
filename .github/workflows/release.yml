@@ -1,7 +1,10 @@
 name: Release
 
-# Builds the installers for every supported platform and publishes them to a
-# single GitHub Release. Triggered by pushing a version tag (Flow A):
+# Builds the installers for every supported platform and publishes them as a
+# GitHub Release on the public Fabian0270/CoachBoard-releases repo (where the
+# installed app looks for updates from 1.18.0 on) and, while it is public, on
+# this repo too. Needs .github/release-notes/<tag>.md and the RELEASES_TOKEN
+# secret — see the release job. Triggered by pushing a version tag (Flow A):
 #
 #   # bump package.json version to match, commit, merge to main, then:
 #   git tag v1.14.0
@@ -165,7 +168,23 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [build-mac, build-windows]
     runs-on: ubuntu-latest
+    # Where coaches get updates from (1.18.0 on): the public CoachBoard-releases
+    # repo, so this code repo can be private. Writing there needs RELEASES_TOKEN,
+    # a fine-grained token limited to that one repo, Contents read/write, stored
+    # as an Actions secret. Whoever holds it can publish an update every Windows
+    # install will take, so:
+    #  - only THIS job sees it, and this job installs and runs no npm code — the
+    #    build jobs (npm ci, packaging) never get it;
+    #  - only a version tag starts it, and tags are pushed by Fabian alone.
+    # No deployment environment with required reviewers: on GitHub Free those
+    # work only in public repos, and environments are not available at all in a
+    # private repo on Free — this repo is going private.
     steps:
+      # Only the release notes are read from the repo (no code, nothing run).
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/release-notes
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -173,7 +192,9 @@ jobs:
 
       - name: Publish installers to the release
         env:
-          GH_TOKEN: ${{ github.token }}
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          CODE_TOKEN: ${{ github.token }}
+          RELEASES_REPO: Fabian0270/CoachBoard-releases
         run: |
           # download-artifact v4 places each artifact in its own subdirectory,
           # so the files sit exactly one level down: artifacts/<name>/<file>.
@@ -198,18 +219,40 @@ jobs:
             exit 1
           fi
 
+          # Coaches read these on the public releases page, so they are written
+          # for coaches and kept in the repo; notes generated from this repo's
+          # pull requests would point at a private repo. No notes, no release.
+          NOTES=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ ! -s "$NOTES" ]; then
+            echo "::error::$NOTES is missing — write the coach-facing release notes first."
+            exit 1
+          fi
+          if [ -z "${RELEASES_TOKEN}" ]; then
+            echo "::error::The RELEASES_TOKEN secret is not set (or has expired) — nothing was published."
+            exit 1
+          fi
+
           # Create the release, or attach to it if the tag already has one. Only
           # the "already exists" case should fall through to upload, so check for
           # it explicitly instead of masking every failure behind ||.
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --clobber \
-              "${ASSETS[@]}"
-          else
-            gh release create "${GITHUB_REF_NAME}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --title "${GITHUB_REF_NAME}" \
-              --generate-notes \
-              "${ASSETS[@]}"
-          fi
+          # publish <repo> <token> [extra create flags]. The token is handed to
+          # each gh call itself, never left in the job's environment.
+          publish() {
+            local repo="$1" token="$2"; shift 2
+            if GH_TOKEN="$token" gh release view "${GITHUB_REF_NAME}" --repo "$repo" >/dev/null 2>&1; then
+              GH_TOKEN="$token" gh release upload "${GITHUB_REF_NAME}" --repo "$repo" --clobber "${ASSETS[@]}"
+            else
+              GH_TOKEN="$token" gh release create "${GITHUB_REF_NAME}" --repo "$repo" --title "CoachBoard ${GITHUB_REF_NAME}" \
+                --notes-file "$NOTES" "$@" "${ASSETS[@]}"
+            fi
+          }
+
+          # The releases repo FIRST: if its token is missing or expired this fails
+          # before anything is published anywhere — never half a release. Its tag
+          # is made on its own main branch (it holds no code).
+          publish "${RELEASES_REPO}" "${RELEASES_TOKEN}" --target main
+
+          # Then this repo, while it is public: installs older than 1.18.0 still
+          # look here for updates, and this is how they reach a version that
+          # looks in the releases repo. Drop this once the repo is private.
+          publish "${GITHUB_REPOSITORY}" "${CODE_TOKEN}"

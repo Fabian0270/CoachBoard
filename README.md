@@ -31,7 +31,7 @@ A desktop application for strength coaches to manage athletes, build and analyze
 
 ## Download & Install (End Users)
 
-Go to the [Releases page](https://github.com/Fabian0270/CoachBoard/releases) and download the build for your OS:
+Go to the [Releases page](https://github.com/Fabian0270/CoachBoard-releases/releases) and download the build for your OS (from 1.18.0 releases are published there; the app also checks there for updates):
 
 **Windows**
 1. Download **CoachBoard-Setup-x.x.x.exe** from the latest release
