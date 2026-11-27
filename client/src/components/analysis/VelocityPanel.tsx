@@ -59,7 +59,7 @@ export function rememberedLift(): VbtLift {
   }
 }
 
-function rememberLift(lift: VbtLift): void {
+export function rememberLift(lift: VbtLift): void {
   try {
     localStorage.setItem(LIFT_STORAGE_KEY, lift)
   } catch {

@@ -67,9 +67,11 @@ import { plainKey, useAnalysisKeys } from '../components/analysis/analysisKeys'
 import TrackingControls from '../components/analysis/TrackingControls'
 import LoadError from '../components/LoadError'
 import VelocityPanel, {
+  rememberLift,
   rememberedLift,
   type SetContextState,
 } from '../components/analysis/VelocityPanel'
+import LiftPrompt, { type KnownLift } from '../components/analysis/LiftPrompt'
 import {
   useVbtHistory,
   useAthleteMaxes,
@@ -356,6 +358,25 @@ export default function VideoAnalysis() {
     setSetContext((c) => ({ ...c, lift, metric: null }))
   }, [source])
 
+  /**
+   * The lift, asked first thing for every clip (D126): the plate cannot be
+   * clicked until the coach has said which lift it is. A lift the clip itself
+   * names (its caption, or the screen it was recorded on) is picked out.
+   */
+  const [liftConfirmed, setLiftConfirmed] = useState(false)
+  useEffect(() => setLiftConfirmed(false), [source])
+  const knownLift: KnownLift | null = useMemo(() => {
+    if (source?.kind === 'local' && source.preset) return { lift: source.preset.lift, from: 'recording' }
+    const fromCap = source?.kind === 'discord' ? captionFill(source.item.parsedCaption).lift : undefined
+    return fromCap ? { lift: fromCap, from: 'caption' } : null
+  }, [source])
+  const confirmLift = (lift: VbtLift) => {
+    rememberLift(lift)
+    // The metric belongs to a lift; a leftover from the last one is silently wrong (see the panel).
+    changeSetContext({ ...setContext, lift, metric: lift === setContext.lift ? setContext.metric : null })
+    setLiftConfirmed(true)
+  }
+
   const videoSrc =
     source?.kind === 'local'
       ? source.url
@@ -389,6 +410,11 @@ export default function VideoAnalysis() {
   const placeSeed = (point: { x: number; y: number }) => {
     const video = videoRef.current
     if (!video) return
+    // The lift first (D126): it decides what the page reads off the set.
+    if (!liftConfirmed) {
+      toast.info('Pick the lift above the video first.')
+      return
+    }
     // The click starts a tracking run, and before the analyser has compiled
     // that run plays the clip with nothing consuming its frames.
     if (cvStatus !== 'ready') {
@@ -1289,6 +1315,14 @@ export default function VideoAnalysis() {
         </div>
       </div>
 
+      {/* The lift, first thing (D126). */}
+      {videoSrc && !liftConfirmed && <LiftPrompt known={knownLift} onPick={confirmLift} />}
+      {videoSrc && liftConfirmed && (
+        <p className="text-sm text-muted-foreground">
+          Lift: <span className="font-medium text-foreground">{liftLabel(setContext.lift)}</span>
+          <Button size="sm" variant="ghost" className="ml-1 h-7 px-2" onClick={() => setLiftConfirmed(false)}>Change</Button>
+        </p>
+      )}
       {videoSrc && (
         // The reps' paths beside the video once there are any (BP10), laid
         // over each other; it was never on this page before.
