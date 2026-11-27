@@ -1,4 +1,4 @@
-import { afterAll, describe, it, expect } from 'vitest'
+import { afterAll, describe, it, expect, vi } from 'vitest'
 import { openSqlite } from './sqlite.js'
 import { sql } from 'kysely'
 import { mkdtempSync, rmSync } from 'fs'
@@ -8,6 +8,12 @@ import { initializeDatabase, getDb } from './db.js'
 
 // Simulate a pre-feature database where programs.athlete_id was NOT NULL, then run
 // initializeDatabase over it and confirm the nullable migration preserves data.
+// Each test migrates a real database FILE: dozens of statements, each making
+// and deleting a journal file. On a dev machine that is ~0.3 s a test; on
+// GitHub's Windows runners (Defender scans every new file) it ran past the 5 s
+// default and the whole server-windows job went red. A real hang still fails.
+vi.setConfig({ testTimeout: 60_000 })
+
 const dir = mkdtempSync(join(tmpdir(), 'coachboard-mig-'))
 const dbPath = join(dir, 'old.sqlite')
 

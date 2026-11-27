@@ -14,6 +14,12 @@ import { loadTemplate } from './services/templateBlobStore.js'
 
 vi.spyOn(console, 'log').mockImplementation(() => {})
 
+// Each test migrates a real database FILE: dozens of statements, each making
+// and deleting a journal file. On a dev machine that is ~0.3 s a test; on
+// GitHub's Windows runners (Defender scans every new file) it ran past the 5 s
+// default and the whole server-windows job went red. A real hang still fails.
+vi.setConfig({ testTimeout: 60_000 })
+
 let dir = ''
 let dbPath = ''
 
