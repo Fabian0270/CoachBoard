@@ -4,6 +4,7 @@ import http from 'http'
 import os from 'os'
 import path from 'path'
 import QRCode from 'qrcode'
+import { VBT_LIFTS, isVbtLift, type VbtLift } from 'coachboard-shared/vbt'
 import { userDataDir } from './secureStore.js'
 import { extensionFor } from './analysisVideoStore.js'
 import { log } from '../lib/logger.js'
@@ -41,7 +42,8 @@ export interface PhoneLinkStatus {
   qrSvg: string | null
   /** Bytes received so far while a clip is arriving. */
   receiving: number | null
-  clip: { name: string; bytes: number } | null
+  /** `lift` is the one tapped on the phone before filming (D127): the analysis goes by it. */
+  clip: { name: string; bytes: number; lift: VbtLift } | null
   /** Why the link closed on its own, if it did. */
   closedBecause: string | null
 }
@@ -53,7 +55,7 @@ interface Link {
   urls: string[]
   qrSvg: string
   receiving: number | null
-  clip: { file: string; name: string; bytes: number } | null
+  clip: { file: string; name: string; bytes: number; lift: VbtLift } | null
   idle: NodeJS.Timeout
   /** The listener is closed as soon as the one clip arrives; the link lives on until it is opened. */
   open: boolean
@@ -99,7 +101,7 @@ export function phoneLinkStatus(): PhoneLinkStatus {
     otherUrls: link?.urls.slice(1) ?? [],
     qrSvg: link?.qrSvg ?? null,
     receiving: link?.receiving ?? null,
-    clip: link?.clip ? { name: link.clip.name, bytes: link.clip.bytes } : null,
+    clip: link?.clip ? { name: link.clip.name, bytes: link.clip.bytes, lift: link.clip.lift } : null,
     closedBecause: link ? null : closedBecause,
   }
 }
@@ -138,7 +140,7 @@ export function stopPhoneLink(): PhoneLinkStatus {
 }
 
 /** The received clip's file, for the app's own server to hand to the analysis. */
-export function phoneClip(): { file: string; name: string; bytes: number } | null {
+export function phoneClip(): { file: string; name: string; bytes: number; lift: VbtLift } | null {
   return link?.clip ?? null
 }
 
@@ -217,6 +219,9 @@ async function receive(current: Link, url: URL, req: http.IncomingMessage, res: 
   if (current.clip || current.receiving !== null) { reply(409, 'A clip is already on its way. Scan the code again for the next set.'); return }
   const declared = Number(req.headers['content-length'] ?? NaN)
   if (Number.isFinite(declared) && declared > MAX_CLIP_BYTES) { reply(413, 'That clip is over 2 GB. Film in 1080p, or a shorter clip.'); req.resume(); return }
+  // D127: the lift is picked on the phone before filming, and the analysis goes by it.
+  const lift = url.searchParams.get('lift')
+  if (!isVbtLift(lift)) { reply(400, 'Pick the lift first.'); req.resume(); return }
   const name = (url.searchParams.get('name') ?? 'phone-clip.mp4').slice(0, 120)
   fs.mkdirSync(clipDir(), { recursive: true })
   const file = path.join(clipDir(), `${crypto.randomUUID()}${extensionFor(name)}`)
@@ -251,15 +256,22 @@ async function receive(current: Link, url: URL, req: http.IncomingMessage, res: 
     return
   }
   current.receiving = null
-  current.clip = { file, name, bytes }
-  log(`Phone clip received: ${name}, ${bytes} bytes`)
+  current.clip = { file, name, bytes, lift }
+  log(`Phone clip received: ${name}, ${bytes} bytes, ${lift}`)
   reply(200, '')
   // One clip per scan (D104): nothing more is accepted from this code.
   res.on('finish', () => { if (link === current) closeServer('clip received') })
 }
 
-/** The phone's page: one big button that opens the phone's camera, and the upload. */
+const escapeHtml = (s: string): string =>
+  s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!)
+
+/**
+ * The phone's page: which lift it is (D127, required), then one big button that
+ * opens the phone's camera, and the upload.
+ */
 function phonePage(): string {
+  const lifts = VBT_LIFTS.map((l) => `<button type="button" class="lift" data-lift="${escapeHtml(l.id)}" aria-pressed="false">${escapeHtml(l.label)}</button>`).join('')
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CoachBoard — send a set</title>
@@ -275,15 +287,26 @@ function phonePage(): string {
   .bar div { height: 100%; width: 0; background: #9fc26a; transition: width .2s; }
   .ok { color: #9fc26a; font-weight: 600; } .err { color: #ff8a80; }
   .hint { font-size: 14px; color: #8b948d; }
+  h2 { font-size: 16px; margin: 20px 0 8px; }
+  .lifts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button.lift { font: inherit; font-size: 16px; padding: 12px 8px; border-radius: 12px; border: 1px solid #39413b; background: transparent; color: #eef1ee; }
+  button.lift[aria-pressed="true"] { background: #9fc26a; border-color: #9fc26a; color: #0b0d0c; font-weight: 600; }
+  #go.off label { opacity: .35; }
 </style></head>
 <body><main>
   <h1>Send a set to CoachBoard</h1>
   <p>Film the set with your camera, then it goes straight to the computer.</p>
   <div id="pick">
-    <label class="btn" for="cam">Record a set</label>
-    <label class="alt" for="lib">Or pick a video you already filmed</label>
-    <input id="cam" type="file" accept="video/*" capture="environment">
-    <input id="lib" type="file" accept="video/*">
+    <h2>1. Which lift is it?</h2>
+    <div class="lifts" role="group" aria-label="Which lift is it?">${lifts}</div>
+    <h2>2. Film it</h2>
+    <div id="go" class="off">
+      <p id="first" class="hint">Pick the lift above first.</p>
+      <label class="btn" for="cam">Record a set</label>
+      <label class="alt" for="lib">Or pick a video you already filmed</label>
+      <input id="cam" type="file" accept="video/*" capture="environment" disabled>
+      <input id="lib" type="file" accept="video/*" disabled>
+    </div>
     <p class="hint" style="margin-top:16px">Film from the side, with the whole plate in view and the phone held still. Film in 1080p to send in seconds — 4K takes much longer over Wi-Fi.</p>
   </div>
   <div id="send" hidden>
@@ -297,12 +320,21 @@ function phonePage(): string {
 <script>
   var pick = document.getElementById('pick'), send = document.getElementById('send'), fill = document.getElementById('fill'),
       pct = document.getElementById('pct'), what = document.getElementById('what'), done = document.getElementById('done'), fail = document.getElementById('fail');
+  var lift = null, goEl = document.getElementById('go'), first = document.getElementById('first');
+  [].forEach.call(document.querySelectorAll('button.lift'), function (b) {
+    b.onclick = function () {
+      lift = b.getAttribute('data-lift');
+      [].forEach.call(document.querySelectorAll('button.lift'), function (o) { o.setAttribute('aria-pressed', String(o === b)); });
+      goEl.className = ''; first.hidden = true;
+      document.getElementById('cam').disabled = false; document.getElementById('lib').disabled = false;
+    };
+  });
   function mb(n) { return (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + ' MB'; }
   function go(input) {
-    var f = input.files && input.files[0]; if (!f) return;
+    var f = input.files && input.files[0]; if (!f || !lift) return;
     pick.hidden = true; fail.hidden = true; send.hidden = false; what.textContent = 'Sending ' + mb(f.size) + '…';
     var x = new XMLHttpRequest();
-    x.open('POST', location.pathname.replace(/\\/$/, '') + '/clip?name=' + encodeURIComponent(f.name || 'phone-clip.mp4'));
+    x.open('POST', location.pathname.replace(/\\/$/, '') + '/clip?lift=' + encodeURIComponent(lift) + '&name=' + encodeURIComponent(f.name || 'phone-clip.mp4'));
     x.upload.onprogress = function (e) { if (e.lengthComputable) { var p = Math.round(e.loaded / e.total * 100); fill.style.width = p + '%'; pct.textContent = p + '% of ' + mb(e.total); } };
     x.onload = function () {
       send.hidden = true;

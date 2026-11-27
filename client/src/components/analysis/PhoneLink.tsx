@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Loader2, Smartphone } from 'lucide-react'
-import { VBT_LIFTS, type VbtLift } from 'coachboard-shared/vbt'
+import type { VbtLift } from 'coachboard-shared/vbt'
 import { Button } from '../ui/button'
 import { errorMessage, getJson, getList, sendJson } from '../../lib/api'
 import { humanBytes } from '../../lib/formatBytes'
-import { rememberedLift } from './VelocityPanel'
 import type { CameraTake } from './CameraCapture'
 
 // ---------------------------------------------------------------------------
@@ -13,7 +12,8 @@ import type { CameraTake } from './CameraCapture'
 // A QR code opens a small page on the phone; the phone's own camera app films
 // the set and the clip comes over the Wi-Fi. One clip per scan (D104): when it
 // arrives it opens for analysis, and the link closes. The link is open only
-// while this screen is.
+// while this screen is. The lift is picked on the phone before filming (D127)
+// and comes over with the clip; the analysis goes by it.
 // ---------------------------------------------------------------------------
 
 interface Status {
@@ -22,7 +22,7 @@ interface Status {
   otherUrls: string[]
   qrSvg: string | null
   receiving: number | null
-  clip: { name: string; bytes: number } | null
+  clip: { name: string; bytes: number; lift: VbtLift } | null
   closedBecause: string | null
 }
 
@@ -32,10 +32,9 @@ export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraT
   const [opening, setOpening] = useState(false)
   const [athletes, setAthletes] = useState<{ id: string; name: string }[]>([])
   const [athleteId, setAthleteId] = useState('')
-  const [lift, setLift] = useState<VbtLift>(rememberedLift())
   const [attempt, setAttempt] = useState(0)
-  const choice = useRef({ athleteId, lift })
-  choice.current = { athleteId, lift }
+  const choice = useRef({ athleteId })
+  choice.current = { athleteId }
   /** Set once the clip has been handed over, so leaving does not close a link that already ended. */
   const handedOver = useRef(false)
 
@@ -67,7 +66,7 @@ export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraT
           const file = new File([blob], s.clip.name, { type: blob.type || 'video/mp4' })
           handedOver.current = true
           await sendJson('POST', '/api/phone-link/claim').catch(() => {})
-          onDone({ file, athleteId: choice.current.athleteId || null, lift: choice.current.lift })
+          onDone({ file, athleteId: choice.current.athleteId || null, lift: s.clip.lift })
         }
       } catch (err) {
         if (!stopped) { setOpening(false); setError(errorMessage(err)) }
@@ -105,12 +104,6 @@ export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraT
             {athletes.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">Lift</span>
-          <select value={lift} onChange={(e) => setLift(e.target.value as VbtLift)} className="rounded-md border bg-background px-2 py-1 text-sm">
-            {VBT_LIFTS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
-          </select>
-        </label>
       </div>
 
       {error ? (
@@ -140,7 +133,7 @@ export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraT
             <ol className="list-decimal space-y-1 pl-5 text-muted-foreground">
               <li>Connect the phone to the same Wi-Fi as this computer.</li>
               <li>Point the phone's camera at the code and open the link.</li>
-              <li>Tap <span className="text-foreground">Record a set</span>, film, then use the video. It opens here for analysis.</li>
+              <li>Tap the lift, then <span className="text-foreground">Record a set</span>, film, and use the video. It opens here for analysis.</li>
             </ol>
             <p className="text-xs text-muted-foreground">
               Film in 1080p to send in seconds — 4K takes much longer over Wi-Fi. One clip per scan: for the

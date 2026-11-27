@@ -3,7 +3,6 @@ import { ArrowLeft, Circle, Loader2, Square, Video } from 'lucide-react'
 import { VBT_LIFTS, type VbtLift } from 'coachboard-shared/vbt'
 import { Button } from '../ui/button'
 import { getList } from '../../lib/api'
-import { rememberedLift } from './VelocityPanel'
 import {
   CAMERA_BITS_PER_SECOND,
   MAX_RECORDING_MS,
@@ -20,6 +19,8 @@ import {
 // Link, Camo, DroidCam or Continuity Camera. Record / Stop (or Space); after
 // Stop the clip opens for analysis as if it had been dropped in, with the
 // athlete and lift picked here. Nothing is kept unless the analysis is saved.
+// The lift must be picked before Record works (D127), and the analysis goes by
+// it without asking again.
 // ---------------------------------------------------------------------------
 
 export interface CameraTake {
@@ -55,7 +56,8 @@ export default function CameraCapture({ onDone, onCancel }: { onDone: (take: Cam
   const [elapsed, setElapsed] = useState(0)
   const [athletes, setAthletes] = useState<{ id: string; name: string }[]>([])
   const [athleteId, setAthleteId] = useState<string>('')
-  const [lift, setLift] = useState<VbtLift>(rememberedLift())
+  /** No default (D127): a lift left over from the last set is how a bench got read as a squat. */
+  const [lift, setLift] = useState<VbtLift | null>(null)
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => { getList<{ id: string; name: string }>('/api/athletes').then(setAthletes, () => setAthletes([])) }, [])
@@ -125,7 +127,8 @@ export default function CameraCapture({ onDone, onCancel }: { onDone: (take: Cam
 
   const start = () => {
     const stream = streamRef.current
-    if (!stream || status !== 'ready') return
+    const chosen = lift
+    if (!stream || status !== 'ready' || !chosen) return
     const mimeType = cameraMimeType()
     const recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), videoBitsPerSecond: CAMERA_BITS_PER_SECOND })
     const parts: Blob[] = []
@@ -135,7 +138,7 @@ export default function CameraCapture({ onDone, onCancel }: { onDone: (take: Cam
       setStatus('finishing')
       const file = await finishRecording(new Blob(parts, { type: 'video/webm' }), recordingFileName())
       release()
-      onDone({ file, athleteId: athleteId || null, lift })
+      onDone({ file, athleteId: athleteId || null, lift: chosen })
     }
     recorderRef.current = recorder
     startedAt.current = Date.now()
@@ -207,12 +210,24 @@ export default function CameraCapture({ onDone, onCancel }: { onDone: (take: Cam
             {athletes.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">Lift</span>
-          <select value={lift} onChange={(e) => setLift(e.target.value as VbtLift)} className="rounded-md border bg-background px-2 py-1 text-sm">
-            {VBT_LIFTS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
-          </select>
-        </label>
+      </div>
+      {/* D127: the lift first; Record waits for it. */}
+      <div role="group" aria-label="Which lift is it?" className="space-y-1.5">
+        <p className="text-xs text-muted-foreground">Which lift is it?</p>
+        <div className="flex flex-wrap gap-2">
+          {VBT_LIFTS.map((l) => (
+            <Button
+              key={l.id}
+              size="sm"
+              variant={lift === l.id ? 'default' : 'outline'}
+              aria-pressed={lift === l.id}
+              disabled={recording || status === 'finishing'}
+              onClick={() => setLift(l.id)}
+            >
+              {l.label}
+            </Button>
+          ))}
+        </div>
       </div>
 
       <div className="relative overflow-hidden rounded-lg border bg-black">
@@ -239,14 +254,14 @@ export default function CameraCapture({ onDone, onCancel }: { onDone: (take: Cam
         <div className="flex flex-wrap items-center gap-3">
           <Button
             onClick={recording ? stop : start}
-            disabled={status !== 'ready' && !recording}
+            disabled={(status !== 'ready' || !lift) && !recording}
             variant={recording ? 'destructive' : 'default'}
             className="min-w-[8rem]"
           >
             {recording ? <><Square className="h-4 w-4" />Stop</> : <><Circle className="h-4 w-4 fill-current" />Record</>}
           </Button>
           <span className="text-xs text-muted-foreground">
-            Space starts and stops.
+            {!lift && !recording ? 'Pick the lift above first. ' : ''}Space starts and stops.
             {settings?.width && settings.height ? ` ${settings.width} × ${settings.height}` : ''}
             {settings?.frameRate ? ` · ${Math.round(settings.frameRate)} frames a second` : ''}
           </span>

@@ -349,22 +349,25 @@ export default function VideoAnalysis() {
     return () => URL.revokeObjectURL(url)
   }, [source])
 
-  // A set recorded on the camera screen brings the athlete and lift picked
-  // there (BP41, D103), so saving afterwards is one click.
+  // A set recorded on the camera screen or sent from the phone brings the
+  // athlete and lift picked there (BP41, D103), so saving afterwards is one click.
   useEffect(() => {
     if (source?.kind !== 'local' || !source.preset) return
     const { athleteId, lift } = source.preset
     if (athleteId) setAthleteChoice(athleteId)
+    rememberLift(lift)
     setSetContext((c) => ({ ...c, lift, metric: null }))
   }, [source])
 
   /**
    * The lift, asked first thing for every clip (D126): the plate cannot be
-   * clicked until the coach has said which lift it is. A lift the clip itself
-   * names (its caption, or the screen it was recorded on) is picked out.
+   * clicked until the coach has said which lift it is. A caption's lift is
+   * picked out for one click. A lift picked before filming — on the camera
+   * screen or the phone, where it is required — is gone by without asking
+   * (D127); "Change" still asks, with it picked out.
    */
   const [liftConfirmed, setLiftConfirmed] = useState(false)
-  useEffect(() => setLiftConfirmed(false), [source])
+  useEffect(() => setLiftConfirmed(source?.kind === 'local' && !!source.preset), [source])
   const knownLift: KnownLift | null = useMemo(() => {
     if (source?.kind === 'local' && source.preset) return { lift: source.preset.lift, from: 'recording' }
     const fromCap = source?.kind === 'discord' ? captionFill(source.item.parsedCaption).lift : undefined

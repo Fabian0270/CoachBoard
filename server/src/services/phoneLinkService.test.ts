@@ -65,14 +65,14 @@ describe('the phone link', () => {
   it('takes one clip, then closes (one clip per scan)', async () => {
     const s = await startPhoneLink({ addresses: ['192.168.1.34'] })
     const bytes = Buffer.alloc(300_000, 7)
-    const sent = await fetch(local(s.url!) + '/clip?name=IMG_0042.MOV', { method: 'POST', body: bytes })
+    const sent = await fetch(local(s.url!) + '/clip?lift=back-squat&name=IMG_0042.MOV', { method: 'POST', body: bytes })
     expect(sent.status).toBe(200)
-    expect(phoneLinkStatus().clip).toEqual({ name: 'IMG_0042.MOV', bytes: 300_000 })
+    expect(phoneLinkStatus().clip).toEqual({ name: 'IMG_0042.MOV', bytes: 300_000, lift: 'back-squat' })
     const clip = phoneClip()!
     expect(path.extname(clip.file)).toBe('.mov')
     expect(fs.readFileSync(clip.file).equals(bytes)).toBe(true)
     // A second clip on the same code is not accepted: the listener is gone.
-    await expect(fetch(local(s.url!) + '/clip?name=b.mp4', { method: 'POST', body: bytes })).rejects.toThrow()
+    await expect(fetch(local(s.url!) + '/clip?lift=back-squat&name=b.mp4', { method: 'POST', body: bytes })).rejects.toThrow()
     // Opened in the analysis: deleted here, link ended.
     claimPhoneClip()
     expect(fs.existsSync(clip.file)).toBe(false)
@@ -81,7 +81,7 @@ describe('the phone link', () => {
 
   it('a strange file name is stored as .mp4, never as given', async () => {
     const s = await startPhoneLink({ addresses: ['192.168.1.34'] })
-    await fetch(local(s.url!) + '/clip?name=' + encodeURIComponent('../../evil.exe'), { method: 'POST', body: Buffer.alloc(10, 1) })
+    await fetch(local(s.url!) + '/clip?lift=back-squat&name=' + encodeURIComponent('../../evil.exe'), { method: 'POST', body: Buffer.alloc(10, 1) })
     const clip = phoneClip()!
     expect(path.dirname(clip.file)).toBe(path.join(dir, 'phone-clips'))
     expect(path.extname(clip.file)).toBe('.mp4')
@@ -89,15 +89,35 @@ describe('the phone link', () => {
 
   it('an empty upload is refused and the link stays open for another try', async () => {
     const s = await startPhoneLink({ addresses: ['192.168.1.34'] })
-    const r = await fetch(local(s.url!) + '/clip?name=a.mp4', { method: 'POST', body: Buffer.alloc(0) })
+    const r = await fetch(local(s.url!) + '/clip?lift=back-squat&name=a.mp4', { method: 'POST', body: Buffer.alloc(0) })
     expect(r.status).toBe(400)
     expect(phoneLinkStatus()).toMatchObject({ active: true, clip: null })
-    expect((await fetch(local(s.url!) + '/clip?name=a.mp4', { method: 'POST', body: Buffer.alloc(5, 1) })).status).toBe(200)
+    expect((await fetch(local(s.url!) + '/clip?lift=back-squat&name=a.mp4', { method: 'POST', body: Buffer.alloc(5, 1) })).status).toBe(200)
+  })
+
+  it('the phone page asks the lift first (D127): every lift, and filming locked until one is tapped', async () => {
+    const s = await startPhoneLink({ addresses: ['192.168.1.34'] })
+    const html = await (await fetch(local(s.url!))).text()
+    for (const id of ['back-squat', 'bench-press', 'deadlift-conventional', 'other']) expect(html).toContain(`data-lift="${id}"`)
+    expect(html).toMatch(/<input id="cam"[^>]*disabled>/)
+    expect(html).toMatch(/<input id="lib"[^>]*disabled>/)
+  })
+
+  it('a clip without a lift, or with one CoachBoard does not know, is refused and the link stays open', async () => {
+    const s = await startPhoneLink({ addresses: ['192.168.1.34'] })
+    for (const q of ['?name=a.mp4', '?lift=curl&name=a.mp4']) {
+      const r = await fetch(local(s.url!) + '/clip' + q, { method: 'POST', body: Buffer.alloc(5, 1) })
+      expect(r.status).toBe(400)
+      expect(await r.json()).toEqual({ error: 'Pick the lift first.' })
+    }
+    expect(phoneLinkStatus()).toMatchObject({ active: true, clip: null })
+    expect((await fetch(local(s.url!) + '/clip?lift=bench-press&name=a.mp4', { method: 'POST', body: Buffer.alloc(5, 1) })).status).toBe(200)
+    expect(phoneLinkStatus().clip?.lift).toBe('bench-press')
   })
 
   it('stopping closes the listener and deletes a clip nobody opened', async () => {
     const s = await startPhoneLink({ addresses: ['192.168.1.34'] })
-    await fetch(local(s.url!) + '/clip?name=a.mp4', { method: 'POST', body: Buffer.alloc(5, 1) })
+    await fetch(local(s.url!) + '/clip?lift=back-squat&name=a.mp4', { method: 'POST', body: Buffer.alloc(5, 1) })
     const file = phoneClip()!.file
     stopPhoneLink()
     expect(fs.existsSync(file)).toBe(false)

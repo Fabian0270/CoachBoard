@@ -14,7 +14,7 @@ const open = {
 }
 
 describe('Send a set from your phone', () => {
-  it('shows the code and the steps, then opens the clip with the athlete and lift when it arrives', async () => {
+  it('shows the code and the steps, then opens the clip with the athlete, and the lift tapped on the phone', async () => {
     let status: Record<string, unknown> = open
     const server = serve({
       '/api/athletes': { body: [{ id: 'a1', name: 'Sara' }] },
@@ -31,12 +31,14 @@ describe('Send a set from your phone', () => {
     expect(screen.getByText(/same Wi-Fi as this computer/)).toBeTruthy()
     expect(screen.getByText(/Film in 1080p/)).toBeTruthy()
     await userEvent.selectOptions(await screen.findByLabelText('Athlete (optional)'), 'a1')
-    await userEvent.selectOptions(screen.getByLabelText('Lift'), 'deadlift-conventional')
+    // D127: the lift is picked on the phone, not here.
+    expect(screen.queryByLabelText('Lift')).toBeNull()
+    expect(screen.getByText(/Tap the lift, then/)).toBeTruthy()
 
     status = { ...open, receiving: 12 * 1024 * 1024 }
     expect(await screen.findByText(/Receiving the clip… 12/, {}, { timeout: 3000 })).toBeTruthy()
 
-    status = { ...open, clip: { name: 'IMG_0042.MOV', bytes: 18 } }
+    status = { ...open, clip: { name: 'IMG_0042.MOV', bytes: 18, lift: 'deadlift-conventional' } }
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1), { timeout: 3000 })
     const take = onDone.mock.calls[0][0] as CameraTake
     expect(take.file.name).toBe('IMG_0042.MOV')
