@@ -53,13 +53,29 @@ const TAG_BYTES = 16
 export const AAD_PREFIX = 'coachboard-phone-1'
 export const MAX_NAME_CHARS = 200
 
-/** The link closes itself if nothing arrives for this long. */
+/**
+ * The link closes itself this long after the screen opened if no phone opens
+ * it — and, once one has, this long after that, whatever is going on: a hard
+ * cap that also ends a clip part-way in (D130).
+ */
 const IDLE_MS = 30 * 60 * 1000
+/** Until a phone opens the page, the code and key change this often (D130)… */
+export const ROTATE_MS = 45 * 1000
+/** …and the one just replaced still opens the page for this long, for a scan made right at the switch. */
+export const GRACE_MS = 30 * 1000
 /** A clip that stops arriving part-way is dropped after this long. */
 const STALL_MS = 2 * 60 * 1000
 
 export interface PhoneLinkStatus {
   active: boolean
+  /** This visit's link, for the screen to close its own and no other. Not the code; never shown to the phone. */
+  id: string | null
+  /** When the code changes next (ms since epoch), while no phone has opened the page. */
+  rotatesAt: number | null
+  /** How often it changes, so the screen's countdown can roll over by itself without waiting for the next status. */
+  rotateEveryMs: number | null
+  /** The address of the phone that opened the page, once one has (D130). */
+  phone: string | null
   /** Carries the key after '#' (D128): shown only on this computer, as the QR and the typed fallback. */
   url: string | null
   /** Other addresses this computer has, for when the first does not reach the phone. */
@@ -86,13 +102,24 @@ interface Upload {
   stall?: NodeJS.Timeout
 }
 
-interface Link {
+interface Code {
   token: Buffer
   key: Buffer
-  server: http.Server
-  port: number
   urls: string[]
   qrSvg: string
+}
+
+interface Link extends Code {
+  id: string
+  idleMs: number
+  addresses: string[]
+  server: http.Server
+  port: number
+  /** The code just replaced, still good for opening the page until `until`. */
+  previous: (Code & { until: number }) | null
+  rotate: NodeJS.Timeout | null
+  rotatesAt: number | null
+  rotateMs: number
   /** The device that opened the page first: the only one allowed to send (D128). */
   phoneAddr: string | null
   upload: Upload | null
@@ -138,6 +165,10 @@ export function lanAddresses(ifaces: Record<string, Iface[] | undefined>): strin
 export function phoneLinkStatus(): PhoneLinkStatus {
   return {
     active: !!link,
+    id: link?.id ?? null,
+    rotatesAt: link && !link.phoneAddr ? link.rotatesAt : null,
+    rotateEveryMs: link && !link.phoneAddr && link.rotatesAt ? link.rotateMs : null,
+    phone: link?.phoneAddr ? link.phoneAddr.replace(/^::ffff:/, '') : null,
     url: link?.urls[0] ?? null,
     otherUrls: link?.urls.slice(1) ?? [],
     qrSvg: link?.qrSvg ?? null,
@@ -166,16 +197,13 @@ function dropUpload(current: Link, why: string): void {
   clearTimeout(up.stall)
   void up.handle.close().catch(() => {}).finally(() => fs.rmSync(up.file, { force: true }))
   log(`Phone clip not received: ${why}`)
-  if (link === current && current.open) {
-    clearTimeout(current.idle)
-    current.idle = setTimeout(() => expire(), IDLE_MS)
-    current.idle.unref?.()
-  }
+  // The 30-minute cap keeps running: a failed clip does not buy the phone more time (D130).
 }
 
 function closeServer(why: string | null): void {
   if (!link) return
   clearTimeout(link.idle)
+  stopRotating(link)
   if (!link.open) return
   link.open = false
   link.server.close()
@@ -185,12 +213,12 @@ function closeServer(why: string | null): void {
 }
 
 /**
- * Stop the link. A clip that arrived but was never opened is deleted. Given a
- * code, only the link with that code is stopped: the screen closing its own
- * visit's link must never close the next visit's, if the two cross on the way.
+ * Stop the link. A clip that arrived but was never opened is deleted. Given an
+ * id, only that visit's link is stopped: the screen closing its own link must
+ * never close the next visit's, if the two cross on the way.
  */
-export function stopPhoneLink(code?: string): PhoneLinkStatus {
-  if (link && code !== undefined && !tokenMatches(link, code)) return phoneLinkStatus()
+export function stopPhoneLink(id?: string): PhoneLinkStatus {
+  if (link && id !== undefined && id !== link.id) return phoneLinkStatus()
   if (link) {
     dropUpload(link, 'the link was closed')
     closeServer(null)
@@ -216,15 +244,13 @@ export function claimPhoneClip(): void {
  * (Fabian, 2026-11-27). Any older one is closed first — after a window reload
  * the last screen never said goodbye, and its listener must not linger.
  */
-export async function startPhoneLink(opts: { addresses?: string[] } = {}): Promise<PhoneLinkStatus> {
+export async function startPhoneLink(opts: { addresses?: string[]; rotateMs?: number; graceMs?: number; idleMs?: number } = {}): Promise<PhoneLinkStatus> {
   stopPhoneLink()
   sweepClips()
   const addresses = opts.addresses ?? lanAddresses(os.networkInterfaces())
   if (addresses.length === 0) {
     throw new PhoneLinkError("This computer isn't on a network a phone can reach. Connect it to the gym's Wi-Fi (or the same network as your phone), then try again.")
   }
-  const token = crypto.randomBytes(16)
-  const key = crypto.randomBytes(32)
   const server = http.createServer((req, res) => handle(req, res))
   // Every address, not one: the phone may reach this computer through any of
   // them. The code in the path is what keeps everything else out.
@@ -232,28 +258,74 @@ export async function startPhoneLink(opts: { addresses?: string[] } = {}): Promi
     server.once('error', reject)
     server.listen(0, '0.0.0.0', () => resolve((server.address() as { port: number }).port))
   })
-  const urls = addresses.map((a) => `http://${a}:${port}/p/${token.toString('hex')}#k=${key.toString('base64url')}`)
-  const qrSvg = await QRCode.toString(urls[0], { type: 'svg', margin: 1, errorCorrectionLevel: 'M' })
-  link = { token, key, server, port, urls, qrSvg, phoneAddr: null, upload: null, clip: null, idle: setTimeout(() => expire(), IDLE_MS), open: true }
+  const code = await newCode(addresses, port)
+  const rotateMs = opts.rotateMs ?? ROTATE_MS
+  const graceMs = opts.graceMs ?? GRACE_MS
+  const idleMs = opts.idleMs ?? IDLE_MS
+  link = {
+    ...code, id: crypto.randomUUID(), idleMs, addresses, server, port, previous: null, rotate: null, rotatesAt: null, rotateMs,
+    phoneAddr: null, upload: null, clip: null, idle: setTimeout(() => expire(), idleMs), open: true,
+  }
   link.idle.unref?.()
+  startRotating(link, rotateMs, graceMs)
   closedBecause = null
   log(`Phone link open on port ${port} (${addresses.join(', ')})`)
   return phoneLinkStatus()
 }
 
+/** A fresh code and key, and the QR that carries them. */
+async function newCode(addresses: string[], port: number): Promise<Code> {
+  const token = crypto.randomBytes(16)
+  const key = crypto.randomBytes(32)
+  const urls = addresses.map((a) => `http://${a}:${port}/p/${token.toString('hex')}#k=${key.toString('base64url')}`)
+  const qrSvg = await QRCode.toString(urls[0], { type: 'svg', margin: 1, errorCorrectionLevel: 'M' })
+  return { token, key, urls, qrSvg }
+}
+
+/**
+ * Until a phone opens the page, a new code every `rotateMs` (D130): a photo of
+ * the screen goes stale within minutes. The code just replaced still opens the
+ * page for `graceMs`, so a scan made right at the switch still works.
+ */
+function startRotating(current: Link, rotateMs: number, graceMs: number): void {
+  current.rotatesAt = Date.now() + rotateMs
+  current.rotate = setInterval(() => {
+    void (async () => {
+      if (link !== current || current.phoneAddr || !current.open) return
+      const next = await newCode(current.addresses, current.port)
+      if (link !== current || current.phoneAddr || !current.open) return
+      current.previous = { token: current.token, key: current.key, urls: current.urls, qrSvg: current.qrSvg, until: Date.now() + graceMs }
+      Object.assign(current, next)
+      current.rotatesAt = Date.now() + rotateMs
+    })()
+  }, rotateMs)
+  current.rotate.unref?.()
+}
+
+function stopRotating(current: Link): void {
+  if (current.rotate) clearInterval(current.rotate)
+  current.rotate = null
+  current.rotatesAt = null
+}
+
+/** The 30 minutes are up: closed even with a clip part-way in (D130), which is dropped. */
 function expire(): void {
-  if (!link || link.clip || link.upload) return
-  closeServer('nothing arrived for 30 minutes')
+  if (!link || link.clip) return
+  const connected = !!link.phoneAddr
+  dropUpload(link, 'the 30 minutes ran out')
+  closeServer(connected ? '30 minutes since the phone connected' : 'no phone in 30 minutes')
   link = null
-  closedBecause = 'The phone link closed after 30 minutes with nothing sent. Start it again to send a clip.'
+  closedBecause = connected
+    ? 'The phone link closed 30 minutes after the phone connected. Start it again to send a clip.'
+    : 'The phone link closed after 30 minutes with no phone connected. Start it again to send a clip.'
 }
 
 export class PhoneLinkError extends Error {}
 
 /** The code in the path, compared in constant time. */
-function tokenMatches(current: Link, given: string | undefined): boolean {
+function tokenMatches(token: Buffer, given: string | undefined): boolean {
   if (!given || !/^[0-9a-f]{32}$/.test(given)) return false
-  return crypto.timingSafeEqual(Buffer.from(given, 'hex'), current.token)
+  return crypto.timingSafeEqual(Buffer.from(given, 'hex'), token)
 }
 
 const OTHER_PHONE = 'This link is already open on another phone. On the computer, go back and open Send from my phone again for a new code.'
@@ -266,15 +338,31 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse): void {
   res.setHeader('Cache-Control', 'no-store')
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'no-referrer')
-  if (!current || parts[0] !== 'p' || !tokenMatches(current, parts[1])) {
+  const isCurrent = !!current && parts[0] === 'p' && tokenMatches(current.token, parts[1])
+  // The code just rotated out still opens the page for a moment, until a phone holds the link (D130).
+  const prev = current?.previous
+  const isPrevious = !isCurrent && !!current && !current.phoneAddr && !!prev && Date.now() < prev.until && parts[0] === 'p' && tokenMatches(prev.token, parts[1])
+  if (!current || (!isCurrent && !isPrevious)) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Not found')
     req.resume()
     return
   }
   const from = req.socket.remoteAddress ?? ''
   if (req.method === 'GET' && parts.length === 2) {
-    // The first device to open the page holds the link (D128).
-    current.phoneAddr ??= from
+    // The first device to open the page holds the link (D128): the code it
+    // came with is the only one from now on, and the codes stop changing.
+    if (!current.phoneAddr) {
+      current.phoneAddr = from
+      if (isPrevious && prev) Object.assign(current, { token: prev.token, key: prev.key, urls: prev.urls, qrSvg: prev.qrSvg })
+      current.previous = null
+      stopRotating(current)
+      // 30 minutes from the scan, not from when the screen opened — and only
+      // once: nothing after this restarts the clock (D130).
+      clearTimeout(current.idle)
+      current.idle = setTimeout(() => expire(), current.idleMs)
+      current.idle.unref?.()
+      log('Phone link opened on a phone')
+    }
     if (current.phoneAddr !== from) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }).end(OTHER_PHONE)
       return
@@ -363,7 +451,6 @@ async function receive(current: Link, url: URL, from: string, req: http.Incoming
     up = { id, next: 0, lift, name, file, handle: await fs.promises.open(file, 'w'), bytes: 0, busy: false }
     if (link !== current || current.upload) { await up.handle.close(); fs.rmSync(file, { force: true }); refuse(409, 'The link was closed.'); return }
     current.upload = up
-    clearTimeout(current.idle)
   } else if (!up || !up.id.equals(id) || up.next !== index || up.lift !== lift || up.name !== name) {
     if (up) dropUpload(current, 'a piece arrived out of order')
     refuse(400, 'Part of the clip went missing. Send it again.')

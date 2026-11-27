@@ -18,12 +18,48 @@ import type { CameraTake } from './CameraCapture'
 
 interface Status {
   active: boolean
+  /** This visit's link (not the code), for closing it and no newer one. */
+  id: string | null
+  /** When the code changes next, while no phone has opened the page (D130). */
+  rotatesAt: number | null
+  rotateEveryMs: number | null
+  /** The phone that opened the page, once one has (D130). */
+  phone: string | null
   url: string | null
   otherUrls: string[]
   qrSvg: string | null
   receiving: number | null
   clip: { name: string; bytes: number; lift: VbtLift } | null
   closedBecause: string | null
+}
+
+/** Seconds until the code changes, rolling over to the next interval once `at` has passed. */
+export function secondsToNextCode(at: number, everyMs: number | null, now: number): number {
+  let left = at - now
+  if (everyMs && everyMs > 0 && left <= 0) left += Math.ceil((-left + 1) / everyMs) * everyMs
+  return Math.max(0, Math.ceil(left / 1000))
+}
+
+/**
+ * "New code in 0:42", on a clock of its own. It used to redraw only with the
+ * once-a-second status check, which runs a little late now and then, so a
+ * number stuck for two seconds or was skipped; and at each switch it sat on
+ * 0:00 until the next check. Now it ticks five times a second and rolls over
+ * by itself.
+ */
+function NextCode({ at, everyMs }: { at: number; everyMs: number | null }) {
+  const [secs, setSecs] = useState(() => secondsToNextCode(at, everyMs, Date.now()))
+  useEffect(() => {
+    const tick = () => setSecs(secondsToNextCode(at, everyMs, Date.now()))
+    tick()
+    const timer = window.setInterval(tick, 200)
+    return () => window.clearInterval(timer)
+  }, [at, everyMs])
+  return (
+    <p className="num text-center text-xs text-muted-foreground">
+      New code in {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}
+    </p>
+  )
 }
 
 export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraTake) => void; onCancel: () => void }) {
@@ -80,14 +116,11 @@ export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraT
     return () => {
       stopped = true
       window.clearInterval(timer)
-      // Only this visit's link, by its code: reopened quickly, this goodbye can
+      // Only this visit's link, by its id: reopened quickly, this goodbye can
       // land after the next visit's link opened, and must not close that one.
       if (!handedOver.current) {
         void opened
-          .then((s) => {
-            const code = s.url ? new URL(s.url).pathname.split('/')[2] : null
-            if (code) return sendJson('DELETE', `/api/phone-link?code=${encodeURIComponent(code)}`)
-          })
+          .then((s) => { if (s.id) return sendJson('DELETE', `/api/phone-link?link=${encodeURIComponent(s.id)}`) })
           .catch(() => {})
       }
     }
@@ -97,6 +130,7 @@ export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraT
 
   const qrSrc = status?.qrSvg ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(status.qrSvg)}` : null
   const closed = status && !status.active
+  const connected = !!status?.phone
 
   return (
     <div className="space-y-4">
@@ -129,8 +163,18 @@ export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraT
         </div>
       ) : (
         <div className="flex flex-wrap items-start gap-6 rounded-lg border p-4">
-          <div className="flex h-56 w-56 shrink-0 items-center justify-center rounded-md bg-white p-2">
-            {qrSrc ? <img src={qrSrc} alt="QR code for your phone" className="h-full w-full" /> : <Loader2 className="h-6 w-6 animate-spin text-black/40 motion-reduce:animate-none" />}
+          <div className="shrink-0 space-y-1.5">
+            <div className="flex h-56 w-56 items-center justify-center rounded-md bg-white p-2">
+              {connected ? (
+                // The code has done its job: it only works on the phone that opened it now.
+                <Smartphone aria-label="Phone connected" className="h-16 w-16 text-black/70" />
+              ) : qrSrc ? (
+                <img src={qrSrc} alt="QR code for your phone" className="h-full w-full" />
+              ) : (
+                <Loader2 className="h-6 w-6 animate-spin text-black/40 motion-reduce:animate-none" />
+              )}
+            </div>
+            {!connected && status?.rotatesAt && <NextCode at={status.rotatesAt} everyMs={status.rotateEveryMs} />}
           </div>
           <div className="min-w-[16rem] flex-1 space-y-3 text-sm">
             {opening || status?.receiving != null || status?.clip ? (
@@ -138,6 +182,15 @@ export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraT
                 <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
                 {opening ? 'Opening the clip…' : `Receiving the clip… ${humanBytes(status?.receiving ?? status?.clip?.bytes ?? 0)}`}
               </p>
+            ) : connected ? (
+              <div className="space-y-1.5">
+                <p role="status" className="font-medium text-success">Phone connected ({status?.phone}). Film the set and send it.</p>
+                {/* D130: if this appears before you scanned, it isn't your phone. */}
+                <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  Not your phone?
+                  <Button size="sm" variant="outline" className="h-7" onClick={() => setAttempt((n) => n + 1)}>Start again with a new code</Button>
+                </p>
+              </div>
             ) : (
               <p role="status" className="font-medium">Waiting for your phone…</p>
             )}
@@ -155,7 +208,7 @@ export default function PhoneLink({ onDone, onCancel }: { onDone: (take: CameraT
               networks. Nothing else of CoachBoard is reachable from the phone, and the link closes when you
               leave this screen.
             </p>
-            {status?.url && (
+            {status?.url && !connected && (
               <details className="text-xs text-muted-foreground">
                 <summary className="cursor-pointer">Phone won't connect?</summary>
                 <p className="mt-1">Type this into the phone's browser instead:</p>

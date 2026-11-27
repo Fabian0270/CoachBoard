@@ -262,14 +262,92 @@ describe('the phone link', () => {
     expect((await request(local(b.url!))).status).toBe(200)
   })
 
-  it("closing by code closes only that visit's link, never a newer one", async () => {
+  it("closing by id closes only that visit's link, never a newer one", async () => {
     const a = await startPhoneLink({ addresses: ['192.168.1.34'] })
-    const codeA = new URL(a.url!).pathname.split('/')[2]
     const b = await startPhoneLink({ addresses: ['192.168.1.34'] })
+    expect(b.id).not.toBe(a.id)
     // The old screen's goodbye arrives after the new screen opened.
-    expect(stopPhoneLink(codeA).active).toBe(true)
+    expect(stopPhoneLink(a.id!).active).toBe(true)
     expect((await request(local(b.url!))).status).toBe(200)
-    expect(stopPhoneLink(new URL(b.url!).pathname.split('/')[2]).active).toBe(false)
+    expect(stopPhoneLink(b.id!).active).toBe(false)
+  })
+})
+
+describe('the code changes until a phone opens the page (D130)', () => {
+  const codeOf = (url: string) => new URL(url).pathname.split('/')[2]
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  it('a new code and key every interval; the one just replaced still opens the page for the grace time, then not', async () => {
+    const a = await startPhoneLink({ addresses: ['192.168.1.34'], rotateMs: 300, graceMs: 250 })
+    expect(a.rotatesAt).toBeGreaterThan(Date.now())
+    expect(a.phone).toBeNull()
+    await sleep(380)
+    const b = phoneLinkStatus()
+    expect(codeOf(b.url!)).not.toBe(codeOf(a.url!))
+    expect(keyOf(b.url!).equals(keyOf(a.url!))).toBe(false)
+    expect(b.qrSvg).not.toBe(a.qrSvg)
+    expect(b.id).toBe(a.id) // the same visit
+    // Grace: the old code is gone a little later, and a code two rotations old never works.
+    await sleep(250)
+    expect((await request(local(a.url!))).status).toBe(404)
+  })
+
+  it('scanned right at the switch: the replaced code opens the page and becomes the one; everything else stops', async () => {
+    const a = await startPhoneLink({ addresses: ['192.168.1.34'], rotateMs: 300, graceMs: 2000 })
+    await sleep(380)
+    const b = phoneLinkStatus()
+    expect((await request(local(a.url!))).status).toBe(200)
+    const after = phoneLinkStatus()
+    expect(after.phone).toBe('127.0.0.1')
+    expect(after.rotatesAt).toBeNull()
+    expect(codeOf(after.url!)).toBe(codeOf(a.url!))
+    expect((await request(local(b.url!))).status).toBe(404)
+    // And it holds still from now on.
+    await sleep(700)
+    expect(codeOf(phoneLinkStatus().url!)).toBe(codeOf(a.url!))
+    expect((await sendClip(a.url!, crypto.randomBytes(100), { open: false })).map((r) => r.status)).toEqual([200])
+  })
+
+  it("the 30 minutes count from the scan, not from when the screen opened", async () => {
+    const a = await startPhoneLink({ addresses: ['192.168.1.34'], idleMs: 400 })
+    await sleep(250)
+    expect((await request(local(a.url!))).status).toBe(200) // scanned late
+    await sleep(300) // 550 ms since the screen opened, 300 since the scan
+    expect(phoneLinkStatus().active).toBe(true)
+    await sleep(300)
+    expect(phoneLinkStatus()).toMatchObject({ active: false, closedBecause: expect.stringMatching(/30 minutes after the phone connected/) })
+  })
+
+  it('the 30 minutes after the scan are a hard cap: a clip part-way in is cut off and dropped, and a failed clip buys no time', async () => {
+    const a = await startPhoneLink({ addresses: ['192.168.1.34'], idleMs: 500 })
+    const key = keyOf(a.url!)
+    expect((await request(local(a.url!))).status).toBe(200)
+    const id = crypto.randomBytes(8)
+    const q = (i: number, last: boolean) => `${local(a.url!)}/clip?u=${id.toString('hex')}&i=${i}&last=${last ? 1 : 0}&lift=back-squat&name=a.mp4`
+    // A piece that fails (out of order) must not restart the clock.
+    await sleep(150)
+    expect((await request(q(3, true), { method: 'POST', body: seal(key, id, 3, true, 'back-squat', 'a.mp4', Buffer.alloc(9)) })).status).toBe(400)
+    // A clip starts and is still part-way in when the time is up.
+    expect((await request(q(0, false), { method: 'POST', body: seal(key, id, 0, false, 'back-squat', 'a.mp4', crypto.randomBytes(1000)) })).status).toBe(200)
+    expect(phoneLinkStatus().receiving).toBe(1000)
+    await sleep(450) // ~600 ms since the scan
+    expect(phoneLinkStatus()).toMatchObject({ active: false, clip: null, closedBecause: expect.stringMatching(/30 minutes after the phone connected/) })
+    await vi.waitFor(() => expect(fs.readdirSync(path.join(dir, 'phone-clips'))).toEqual([]))
+    await expect(request(q(1, true), { method: 'POST', body: seal(key, id, 1, true, 'back-squat', 'a.mp4', Buffer.alloc(9)) })).rejects.toThrow()
+  })
+
+  it('no phone within 30 minutes of the screen opening: closed, and says so', async () => {
+    await startPhoneLink({ addresses: ['192.168.1.34'], idleMs: 200 })
+    await sleep(300)
+    expect(phoneLinkStatus()).toMatchObject({ active: false, closedBecause: expect.stringMatching(/30 minutes with no phone connected/) })
+  })
+
+  it('the code changes every 45 seconds, and the replaced one is good for 30 more', async () => {
+    const { ROTATE_MS, GRACE_MS } = await import('./phoneLinkService.js')
+    expect([ROTATE_MS, GRACE_MS]).toEqual([45_000, 30_000])
+    const s = await startPhoneLink({ addresses: ['192.168.1.34'] })
+    expect(s.rotatesAt! - Date.now()).toBeGreaterThan(44_000)
+    expect(s.rotatesAt! - Date.now()).toBeLessThanOrEqual(45_000)
   })
 })
 
