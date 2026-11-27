@@ -389,7 +389,9 @@ describe("the phone page's encryption (D128)", () => {
   it('the bundled cipher is what the build script makes from the installed @noble/ciphers', async () => {
     const script = path.resolve(__dirname, '../../scripts/build-phone-crypto.mjs')
     const { phoneCryptoSource, OUT } = await import(/* @vite-ignore */ new URL(`file:///${script.replace(/\\/g, '/')}`).href)
-    expect(fs.readFileSync(OUT, 'utf8')).toBe(await phoneCryptoSource())
+    // Line endings aside: a Windows checkout (core.autocrlf) gives the file CRLF.
+    const lf = (s: string) => s.replace(/\r\n/g, '\n')
+    expect(lf(fs.readFileSync(OUT, 'utf8'))).toBe(lf(await phoneCryptoSource()))
   })
 
   it('the page carries the cipher inline with its MIT notice, and nothing in either can end the <script> or the comment early', () => {

@@ -53,5 +53,15 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      # The runner's Defender scans every file as it is created. The server
+      # tests create thousands of small files (SQLite makes and deletes a
+      # journal file per statement on a test database), and with scanning on
+      # they ran many times slower than on a Windows dev PC and timed out
+      # (first run of this job, 1.18.0). The runner is thrown away after the
+      # job; coaches' machines are not affected by this.
+      - name: Turn off Defender real-time scanning (this runner only)
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
       - name: Server tests
         run: npm run test -w server
